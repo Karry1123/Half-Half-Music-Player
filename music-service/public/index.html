@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Half&amp;Half 音乐服务</title>
+<style>
+  :root { --bg:#f6f3ee; --card:#fff; --text:#1d1b19; --muted:#7a736b; --line:#e6e0d8; --accent:#d9622b; --ok:#2f8f5b; --err:#c0392b; --warn:#a86b00; --info:#2f6fb0; color-scheme: light dark; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#151412; --card:#1f1d1a; --text:#efe9e1; --muted:#9b938a; --line:#34302b; --accent:#ef7a43; --ok:#5cc28a; --err:#ef6b5b; --warn:#e0a43a; --info:#6fa8e6; } }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.5 system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif; }
+  main { max-width: 1000px; margin: 0 auto; padding: 24px 16px; display: grid; gap: 16px; }
+  h1 { margin: 0; font-size: 22px; } h1 span { color: var(--accent); }
+  a { color: inherit; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
+  form { display: flex; gap: 8px; flex-wrap: wrap; }
+  input, select, button { font: inherit; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--text); }
+  input[type=search] { flex: 1; min-width: 200px; }
+  button { cursor: pointer; } button:hover:not(:disabled) { border-color: var(--accent); } button:disabled { opacity: .5; cursor: default; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+  .chip { font-size: 12px; padding: 2px 8px; border-radius: 99px; border: 1px solid var(--line); color: var(--muted); }
+  .chip.ok { color: var(--ok); border-color: currentColor; } .chip.err { color: var(--err); border-color: currentColor; }
+  .originals { margin-top: 12px; font-size: 13px; color: var(--muted); }
+  .originals b { color: var(--text); }
+  .toolbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .seg button { border: 0; border-radius: 0; padding: 6px 12px; }
+  .seg button.on { background: var(--accent); color: #fff; }
+  .list { display: grid; gap: 2px; }
+  .row { display: grid; grid-template-columns: 56px 1fr auto; gap: 12px; align-items: center; padding: 8px; border-radius: 8px; }
+  .row:hover { background: color-mix(in srgb, var(--accent) 6%, transparent); }
+  .row img { width: 56px; height: 56px; object-fit: cover; border-radius: 6px; background: var(--line); }
+  .title { font-weight: 600; overflow-wrap: anywhere; text-decoration: none; }
+  a.title:hover { text-decoration: underline; color: var(--accent); }
+  .meta { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; margin-top: 2px; }
+  .tag { display: inline-block; font-size: 11px; padding: 0 6px; border-radius: 4px; background: var(--line); color: var(--text); margin-right: 4px; white-space: nowrap; }
+  .v-original { background: color-mix(in srgb, var(--ok) 18%, transparent); color: var(--ok); }
+  .v-live, .v-variant { background: color-mix(in srgb, var(--info) 18%, transparent); color: var(--info); }
+  .v-unknown { background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); }
+  .v-cover, .v-other { background: color-mix(in srgb, var(--err) 14%, transparent); color: var(--err); }
+  .trusted { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); }
+  .actions { display: flex; gap: 6px; align-items: center; }
+  .actions a { font-size: 12px; color: var(--muted); white-space: nowrap; }
+  progress { width: 100%; height: 4px; accent-color: var(--accent); }
+  .label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; }
+  .empty { color: var(--muted); padding: 8px; }
+  audio { height: 32px; max-width: 240px; }
+  @media (max-width: 640px) { .row { grid-template-columns: 44px 1fr; } .row img { width: 44px; height: 44px; } .row > :last-child { grid-column: 1 / -1; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>Half<span>&amp;</span>Half · 音乐服务</h1>
+
+  <section class="card">
+    <form id="form">
+      <input id="q" type="search" placeholder="歌名，可加歌手：晴天 周杰伦" required autofocus />
+      <select id="format" title="下载格式">
+        <option value="mp3">mp3</option><option value="m4a">m4a</option><option value="original">原始</option>
+      </select>
+      <button class="primary">搜索</button>
+    </form>
+    <div id="originals" class="originals"></div>
+    <div id="sources" class="chips"></div>
+  </section>
+
+  <section class="card">
+    <div class="toolbar">
+      <span class="label">搜索结果</span>
+      <span class="seg" id="versionSeg">
+        <button data-v="original" class="on">只看原版</button><button data-v="all">全部版本</button>
+      </span>
+    </div>
+    <div id="results" class="list"><div class="empty">输入关键词开始搜索</div></div>
+  </section>
+  <section class="card"><div class="label">下载任务</div><div id="jobs" class="list"><div class="empty">暂无</div></div></section>
+  <section class="card"><div class="label">本地曲库 downloads/</div><div id="library" class="list"></div></section>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+const dur = (s) => (s ? `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}` : '–');
+const mb = (b) => (b ? `${(b / 1048576).toFixed(1)} MB` : '');
+const plays = (n) => (n == null ? '' : n >= 1e8 ? `${(n / 1e8).toFixed(1)}亿` : n >= 1e4 ? `${(n / 1e4).toFixed(n >= 1e6 ? 0 : 1)}万` : String(n));
+const STATUS = { queued: '排队中', downloading: '下载中', processing: '处理中', done: '完成', error: '失败' };
+const jobs = new Map();
+let versions = 'original';
+
+async function search() {
+  const q = $('q').value.trim();
+  if (!q) return;
+  $('results').innerHTML = '<div class="empty">搜索中…</div>';
+  const r = await fetch(`/api/search?q=${encodeURIComponent(q)}&versions=${versions}`).then((r) => r.json());
+  if (r.error) return ($('results').innerHTML = `<div class="empty">${esc(r.error)}</div>`);
+
+  $('originals').innerHTML = r.originals.length
+    ? `原唱识别：${r.originals.map((o) => `<b>${esc(o.artist)}</b>${o.plays ? `（${plays(o.plays)}次播放）` : ''}`).join('、')}`
+    : '未能识别原唱：显示全部非翻唱结果，请通过链接自行核对版本';
+  $('sources').innerHTML = r.sources.map((s) => `<span class="chip ${s.ok ? 'ok' : 'err'}" title="${esc(s.error || '')}">
+      ${esc(s.label)} ${s.ok ? `${s.originals}/${s.count} 原版${s.partial ? ' · 部分' : ''}` : esc(s.code)} · ${s.ms}ms</span>`).join('')
+    + `<span class="chip">${r.tookMs}ms${r.cached ? ' · 缓存' : ''}</span>`;
+  const c = r.counts;
+  $('versionSeg').children[0].textContent = `只看原版 (${c.original})`;
+  $('versionSeg').children[1].textContent = `全部版本 (${Object.values(c).reduce((a, b) => a + b, 0)})`;
+
+  $('results').innerHTML = r.results.length ? r.results.map((t) => `
+    <div class="row">
+      <img src="${esc(t.cover || '')}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.style.visibility='hidden'">
+      <div>
+        ${t.pageUrl ? `<a class="title" href="${esc(t.pageUrl)}" target="_blank" rel="noopener noreferrer" title="在 ${esc(t.sourceName)} 打开，核对版本">${esc(t.title)}</a>` : `<span class="title">${esc(t.title)}</span>`}
+        <div class="meta">
+          <span class="tag v-${t.version}">${esc(t.versionLabel)}</span><span class="tag">${esc(t.sourceName)}</span>${t.trusted ? '<span class="tag trusted">收藏UP</span>' : ''}
+          ${t.artist ? esc(t.artist) : ''}${t.uploader && t.uploader !== t.artist ? `${t.artist ? ' · ' : ''}${t.source === 'bilibili' ? 'UP ' : ''}${esc(t.uploader)}` : ''}
+          ${t.album ? ` · ${esc(t.album)}` : ''} · ${dur(t.duration)}${t.plays != null ? ` · ${plays(t.plays)}播放` : ''}
+          ${t.bitrate ? ` · ${t.bitrateEstimated ? '≈' : ''}${t.bitrate}kbps` : ''}${t.category ? ` · ${esc(t.category)}` : ''}
+        </div>
+      </div>
+      <div class="actions">
+        ${t.pageUrl ? `<a href="${esc(t.pageUrl)}" target="_blank" rel="noopener noreferrer">打开原页面 ↗</a>` : ''}
+        <button data-id="${esc(t.id)}">下载</button>
+      </div>
+    </div>`).join('') : `<div class="empty">没有${versions === 'original' ? '原版' : ''}结果${r.hidden ? `（另有 ${r.hidden} 条非原版，点"全部版本"查看）` : ''}</div>`;
+}
+
+$('form').onsubmit = (e) => { e.preventDefault(); search(); };
+$('versionSeg').onclick = (e) => {
+  const v = e.target.dataset?.v;
+  if (!v || v === versions) return;
+  versions = v;
+  for (const b of $('versionSeg').children) b.classList.toggle('on', b.dataset.v === v);
+  if ($('q').value.trim()) search(); // 服务端有缓存，切换不会重新请求各平台
+};
+
+$('results').onclick = async (e) => {
+  const id = e.target.dataset?.id;
+  if (!id) return;
+  e.target.disabled = true;
+  const r = await fetch('/api/download', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, format: $('format').value }) }).then((r) => r.json());
+  e.target.textContent = r.status === 'exists' ? '已存在' : r.error ? '失败' : '已加入';
+  if (r.status === 'exists') loadLibrary();
+};
+
+function renderJobs() {
+  const list = [...jobs.values()].sort((a, b) => b.createdAt - a.createdAt);
+  $('jobs').innerHTML = list.length ? list.map((j) => `
+    <div class="row" style="grid-template-columns:1fr auto">
+      <div>
+        <div class="title">${esc(j.artist ? `${j.artist} - ` : '')}${esc(j.title)}</div>
+        <div class="meta"><span class="tag">${esc(j.sourceName)}</span>${STATUS[j.status]} ${j.status === 'downloading' ? `${Math.round(j.progress * 100)}% ${mb(j.bytes)}` : ''}
+          ${j.error ? `<span style="color:var(--err)">${esc(j.error)}</span>` : ''}${j.file ? esc(j.file) : ''}${j.note ? ` · ${esc(j.note)}` : ''}</div>
+        <progress max="1" value="${j.progress}"></progress>
+      </div>
+      <span class="meta">${esc(j.format)}</span>
+    </div>`).join('') : '<div class="empty">暂无</div>';
+}
+
+async function loadLibrary() {
+  const lib = await fetch('/api/library').then((r) => r.json());
+  $('library').innerHTML = lib.length ? lib.map((e) => `
+    <div class="row">
+      <img src="${esc(e.cover || '')}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.style.visibility='hidden'">
+      <div><div class="title">${esc(e.title)}</div>
+        <div class="meta"><span class="tag">${esc(e.sourceName)}</span>${esc(e.artist || e.uploader || '')} · ${dur(e.duration)} · ${esc(e.format)} · ${mb(e.size)} · ${esc(e.file)}</div></div>
+      <audio controls preload="none" src="/files/${encodeURIComponent(e.file)}"></audio>
+    </div>`).join('') : '<div class="empty">暂无</div>';
+}
+
+const es = new EventSource('/api/events');
+es.addEventListener('snapshot', (e) => { for (const j of JSON.parse(e.data)) jobs.set(j.id, j); renderJobs(); });
+es.addEventListener('job', (e) => {
+  const j = JSON.parse(e.data);
+  const prev = jobs.get(j.id);
+  jobs.set(j.id, j);
+  renderJobs();
+  if (j.status === 'done' && prev?.status !== 'done') loadLibrary();
+});
+loadLibrary();
+</script>
+</body>
+</html>

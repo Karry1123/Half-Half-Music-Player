@@ -1,0 +1,39 @@
+# Render Blueprint：Render 控制台 → New → Blueprint → 选这个仓库，即按此文件创建服务。
+# 也可以手动建 Web Service（Runtime 选 Docker），环境变量照下面填。详见 DEPLOY.md。
+services:
+  - type: web
+    name: halfhalf-music
+    runtime: docker
+    plan: free
+    # 新加坡：到中国大陆 / 东南亚延迟低；B 站海外访问也比美国机房稳定
+    region: singapore
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      # 访问令牌：Render 自动生成一串随机值，部署后在控制台 Environment 里查看，填到网页「连接设置」
+      - key: API_TOKEN
+        generateValue: true
+      # 允许跨域调用的前端网址，逗号分隔，支持 https://*.vercel.app 这种通配
+      - key: CORS_ORIGINS
+        sync: false
+      # 每 IP 每分钟搜索 / 解析 / 下载次数
+      - key: RATE_LIMIT
+        value: "60"
+      # —— 以下可选，按需在控制台填写 ——
+      # B 站大会员 Cookie：用 Render 的 Secret Files 上传 bilibili.txt，然后填 /etc/secrets/bilibili.txt
+      - key: COOKIE_PATH
+        sync: false
+      # YouTube Cookie（Render 机房 IP 常被要求登录验证时用）：同样走 Secret Files
+      - key: YT_COOKIE_PATH
+        sync: false
+      # TURN 中继（跨境连接）：任选其一，见 .env.example
+      - key: METERED_DOMAIN
+        sync: false
+      - key: METERED_API_KEY
+        sync: false
+      - key: CLOUDFLARE_TURN_KEY_ID
+        sync: false
+      - key: CLOUDFLARE_TURN_API_TOKEN
+        sync: false

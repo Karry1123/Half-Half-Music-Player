@@ -1,0 +1,18 @@
+# 只把后端需要的东西送进构建上下文（也防止本机的 Cookie、.env、下载的音乐被打进镜像）
+**/node_modules
+**/.env
+**/.env.*
+!**/.env.example
+.git
+.github
+dist
+public
+src
+tests
+scripts
+*.md
+music-service/.venv
+music-service/.cache
+music-service/cookies
+music-service/downloads
+music-service/tests

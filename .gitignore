@@ -1,0 +1,16 @@
+node_modules/
+dist/
+
+# 本地配置与账号 Cookie（含登录凭据，绝不能提交）
+.env
+music-service/.env
+music-service/cookies/
+music-service/.cache/
+music-service/downloads/
+music-service/.venv/
+
+# 本地工具 / 系统文件
+.claude/settings.local.json
+*.log
+.DS_Store
+Thumbs.db

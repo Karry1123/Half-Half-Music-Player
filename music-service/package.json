@@ -1,0 +1,20 @@
+{
+  "name": "half-half-music-service",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Half&Half 音乐聚合搜索与下载服务",
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.js",
+    "setup:ytdlp": "node scripts/setup-ytdlp.mjs",
+    "test": "node --test \"tests/*.test.mjs\""
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "opencc-js": "^1.0.5",
+    "undici": "^7.30.0"
+  }
+}

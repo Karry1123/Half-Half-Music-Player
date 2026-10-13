@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "half-half",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["node_modules/vite/bin/vite.js"],
+      "port": 8080
+    },
+    {
+      "name": "music-service",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["music-service/src/server.js"],
+      "port": 8090
+    }
+  ]
+}

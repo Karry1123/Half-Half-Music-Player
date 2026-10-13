@@ -1,0 +1,78 @@
+# 推送到 main 时自动构建前端并发布到 GitHub Pages。
+#
+# 一次性准备（详见 DEPLOY.md）：
+#   1. 仓库 Settings → Pages → Build and deployment → Source 选 "GitHub Actions"
+#   2. 仓库 Settings → Secrets and variables → Actions → Variables 新增：
+#        MUSIC_API_URL = https://<你的 Render 服务>.onrender.com   （必填，否则线上只能用演示数据）
+#        SIGNAL_URL    = 可选，默认 wss://<同上>/ws
+#        PAGES_BASE    = 可选，用了自定义域名时填 /
+#   这些都是公开地址，不要把 API_TOKEN 放进来（构建产物是公开的）。
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 同一时间只跑一次部署，新的推送排队而不是取消正在发布的版本
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: 单元测试
+        run: npm test
+
+      - name: 计算部署路径
+        id: base
+        shell: bash
+        run: |
+          # 项目页：https://<用户>.github.io/<仓库名>/ → base=/<仓库名>/
+          # 用户页（仓库名为 <用户>.github.io）或自定义域名 → base=/
+          repo="${{ github.event.repository.name }}"
+          if [ -n "${{ vars.PAGES_BASE }}" ]; then base="${{ vars.PAGES_BASE }}"
+          elif [[ "$repo" == *.github.io ]]; then base="/"
+          else base="/$repo/"; fi
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+          echo "部署路径：$base"
+
+      - name: 构建
+        run: npm run build:deploy
+        env:
+          VITE_BASE: ${{ steps.base.outputs.base }}
+          MUSIC_API_URL: ${{ vars.MUSIC_API_URL }}
+          SIGNAL_URL: ${{ vars.SIGNAL_URL }}
+          ICE_URL: ${{ vars.ICE_URL }}
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

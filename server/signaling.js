@@ -1,0 +1,112 @@
+// 极简 WebSocket 信令 / 房间匹配。
+// 信令只负责交换 SDP / ICE，P2P 建好之后音频和控制指令都不再经过服务器。
+// 以 noServer 模式挂到任意 http.Server 上（开发时是 Vite 的服务器，生产时是 server/index.js），
+// 只接管 /ws 的 upgrade，不影响 Vite HMR 自己的 WebSocket。
+import { WebSocketServer } from 'ws';
+import { iceConfig } from './ice.js';
+
+/** @type {Map<string, {host: import('ws').WebSocket, guest: import('ws').WebSocket | null}>} */
+const rooms = new Map();
+
+function newCode() {
+  let code;
+  do code = String(Math.floor(100000 + Math.random() * 900000));
+  while (rooms.has(code));
+  return code;
+}
+
+function send(ws, msg) {
+  if (ws && ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg));
+}
+
+function leave(ws) {
+  const room = rooms.get(ws.room);
+  if (!room) return;
+  if (ws.role === 'host') {
+    // 房主离开 => 房间解散
+    if (room.guest) {
+      send(room.guest, { type: 'peer-left', reason: 'host-left' });
+      room.guest.room = null;
+    }
+    rooms.delete(ws.room);
+  } else if (room.guest === ws) {
+    room.guest = null;
+    send(room.host, { type: 'peer-left', reason: 'guest-left' });
+  }
+  ws.room = null;
+  ws.role = null;
+}
+
+function onMessage(ws, msg) {
+  switch (msg.type) {
+    case 'create': {
+      leave(ws);
+      const code = newCode();
+      rooms.set(code, { host: ws, guest: null });
+      ws.room = code;
+      ws.role = 'host';
+      send(ws, { type: 'created', code, iceServers: iceConfig() });
+      break;
+    }
+    case 'join': {
+      const code = String(msg.code ?? '');
+      const room = rooms.get(code);
+      if (!room) return send(ws, { type: 'error', message: '房间不存在' });
+      if (room.host === ws) return send(ws, { type: 'error', message: '不能加入自己创建的房间' });
+      if (room.guest) return send(ws, { type: 'error', message: '房间已满（仅限两人）' });
+      leave(ws);
+      room.guest = ws;
+      ws.room = code;
+      ws.role = 'guest';
+      // 先通知 guest，保证 guest 建好 RTCPeerConnection 后才会收到 host 的 offer
+      send(ws, { type: 'joined', code, iceServers: iceConfig() });
+      send(room.host, { type: 'peer-joined' });
+      break;
+    }
+    case 'signal': {
+      const room = rooms.get(ws.room);
+      if (!room) return;
+      send(ws.role === 'host' ? room.guest : room.host, { type: 'signal', data: msg.data });
+      break;
+    }
+  }
+}
+
+export function attachSignaling(httpServer, path = '/ws') {
+  const wss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 });
+
+  httpServer.on('upgrade', (req, socket, head) => {
+    if (new URL(req.url, 'http://localhost').pathname !== path) return; // 交给其他 upgrade 监听者（如 Vite HMR）
+    wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
+  });
+
+  wss.on('connection', (ws) => {
+    ws.isAlive = true;
+    ws.on('pong', () => (ws.isAlive = true));
+    ws.on('message', (raw) => {
+      let msg;
+      try {
+        msg = JSON.parse(raw);
+      } catch {
+        return;
+      }
+      onMessage(ws, msg);
+    });
+    ws.on('close', () => leave(ws));
+  });
+
+  // 心跳：清理僵尸连接，同时防止反向代理因空闲断开
+  const timer = setInterval(() => {
+    for (const ws of wss.clients) {
+      if (!ws.isAlive) {
+        ws.terminate();
+        continue;
+      }
+      ws.isAlive = false;
+      ws.ping();
+    }
+  }, 30_000);
+  httpServer.on('close', () => clearInterval(timer));
+
+  return wss;
+}
