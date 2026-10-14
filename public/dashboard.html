@@ -118,6 +118,8 @@ import { Peer } from 'peerjs';
 import QRCode from 'qrcode';
 import * as LocalLib from './libraryStorage.js';
 import { MODE_LABEL, PLAY_MODES, PlayQueue } from './playQueue.js';
+import { checkForUpdate, DEFAULT_REPO } from './appUpdate.js';
+import * as NativeUpdate from './appUpdateNative.js';
 
 const html = htm.bind(React.createElement);
 
@@ -1693,6 +1695,89 @@ if (mediaSession) {
   });
   // 播放速率微调（同步追赶）会让系统进度条慢慢偏，定期校正
   setInterval(() => !document.hidden && updateMediaPosition(), 5000);
+}
+
+// ════════════════════════════════════════════════════════════ Android App（Capacitor）：前台服务保活
+// 套上 Capacitor 外壳后，WebView 切到后台容易被系统回收，播放会断。有歌在播时开一个"媒体播放"类型的
+// 前台服务（状态栏常驻通知），App 就不会被杀。在普通浏览器里 NativeFG 为 null，下面整段什么都不做。
+const NativeFG = (() => {
+  const C = window.Capacitor;
+  if (!C?.isNativePlatform?.() || C.getPlatform?.() !== 'android') return null;
+  try {
+    return C.registerPlugin('ForegroundService');
+  } catch {
+    return null;
+  }
+})();
+
+if (NativeFG) {
+  const NOTIF_ID = 4101;
+  const CHANNEL = 'playback';
+  const MEDIA_PLAYBACK = 2; // Android: FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
+  const STOP_AFTER_PAUSED_MS = 10 * 60 * 1000;
+  let running = false;
+  let asked = false;
+  let lastKey = '';
+  let stopTimer = 0;
+
+  const prepare = async () => {
+    try {
+      await NativeFG.createNotificationChannel({ id: CHANNEL, name: '播放', description: '后台播放时显示', importance: 2 });
+    } catch {}
+    try {
+      const p = await NativeFG.checkPermissions();
+      if (p.display !== 'granted' && !asked) {
+        asked = true;
+        await NativeFG.requestPermissions(); // Android 13+ 通知权限；拒绝了服务照样运行，只是看不到通知
+      }
+    } catch {}
+  };
+  const show = async (title, body) => {
+    const key = `${title}|${body}`;
+    if (running && key === lastKey) return;
+    lastKey = key;
+    const opts = { id: NOTIF_ID, title, body, smallIcon: 'ic_stat_music', serviceType: MEDIA_PLAYBACK, silent: true, notificationChannelId: CHANNEL };
+    try {
+      if (running) {
+        await NativeFG.updateForegroundService(opts);
+      } else {
+        running = true;
+        await prepare();
+        await NativeFG.startForegroundService(opts);
+      }
+    } catch (e) {
+      running = false;
+      lastKey = '';
+      console.warn('前台服务启动失败', e);
+    }
+  };
+  const stop = async () => {
+    clearTimeout(stopTimer);
+    stopTimer = 0;
+    if (!running) return;
+    running = false;
+    lastKey = '';
+    try {
+      await NativeFG.stopForegroundService();
+    } catch {}
+  };
+
+  store.subscribe(() => {
+    const s = get();
+    const item = s.library.find((x) => x.id === s.currentId) || null;
+    if (!item) return void stop();
+    const title = item.title || 'Half&Half';
+    const sub = item.artist || item.sourceLabel || '';
+    if (s.playing) {
+      clearTimeout(stopTimer);
+      stopTimer = 0;
+      show(title, sub);
+    } else if (running) {
+      show(`${title}（已暂停）`, sub);
+      // 暂停太久就收起通知，别一直占着后台
+      if (!stopTimer) stopTimer = setTimeout(stop, STOP_AFTER_PAUSED_MS);
+    }
+  });
 }
 
 // ════════════════════════════════════════════════════════════ 本机离线曲库（IndexedDB）
@@ -3471,6 +3556,123 @@ function HomeView() {
   </div>`;
 }
 
+// ════════════════════════════════════════════════════════════ Android App：启动强制更新（GitHub Releases）
+// 只在 Android App 里生效（浏览器里没有"已安装版本"，直接跳过）。检查逻辑见 appUpdate.js，原生下载 / 安装见 appUpdateNative.js。
+const UPDATE_REPO = HH.updateRepo || DEFAULT_REPO;
+const UPDATE_MIRRORS = Array.isArray(HH.updateMirrors) ? HH.updateMirrors : []; // 可选的国内镜像前缀，如 "https://ghfast.top/"（只在能校验 SHA-256 时使用）
+const updateErrorText = (e) => {
+  const m = String(e?.message || e || '');
+  if (/SHA-256/i.test(m)) return '下载的安装包校验失败，已丢弃。请重试，或改用浏览器下载。';
+  if (/Activity not found|No application/i.test(m)) return '手机上没有可以安装 APK 的程序。请改用浏览器下载。';
+  if (/timeout|timed out|UnknownHost|Unable to resolve|SocketTimeout|failed to connect|ECONN/i.test(m)) return '下载超时或网络不通（GitHub 在部分网络下很慢）。请重试，或改用浏览器下载。';
+  return `下载失败：${m.slice(0, 120) || '未知错误'}`;
+};
+
+function useAppUpdate() {
+  const [st, setSt] = useState({ update: null, current: '', phase: 'idle', received: 0, total: 0, source: '', error: '' });
+  const patch = (p) => setSt((s) => ({ ...s, ...p }));
+
+  useEffect(() => {
+    if (!NativeUpdate.isAndroidApp()) return undefined;
+    let dead = false;
+    let unblock = () => {};
+    (async () => {
+      try {
+        const current = await NativeUpdate.getInstalledVersion();
+        const result = await checkForUpdate({ repo: UPDATE_REPO, localVersion: current }); // 5 秒超时，失败 = 静默跳过
+        if (dead) return;
+        if (result.status !== 'update') return void NativeUpdate.cleanStaleDownloads();
+        unblock = await NativeUpdate.blockBackButton(); // 弹窗期间吞掉返回键
+        patch({ update: result.update, current });
+      } catch {} // 任何意外都不能挡住用户
+    })();
+    return () => {
+      dead = true;
+      unblock();
+    };
+  }, []);
+
+  const busy = ['downloading', 'verifying', 'installing'].includes(st.phase);
+  const start = async () => {
+    if (!st.update || busy) return;
+    patch({ phase: 'downloading', error: '', received: 0, total: st.update.apk.size });
+    try {
+      await NativeUpdate.downloadAndInstall({
+        update: st.update,
+        mirrors: UPDATE_MIRRORS,
+        onPhase: (phase, info) => patch({ phase, ...(info?.source ? { source: info.source } : {}) }),
+        onProgress: (received, total) => patch({ received, total }),
+      });
+      patch({ phase: 'installed' }); // 系统安装界面已经打开
+    } catch (e) {
+      patch({ phase: 'error', error: updateErrorText(e) });
+    }
+  };
+  const openBrowser = () => st.update && NativeUpdate.openInBrowser(st.update.apk.url).catch((e) => patch({ error: updateErrorText(e) }));
+  return { ...st, busy, start, openBrowser };
+}
+
+/** 不可关闭的"版本更新提醒"：没有关闭按钮、点遮罩无效、Esc / Tab / 返回键都被吞掉，只能点【立即更新】 */
+function UpdateGate() {
+  const u = useAppUpdate();
+  const btn = useRef(null);
+  useEffect(() => {
+    if (!u.update) return undefined;
+    btn.current?.focus();
+    const block = (e) => {
+      if (e.key === 'Escape' || e.key === 'Tab') {
+        e.preventDefault();
+        e.stopPropagation();
+        btn.current?.focus();
+      }
+    };
+    document.addEventListener('keydown', block, true);
+    return () => document.removeEventListener('keydown', block, true);
+  }, [!!u.update]);
+  if (!u.update) return null;
+
+  const pct = u.total > 0 ? Math.min(100, Math.round((u.received / u.total) * 100)) : 0;
+  const mb = (n) => (n / 1048576).toFixed(1);
+  const label = { downloading: `下载中 ${pct}%`, verifying: '正在校验安装包…', installing: '正在打开安装界面…' }[u.phase] || (u.phase === 'installed' ? '重新打开安装界面' : u.phase === 'error' ? '重试更新' : '立即更新');
+  return html`<div class="fixed inset-0 z-[200] grid place-items-center bg-black/85 p-4 backdrop-blur-md" role="alertdialog" aria-modal="true" aria-labelledby="upd-title" aria-describedby="upd-body" onContextMenu=${(e) => e.preventDefault()}>
+    <section class="w-full max-w-md overflow-hidden rounded-3xl border border-ink-700 bg-ink-900 shadow-2xl">
+      <header class="px-6 pt-7 text-center">
+        <span class="mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-host/15 text-host"><${Sparkles} size=${26} /></span>
+        <h2 id="upd-title" class="mt-4 text-lg font-semibold">发现新版本</h2>
+        <p class="mt-1 text-xs text-sand-500">需要更新到最新版本才能继续使用</p>
+        <div class="mt-4 flex items-center justify-center gap-3 text-sm">
+          <span class="rounded-lg bg-white/5 px-3 py-1.5 text-sand-400">当前 <b class="text-sand-200">v${u.current}</b></span>
+          <${ArrowRight} size=${16} class="text-sand-500" />
+          <span class="rounded-lg bg-host/15 px-3 py-1.5 text-host">最新 <b>v${u.update.version}</b></span>
+        </div>
+      </header>
+
+      <div id="upd-body" class="space-y-3 px-6 py-5">
+        <div>
+          <div class="mb-1.5 text-xs text-sand-500">更新内容</div>
+          <div class="scroll-thin max-h-48 overflow-y-auto whitespace-pre-wrap break-words rounded-2xl bg-black/25 px-3.5 py-3 text-sm leading-relaxed text-sand-200">${u.update.notes || '本次更新没有填写更新日志。'}</div>
+        </div>
+        ${(u.busy || u.phase === 'installed') && html`<div aria-live="polite">
+          <div class="h-1.5 overflow-hidden rounded-full bg-white/10"><div class="h-full rounded-full bg-host transition-[width] duration-200" style=${{ width: `${u.phase === 'downloading' ? pct : 100}%` }} /></div>
+          <div class="mt-1.5 flex justify-between text-xs text-sand-500">
+            <span>${u.phase === 'installed' ? '安装界面已打开' : u.source ? `来自 ${u.source}` : ''}</span>
+            <span>${u.phase === 'downloading' && u.total ? `${mb(u.received)} / ${mb(u.total)} MB` : ''}</span>
+          </div>
+        </div>`}
+        ${u.phase === 'installed' && html`<p class="rounded-xl bg-white/5 px-3 py-2 text-xs text-sand-400">按系统提示安装。如果没有出现安装界面，请在弹出的设置里允许「Half&Half」安装未知应用，然后点下面的按钮。</p>`}
+        ${u.error && html`<p role="alert" class="flex gap-2 rounded-xl bg-guest/10 px-3 py-2 text-xs text-guest"><${AlertTriangle} size=${14} class="mt-0.5 shrink-0" />${u.error}</p>`}
+      </div>
+
+      <footer class="px-6 pb-6">
+        <button ref=${btn} type="button" class="flex w-full items-center justify-center gap-2 rounded-2xl bg-host px-4 py-3 font-semibold text-ink-950 hover:brightness-110 disabled:opacity-70" disabled=${u.busy} onClick=${u.start}>
+          ${u.busy ? html`<${Loader2} size=${17} class="animate-spin" />` : html`<${Download} size=${17} />`}${label}
+        </button>
+        ${(u.phase === 'error' || u.phase === 'installed') && html`<button type="button" class="mt-3 flex w-full items-center justify-center gap-1.5 text-xs text-sand-500 hover:text-sand-200" onClick=${u.openBrowser}><${ExternalLink} size=${12} />改用浏览器下载</button>`}
+      </footer>
+    </section>
+  </div>`;
+}
+
 function App() {
   const screen = useStore((s) => s.screen);
   const currentId = useStore((s) => s.currentId);
@@ -3496,6 +3698,7 @@ function App() {
     <${DropOverlay} />
     <${LocalLibraryModal} />
     <${ConnSettingsModal} />
+    <${UpdateGate} />
   `;
 }
 

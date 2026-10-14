@@ -1,3 +1,5 @@
 # 容器里执行的脚本必须是 LF，否则 Linux 下报 "/bin/sh^M: bad interpreter"
 *.sh text eol=lf
 Dockerfile text eol=lf
+android/gradlew text eol=lf
+*.gradle text eol=lf

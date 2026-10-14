@@ -1,66 +1,68 @@
 # Half&Half Music Player
 
-两个人、两台设备，同步收听 Host 本机的音乐。Host 的音频文件经 WebRTC DataChannel 直传给 Guest，播放/暂停/拖动毫秒级同步；Host 可在页面里搜索下载歌手原版（见 [music-service](music-service/README.md)）。
+**English** | [简体中文](README.zh-CN.md)
 
-技术栈：React 18 + Vite 6 + Zustand 5 · 原生 RTCPeerConnection · Web Audio API · Node.js WebSocket 信令
+Two people, two devices, listening to the Host's music in sync. The Host's audio file is sent to the Guest over a WebRTC DataChannel; play / pause / seek stay in sync to within milliseconds. The Host can also search for and download the original artist's version from inside the page (see [music-service](music-service/README.md)).
 
-上线部署（GitHub Pages / Vercel + Render + UptimeRobot 保活）见 [DEPLOY.md](DEPLOY.md)。
+Stack: React 18 + Vite 6 + Zustand 5 · native RTCPeerConnection · Web Audio API · Node.js WebSocket signaling
 
-## 运行
+For production deployment (GitHub Pages / Vercel + Render + UptimeRobot keep-alive) see [DEPLOY.md](DEPLOY.md) (Chinese). For the Android APK see [Android app](#android-app) below.
+
+## Run
 
 ```bash
 npm install
-npm run dev:all        # 一键启动：页面 + 信令 + music-service，打印测试链接和手机二维码
-npm run dev            # 只启动页面 + 信令
-npm test               # 单元测试
-npm run nat-check      # STUN / NAT 自检
+npm run dev:all        # one command: page + signaling + music-service, prints test links and a phone QR code
+npm run dev            # page + signaling only
+npm test               # unit tests
+npm run nat-check      # STUN / NAT self-check
 ```
 
-联调步骤、调试面板（`?debug=1`）、弱网模拟（`?netsim=`）与稳定性设计见 **[TESTING.md](TESTING.md)**。
+For step-by-step testing, the debug panel (`?debug=1`), weak-network simulation (`?netsim=`) and the stability design, see **[TESTING.md](TESTING.md)** (Chinese).
 
-### 单文件版 Dashboard（`public/dashboard.html`）
+### Single-file dashboard (`public/dashboard.html`)
 
-一个无需构建的 All-in-One 页面（React 18 + Tailwind + Lucide + PeerJS，全部走 CDN），四个模块同屏：连接状态条 / 聚合搜索与下载 / 本地曲库与队列 / 底部常驻同步播放器。
+An all-in-one page that needs no build step (React 18 + Tailwind + Lucide + PeerJS, all loaded from CDNs). Four modules share one screen: connection status bar / aggregated search and download / local library and queue / a persistent sync player at the bottom.
 
-打开后先进入**主界面（Lobby）**，有三大入口：
+It opens on the **lobby** with three entries:
 
-- **A 单人沉浸听歌**：不建房间，直接进入个人曲库与搜索；本地导入也在这里。
-- **B 创建双人房间**：房间码 / 二维码 / 复制链接 / 等待动效。
-- **C 加入好友房间**：6 位分段输入、粘贴邀请链接自动识别、快速重新连接。
+- **A. Solo listening**: no room; go straight to your personal library and search. Local import lives here too.
+- **B. Create a duo room**: room code / QR code / copy link / waiting animation.
+- **C. Join a friend's room**: 6-character segmented input, paste an invite link to auto-detect it, quick reconnect.
 
-入口下方依次是：
+Below the entries:
 
-- **我的曲库**展示栏：自动加载之前下载过的歌，带"已缓存"徽章。
-- 全网检索与直链解析：粘贴 B站链接 / BV 号 / b23 短链 / YouTube 链接后立即识别，展示提取卡片（封面、作者、时长、播放量、每档音质的码率与大小，可选音质下载）。
+- **My library** shelf: songs you downloaded before load automatically, with a "cached" badge.
+- Global search and direct-link extraction: paste a Bilibili link / BV id / b23 short link / YouTube link and it is recognized immediately. An extraction card shows the cover, author, duration, view count, and the bitrate and size of every quality tier, and you can pick one to download.
 
-等待伙伴期间就能先挑歌，伙伴加入后双方自动进入播放台。
+You can browse songs while waiting for your partner; once they join, both of you switch to the player automatically.
 
-- **连接管理**：
-  - TURN 中继由服务端 `/ice.json` 下发，支持 Metered、Cloudflare、自建 coturn（含临时凭证）；也可以在页面「连接设置」里填写，并测试 TURN 是否可用。
-  - 双向心跳，3 秒静默即自动无感重连，期间音乐不中断。
-  - 顶栏和播放条显示实际路径（局域网 / P2P 直连 / TURN 中继）、往返延迟和同步偏差。
-  - 跨境配置见 [TESTING.md](TESTING.md)「D. 跨网络 / 跨境连接」。
+- **Connection management**:
+  - TURN relays are served by the backend's `/ice.json`. Metered, Cloudflare and self-hosted coturn (with short-lived credentials) are supported. You can also enter TURN settings in the page's "Connection settings" and test whether they work.
+  - Two-way heartbeat; 3 seconds of silence triggers a seamless automatic reconnect, and the music keeps playing.
+  - The top bar and player bar show the actual path (LAN / direct P2P / TURN relay), round-trip latency and sync drift.
+  - For cross-border setups see [TESTING.md](TESTING.md), section "D. Cross-network / cross-border connections".
 
-- `npm run dev:all` 后访问 `http://localhost:8080/dashboard.html`：自动对接 music-service
-- 直接双击打开或任意静态服务器：演示模式（mock 搜索，"下载"会合成一段可播放的演示音频）
-- 双人配对用 PeerJS 公共信令（`?room=房间码` 自动以 Guest 加入）；可用 `?peerHost=&peerPort=` 指向自建 PeerServer
-- 手机等非房主设备访问不到 music-service（只对房主电脑本机开放），会进入"经房主搜索"模式：加入房间后，搜索 / 下载请求经 P2P 交给房主电脑执行，下载的歌进入房主曲库并同步给双方
-- **本机离线曲库**（[`public/libraryStorage.js`](public/libraryStorage.js)，IndexedDB，无依赖，任何框架可直接 import）：
-  - 下载的歌（音频 + 封面 + 元数据）自动存进浏览器，打开页面自动恢复歌单；音频懒加载，不会一次读进内存
-  - 拖入 / 选择的本地文件：勾选"导入时同时缓存至浏览器本地库"后也会保存（默认开启）
-  - 按内容指纹去重（文件大小 + 头 / 中 / 尾采样，纯 JS，手机走 http 局域网地址也能用）：改了文件名也认得出；Guest 本机已有的歌，房主切到它时直接用本机副本，不再经 P2P 传输
-  - 手机（Guest）：歌单每行有"保存到本机"；在手机上点下载，房主下载完后会自动传一份存到手机
-  - 「本机曲库」面板：按添加时间 / 大小 / 歌名排序、单曲删除、导出为文件（桌面 Chrome / Edge 可选保存位置或整个文件夹，其他浏览器用普通下载）、存储用量与"申请持久保存"
-  - iOS Safari 会清理 7 天未访问网站的数据，面板里会提示"添加到主屏幕"
-- **播放模式与单人 / 双人**（队列算法在 [`public/playQueue.js`](public/playQueue.js)，纯逻辑，`tests/playQueue.test.mjs` 覆盖）：
-  - 顺序 / 列表循环 / 单曲循环 / 随机。随机不打乱歌单，单独维护洗牌顺序：一轮内每首只播一次，新一轮第一首不会是刚播完的那首；"上一首"回到真正听过的歌，再"下一首"原路返回；中途加的歌本轮就能听到
-  - 单人模式：主界面"单人听歌"，不建房间、不连 WebRTC，直接播本机曲库
-  - 双人模式：播放模式只有房主能改，随歌单广播；Guest 显示房主的模式和"下一首"预告；切歌照旧经数据通道触发 Guest 缓冲 + 换曲
-  - 系统媒体控件（MediaSession）：锁屏 / 通知栏 / 耳机线控 / 键盘媒体键，封面、歌手、进度条拖动；Guest 按键会变成发给房主的请求
-  - 切后台回来：Guest 先连发 ping 重新测时钟，再向房主要一次状态并直接硬对齐；连接在后台断了会用房间码自动重连。Host / 单人被来电等打断时从原位置继续
-- 与主应用的区别：用 HTML5 Audio + PeerJS，适合快速演示和分享；主应用（Vite 版）有采样级调度、边收边播、自建信令和调试面板
+- After `npm run dev:all`, open `http://localhost:8080/dashboard.html`: it connects to music-service automatically.
+- Double-click the file or use any static server: demo mode (mock search; "download" synthesizes a playable demo clip).
+- Duo pairing uses the public PeerJS signaling server (`?room=ROOMCODE` joins as Guest automatically). Use `?peerHost=&peerPort=` to point at your own PeerServer.
+- Phones and other non-Host devices cannot reach music-service (it only listens for the Host computer itself), so they enter "search via Host" mode: after joining a room, search / download requests go over P2P to the Host computer, the downloaded songs land in the Host's library and are synced to both sides.
+- **On-device offline library** ([`public/libraryStorage.js`](public/libraryStorage.js), IndexedDB, dependency-free, importable from any framework):
+  - Downloaded songs (audio + cover + metadata) are stored in the browser and the playlist is restored when the page opens. Audio is loaded lazily, never all into memory at once.
+  - Local files you drop in or pick are saved too when "also cache to the local library when importing" is ticked (on by default).
+  - Content-fingerprint dedupe (file size + head / middle / tail samples, pure JS, works on a phone over plain-http LAN addresses): a renamed file is still recognized. If a Guest already has the song, the Host switches to it and the Guest uses its local copy instead of a P2P transfer.
+  - On a phone (Guest) every row has "save to this device"; when you tap download on the phone, the Host downloads the song and then sends a copy to the phone.
+  - A "Local library" panel: sort by date added / size / title, delete single songs, export to files (desktop Chrome / Edge can pick a save location or a whole folder, other browsers use a normal download), storage usage and "request persistent storage".
+  - iOS Safari clears site data after 7 days without a visit; the panel suggests "Add to Home Screen".
+- **Play modes and solo / duo** (queue algorithm in [`public/playQueue.js`](public/playQueue.js), pure logic, covered by `tests/playQueue.test.mjs`):
+  - Sequential / loop all / loop one / shuffle. Shuffle does not reorder the playlist; it keeps its own shuffled order: each song plays once per round, and a new round never starts with the song that just finished. "Previous" goes back to what you actually heard, then "next" retraces the same path. Songs added mid-round are heard in the current round.
+  - Solo mode: the "Solo listening" entry creates no room and makes no WebRTC connection; it plays your on-device library directly.
+  - Duo mode: only the Host can change the play mode; it is broadcast with the playlist. The Guest sees the Host's mode and a "next up" preview. Track switches still go through the data channel and make the Guest buffer and switch.
+  - System media controls (MediaSession): lock screen / notification shade / headset buttons / keyboard media keys, with cover, artist and a seekable progress bar. A Guest's key presses become requests to the Host.
+  - Returning from the background: the Guest first fires a burst of pings to re-measure the clock, then asks the Host for the state and hard-aligns to it. If the connection dropped in the background it reconnects with the room code. A Host / solo player interrupted by a phone call resumes from where it stopped.
+- Difference from the main app: it uses HTML5 Audio + PeerJS, which suits quick demos and sharing. The main (Vite) app has sample-accurate scheduling, play-while-receiving, self-hosted signaling and a debug panel.
 
-搜索下载功能需要另开一个终端（只在 Host 电脑上）：
+The search / download feature needs another terminal (on the Host computer only):
 
 ```bash
 cd music-service
@@ -69,82 +71,183 @@ npm run setup:ytdlp
 npm start              # http://127.0.0.1:8090
 ```
 
-生产部署：`npm run build && npm start`（`server/index.js` 托管 `dist/` + 信令 + `/music-api` 代理）。公网使用需 HTTPS，对称 NAT 需在 `src/lib/rtc.js` 配置 TURN。
+Production: `npm run build && npm start` (`server/index.js` serves `dist/` + signaling + the `/music-api` proxy). Public use needs HTTPS; behind a symmetric NAT you need to configure TURN in `src/lib/rtc.js`.
 
-> 项目路径含 `&`，Windows 下 npm 的 `.cmd` 包装会把 `&` 当作命令分隔符，所以脚本里直接调用 `node node_modules/vite/bin/vite.js`。
+> The project path contains `&`. On Windows npm's `.cmd` wrappers treat `&` as a command separator, so the scripts call `node node_modules/vite/bin/vite.js` directly.
 
-## 架构
+## Android app
 
-```
-浏览器（Host / Guest 同一套代码）
-┌──────────────────────────────────────────────────────────────┐
-│ React 组件（只读 store，调用 engine 方法）                       │
-│   ↑ useSession / useMusic（Zustand）                           │
-│ engine/session.js  ── 同步协议、播放列表、提示                    │
-│   ├ lib/signaling.js   WebSocket 信令                          │
-│   ├ lib/rtc.js         RTCPeerConnection（ctrl + file 通道）     │
-│   ├ lib/clock.js       NTP 式时钟同步                            │
-│   ├ lib/transfer.js    文件分片传输（背压）                       │
-│   └ lib/player.js      Web Audio 定时播放 + 音量 + 频谱           │
-│ engine/musicApi.js ── /music-api（仅 Host 本机）                  │
-└──────────────────────────────────────────────────────────────┘
-        │ /ws                              │ /music-api（loopback only）
-   server/signaling.js               server/musicProxy.js → music-service :8090
-   （开发时挂在 Vite 上，生产时挂在 server/index.js 上）
-```
+[Capacitor](https://capacitorjs.com) wraps the single-file dashboard (`public/dashboard.html`) into a native APK. The app opens straight into the dashboard, and the backend address is baked in at build time (`MUSIC_API_URL`).
 
-### 组件拆分
-
-| 组件 | 职责 |
+| Part | Where |
 |---|---|
-| `App` | 大厅 / 房间切换；Host 全窗口拖放添加文件；空格键播放/暂停 |
-| `Lobby` | 昵称 + 头像色；创建房间 / 输入房间码加入（`?room=` 邀请链接自动填充） |
-| `ConnectionBar` | 房间号（复制邀请链接）、角色、连接指示灯（等待 / 连接中 / 同一频道 / 中断）、Ping 信号格（悬停显示时钟偏移与播放漂移）、搜索入口 |
-| `NowPlaying` | 旋转黑胶封面 `CoverDisc`、实时频谱 `Visualizer`（AnalyserNode）、双人头像 `DuoAvatars`（同步播放时连线流动）、传输/缓冲状态 `TransferLine` |
-| `PlayerControls` | 上一曲/播放/下一曲、进度条 `SeekBar`（拖动只预览，松手才广播）、本地音量 `VolumeControl` |
-| `Playlist` | Host 曲库（已下载）+ 本地文件；当前曲目均衡器动画；Guest 点击 = 请求房主切歌 |
-| `SearchDrawer` | 搜索、音源筛选、只看原版/全部、格式；结果含版本标签与音质标签（FLAC / 320k / M4A ≈128k）、原页面链接；逐条下载进度 + 下载队列（SSE） |
-| `Toasts` | 同步提示："晚风 把进度拖到了 01:30" |
+| Capacitor config | [`capacitor.config.json`](capacitor.config.json) (package `com.halfhalf.musicplayer`, `webDir: dist`) |
+| Android project | [`android/`](android/) (committed; no need to run `cap add`) |
+| Permissions and service declarations | [`android/app/src/main/AndroidManifest.xml`](android/app/src/main/AndroidManifest.xml) |
+| Background playback (foreground service) | `NativeFG` in `public/dashboard.html`, plugin `@capawesome-team/capacitor-android-foreground-service` |
+| Cloud build | [`.github/workflows/build-apk.yml`](.github/workflows/build-apk.yml) |
 
-### 状态管理
+### Permissions
 
-两个 Zustand store，**写入方单一**：
+| Permission | Purpose |
+|---|---|
+| `INTERNET`, `ACCESS_NETWORK_STATE` | Reach the backend, WebRTC, network state |
+| `WAKE_LOCK` | Keep the CPU awake while playing |
+| `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_MEDIA_PLAYBACK` | Foreground service for background playback (type `mediaPlayback`; Android 14+ requires a declared type) |
+| `POST_NOTIFICATIONS` | Playback notification (Android 13+ asks on the first play; if denied the service still runs, you just don't see the notification) |
+| `READ_EXTERNAL_STORAGE` (up to Android 12), `WRITE_EXTERNAL_STORAGE` (up to Android 9) | Saving / exporting songs on old systems. Android 10+ uses the system file picker and needs no permission, which is why `READ_MEDIA_AUDIO` is not requested |
 
-- `useSession`：只由 `engine/session.js` 写入。连接（role、peerState、rtt、offset、drift、peer 资料）、当前曲目、播放状态、播放列表、传输进度、提示。
-- `useMusic`：搜索参数与结果、下载任务（SSE 推送）、曲库。曲库变化时 engine 订阅并合并进播放列表，再同步给 Guest。
+Cleartext traffic: release builds allow HTTPS only, with exceptions for `localhost`, `127.0.0.1` and `10.0.2.2` (the host machine as seen from the emulator). Debug builds allow all HTTP through `src/debug/AndroidManifest.xml`, handy for a backend on your LAN such as `http://192.168.1.10:8090`. The WebView page itself is `https://localhost`, so calling an http backend also triggers mixed-content blocking: change `server.androidScheme` in `capacitor.config.json` to `http` before building the debug app.
 
-组件只用 selector 读取，操作一律调用 `engine.act(...)` 等方法——Host 直接执行，Guest 自动转成 `request` 发给 Host 裁决。**高频的播放位置不进 store**：`usePlaybackPosition()` 在需要的小组件里按帧读取 `engine.position()`，避免全树重渲染。
+### Build locally
 
-### 同步协议（ctrl DataChannel）
+You need Node 22+, JDK 21 (Capacitor 8's Android library is compiled for Java 21; JDK 17 will not work) and the Android SDK (`ANDROID_HOME`, or `sdk.dir=…` in `android/local.properties`).
 
-Host 是唯一权威，播放状态 = 锚点 `{ trackId, playing, position, at }`（Host 时钟 `at` 时位置为 `position`）。
+```bash
+# MUSIC_API_URL is the public backend address (public address only, never the token)
+MUSIC_API_URL=https://your-backend.example.com npm run cap:sync   # build the web app and sync it into android/
+node scripts/gradle.mjs assembleDebug                             # -> android/app/build/outputs/apk/debug/app-debug.apk
+node scripts/gradle.mjs assembleRelease                           # -> .../release/app-release.apk (debug-signed unless a key is configured)
+```
 
-| 消息 | 方向 | 说明 |
+The project path contains `&` (Windows), so use `scripts/gradle.mjs` instead of running `gradlew` directly. To use Android Studio, run `npm run cap:sync` and open the `android/` folder.
+
+### Cloud build (GitHub Actions)
+
+| Trigger | Result |
+|---|---|
+| Push a tag such as `v1.2.3` | `assembleRelease`; the APK and its SHA-256 are attached to that tag's GitHub Release (version name `1.2.3`, versionCode `10203`) |
+| Push to `main` | `assembleDebug`, kept as a workflow artifact for 14 days (docs-only changes do not trigger it) |
+| Manual run | choose debug or release |
+
+```bash
+git tag v0.1.0 && git push origin v0.1.0
+```
+
+Repository settings (Settings → Secrets and variables → Actions):
+
+| Name | Kind | Description |
 |---|---|---|
-| `hello` | 双向 | 昵称、头像色 |
-| `playlist` | H→G | 播放列表元数据 |
-| `track` | H→G | 切歌（`by` 发起者、`quiet` 自动行为不提示） |
-| `need_file` / `track_ready` | G→H | Guest 无缓存请求传输 / 已解码可播放 |
-| `play` `pause` `seek` | H→G | 锚点，`at` 设在未来 `clamp(1.5·RTT+60, 120, 1000)` ms |
-| `state` | H→G | 每秒心跳锚点，Guest 漂移 > 30ms 重新对齐 |
-| `request` | G→H | Guest 的 play/pause/seek/next/prev/select |
-| `sync_ping` / `sync_pong` | G↔H | NTP 式时钟同步 |
+| `MUSIC_API_URL` | Variable | Public backend address, baked into the app. Shared with the web deployment |
+| `SIGNAL_URL`, `ICE_URL` | Variable | Optional; derived from `MUSIC_API_URL` by default |
+| `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD` | Secret | Optional. If set, the APK is signed with your release key; otherwise the debug key is used (installable for testing, but not for app stores, and a later build signed with a real key cannot update it) |
 
-切歌流程：Host 发 `track` → Guest 命中缓存（最近 6 首）直接解码，否则 `need_file` → Host 分片传输 → Guest 解码后 `track_ready` → Host 开始播放（最多等 15 秒）。
+Create a release key:
 
-## 已验证
+```bash
+keytool -genkeypair -v -keystore release.jks -alias halfhalf -keyalg RSA -keysize 2048 -validity 10000
+base64 -w0 release.jks     # put the output into ANDROID_KEYSTORE_BASE64; *.jks is in .gitignore, never commit it
+```
 
-本机两个标签页（Host + Guest）：
-- 创建/加入房间，P2P 建连，昵称交换，播放列表同步
-- Guest 点歌 → Host 加载曲库文件 → 传输 3.3 MB → Guest 解码 → 双方同时开始
-- Host 拖动到 01:30：同一时刻双方播放位置相差 0.8 ms（引擎测得漂移 0.04 ms）
-- Guest 拖动进度条 → Host 弹出"晚风 把进度拖到了 01:30"
-- 抽屉搜索"后来 刘若英" → 下载 B 站 JLRS-LeoFM 原版 → 自动以"劉若英 - 後來.m4a"加入播放列表并同步给 Guest
-- `vite build` 通过；375px 宽度无横向溢出
+### Let the backend accept the app
 
-## 已知限制
+The page origin inside the app is `https://localhost`, so add it to the backend's `CORS_ORIGINS`:
 
-- Guest 无法搜索下载（音乐服务只对 Host 本机开放），只能在 Host 的播放列表里点歌
-- 拖入的本地文件不读取 ID3 标签，标题来自文件名（"歌手 - 歌名"格式可自动拆分）
-- 刷新页面会离开房间（P2P 断线会自动 ICE restart，但信令断开不重连）
-- FLAC / 非分片 MP4 无法边收边播，需完整接收后播放
+```
+CORS_ORIGINS=https://your-site.vercel.app,https://localhost
+```
+
+The access token `API_TOKEN` is **not** built into the APK (an APK is a public file). On first launch enter it under "Connection settings → Music service"; it is stored only on the phone.
+
+### Forced update on launch (GitHub Releases)
+
+On every launch the app requests `https://api.github.com/repos/<owner>/<repo>/releases/latest` and compares the latest release's `tag_name` (e.g. `v1.2.0`) with the installed version using semantic versioning. If the remote version is newer, a **non-dismissible** "New version available" dialog appears. It shows the current and latest version and the release notes, has no close button, ignores backdrop taps, Esc and the back key, and offers only **Update now**.
+
+| Part | Where |
+|---|---|
+| Version compare, release parsing, 5 s timeout (pure functions, unit-tested) | [`public/appUpdate.js`](public/appUpdate.js), [`tests/appUpdate.test.mjs`](tests/appUpdate.test.mjs) |
+| Native download / verify / install | [`public/appUpdateNative.js`](public/appUpdateNative.js) |
+| The dialog and the `useAppUpdate` hook | `UpdateGate` in `public/dashboard.html` |
+
+- **Local version** is read from the installed APK's `versionName` (CI writes it from the tag: `v1.2.0` → `1.2.0`); nothing is hard-coded.
+- **Update now**: downloads the release's `.apk` inside the app (with a progress bar), verifies it against the SHA-256 GitHub provides, then opens Android's package installer. The first time, you must allow this app to "install unknown apps" in system settings. On failure an "open in browser instead" link opens the APK URL in the system browser.
+- **Slow GitHub downloads (e.g. mainland China)**: set the repository variable `UPDATE_MIRRORS` at build time (comma-separated, e.g. `https://ghfast.top/`). GitHub is tried first, then each mirror. A mirror is a third party, so it is **only used when a SHA-256 is known**, and a file that fails the check is discarded.
+- **Fault tolerance**: offline, GitHub rate limit, no response within 5 s, no release yet, or no APK in the release all skip silently and never block startup. CI test builds (`0.0.0-dev.*`) and plain browsers do not check for updates.
+- **Published releases only**: `latest` excludes drafts and pre-releases. To ship: `git tag v1.2.0 && git push origin v1.2.0`; the workflow publishes `app-release.apk`, and older installs then get the update on their next launch.
+
+> **Sign with a fixed release key, or updates will not install.** Android only lets a package replace an installed one if both are signed with the same key. Without the `ANDROID_KEYSTORE_*` secrets every build uses a freshly generated debug key, so the new version fails with a "conflicts with an existing package" error. Create the release key as described above and store it in the repository secrets before shipping the first public version, and keep a separate backup of the key file: if you lose it you can no longer update installed copies.
+
+### Known limitations
+
+- The dashboard loads React, Tailwind etc. from CDNs, so the first launch needs internet access.
+- Background playback relies on the foreground service. Some Chinese ROMs (MIUI, ColorOS, ...) also need "autostart / unrestricted battery" enabled for the app in system settings.
+- "Export to file" may not work inside the Android WebView (limited `a[download]` support for blobs).
+- There is no in-app auto-update; download new versions from GitHub Releases.
+- The workflow and the Android project have not been fully built on the author's machine (no Android SDK installed); check the Actions log the first time you push a tag.
+
+## Architecture
+
+```
+Browser (Host / Guest run the same code)
+┌──────────────────────────────────────────────────────────────┐
+│ React components (read the store, call engine methods)         │
+│   ↑ useSession / useMusic (Zustand)                            │
+│ engine/session.js  ── sync protocol, playlist, notices         │
+│   ├ lib/signaling.js   WebSocket signaling                     │
+│   ├ lib/rtc.js         RTCPeerConnection (ctrl + file channels)│
+│   ├ lib/clock.js       NTP-style clock sync                    │
+│   ├ lib/transfer.js    chunked file transfer (backpressure)    │
+│   └ lib/player.js      Web Audio scheduled playback + volume   │
+│                        + spectrum                              │
+│ engine/musicApi.js ── /music-api (Host machine only)           │
+└──────────────────────────────────────────────────────────────┘
+        │ /ws                              │ /music-api (loopback only)
+   server/signaling.js               server/musicProxy.js → music-service :8090
+   (mounted on Vite in dev, on server/index.js in production)
+```
+
+### Components
+
+| Component | Responsibility |
+|---|---|
+| `App` | Lobby / room switching; Host full-window drag-and-drop; space bar toggles play/pause |
+| `Lobby` | Nickname + avatar color; create a room / join with a room code (`?room=` invite links pre-fill it) |
+| `ConnectionBar` | Room code (copy invite link), role, connection light (waiting / connecting / same channel / lost), ping bars (hover for clock offset and playback drift), search entry |
+| `NowPlaying` | Spinning vinyl cover `CoverDisc`, live spectrum `Visualizer` (AnalyserNode), duo avatars `DuoAvatars` (a line flows between them while playing in sync), transfer / buffering status `TransferLine` |
+| `PlayerControls` | Previous / play / next, seek bar `SeekBar` (dragging only previews; the seek is broadcast on release), local volume `VolumeControl` |
+| `Playlist` | Host library (downloaded) + local files; equalizer animation on the current track; a Guest's click = ask the Host to switch |
+| `SearchDrawer` | Search, source filter, original-only / all, format; results carry version labels and quality labels (FLAC / 320k / M4A ≈128k) and the original page link; per-item download progress + download queue (SSE) |
+| `Toasts` | Sync notices: "Evening Wind dragged the progress to 01:30" |
+
+### State management
+
+Two Zustand stores, each with a **single writer**:
+
+- `useSession`: written only by `engine/session.js`. Connection (role, peerState, rtt, offset, drift, peer profile), current track, playback state, playlist, transfer progress, notices.
+- `useMusic`: search parameters and results, download tasks (pushed over SSE), the library. When the library changes the engine subscribes, merges it into the playlist, and syncs it to the Guest.
+
+Components only read through selectors; every action goes through `engine.act(...)` and friends. The Host executes directly, and a Guest's call is turned into a `request` sent to the Host. **The high-frequency playback position is not in the store**: `usePlaybackPosition()` reads `engine.position()` per frame in the few small components that need it, avoiding re-renders of the whole tree.
+
+### Sync protocol (ctrl DataChannel)
+
+The Host is the only authority. Playback state = an anchor `{ trackId, playing, position, at }` (at Host time `at`, the position was `position`).
+
+| Message | Direction | Description |
+|---|---|---|
+| `hello` | both | Nickname, avatar color |
+| `playlist` | H→G | Playlist metadata |
+| `track` | H→G | Track switch (`by` = initiator, `quiet` = automatic action, no notice) |
+| `need_file` / `track_ready` | G→H | Guest has no cache and asks for a transfer / has decoded and can play |
+| `play` `pause` `seek` | H→G | Anchor; `at` is placed in the future by `clamp(1.5·RTT+60, 120, 1000)` ms |
+| `state` | H→G | Heartbeat anchor every second; the Guest re-aligns when drift exceeds 30 ms |
+| `request` | G→H | Guest's play / pause / seek / next / prev / select |
+| `sync_ping` / `sync_pong` | G↔H | NTP-style clock sync |
+
+Track switch flow: the Host sends `track` → the Guest decodes straight away on a cache hit (last 6 songs), otherwise sends `need_file` → the Host sends chunks → the Guest decodes and sends `track_ready` → the Host starts playback (waiting at most 15 seconds).
+
+## Verified
+
+Two tabs on one machine (Host + Guest):
+- Create / join a room, P2P connection, nickname exchange, playlist sync
+- Guest picks a song → Host loads the library file → 3.3 MB transferred → Guest decodes → both start together
+- Host seeks to 01:30: the two playback positions differ by 0.8 ms at the same instant (engine-measured drift 0.04 ms)
+- Guest drags the seek bar → the Host shows a notice "Evening Wind dragged the progress to 01:30"
+- Drawer search "后来 刘若英" → download the JLRS-LeoFM original from Bilibili → added to the playlist as "劉若英 - 後來.m4a" and synced to the Guest
+- `vite build` passes; no horizontal overflow at 375 px width
+
+## Known limitations
+
+- A Guest cannot search or download directly (music-service is open only to the Host machine); they can only pick from the Host's playlist
+- Dropped-in local files do not have their ID3 tags read; the title comes from the file name (the "artist - title" form is split automatically)
+- Refreshing the page leaves the room (P2P drops trigger an automatic ICE restart, but a lost signaling connection is not re-established)
+- FLAC / non-fragmented MP4 cannot be played while still downloading; they play after being fully received

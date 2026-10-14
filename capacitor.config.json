@@ -1,0 +1,12 @@
+{
+  "appId": "com.halfhalf.musicplayer",
+  "appName": "Half&Half",
+  "webDir": "dist",
+  "android": {
+    "allowMixedContent": false,
+    "backgroundColor": "#0b0f1a"
+  },
+  "server": {
+    "androidScheme": "https"
+  }
+}

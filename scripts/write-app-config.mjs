@@ -39,7 +39,17 @@ checkUrl('MUSIC_API_URL', apiBase, ['https:', 'http:']);
 checkUrl('SIGNAL_URL', signalUrl, ['wss:', 'ws:']);
 checkUrl('ICE_URL', iceUrl, ['https:', 'http:']);
 
-const cfg = Object.fromEntries(Object.entries({ apiBase, signalUrl, iceUrl }).filter(([, v]) => v));
+// Android app only: where the force-update check looks for releases ("owner/repo"), and optional download mirrors
+// (comma-separated https:// prefixes such as https://ghfast.top/ ; only used when the APK's SHA-256 is known).
+const updateRepo = (process.env.UPDATE_REPO || process.env.GITHUB_REPOSITORY || '').trim();
+if (updateRepo && !/^[\w.-]+\/[\w.-]+$/.test(updateRepo)) throw new Error(`UPDATE_REPO 必须是 owner/repo 的形式：${updateRepo}`);
+const updateMirrors = (process.env.UPDATE_MIRRORS || '')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+for (const m of updateMirrors) checkUrl('UPDATE_MIRRORS', m, ['https:']);
+
+const cfg = Object.fromEntries(Object.entries({ apiBase, signalUrl, iceUrl, updateRepo, updateMirrors: updateMirrors.length ? updateMirrors : '' }).filter(([, v]) => v));
 await writeFile(
   path.join(dist, 'app-config.js'),
   `// 由 scripts/write-app-config.mjs 在构建时生成，请勿手改\nwindow.HH_CONFIG = ${JSON.stringify(cfg, null, 2)};\n`,

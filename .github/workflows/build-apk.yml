@@ -1,0 +1,163 @@
+name: Build Android APK
+
+# - push a tag like v1.2.3  -> release APK, attached to the GitHub Release of that tag
+# - push to main / manual run -> debug APK (or release, if chosen), kept as a workflow artifact for 14 days
+on:
+  push:
+    branches: [main]
+    tags: ['v*.*.*']
+    paths-ignore: ['**/*.md', 'DEPLOY.md', 'TESTING.md', 'render.yaml', 'Dockerfile', 'vercel.json', 'deploy/**', 'music-service/**']
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: 'APK type'
+        type: choice
+        options: [debug, release]
+        default: debug
+
+permissions:
+  contents: read
+
+concurrency:
+  group: apk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      # Public backend address baked into the app (Settings -> Secrets and variables -> Actions -> Variables).
+      # Never put the API token here: the APK is a public file. Users type it in the app's connection settings.
+      MUSIC_API_URL: ${{ vars.MUSIC_API_URL }}
+      SIGNAL_URL: ${{ vars.SIGNAL_URL }}
+      ICE_URL: ${{ vars.ICE_URL }}
+      # Where the app's startup update check looks for new releases (this repository), plus optional download mirrors.
+      UPDATE_REPO: ${{ github.repository }}
+      UPDATE_MIRRORS: ${{ vars.UPDATE_MIRRORS }}
+      # The `secrets` context cannot be used in `if:`, so expose "is a signing key configured" as a plain env var.
+      HAS_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      # Capacitor 8 compiles the Android library for Java 21, so JDK 17 is not enough.
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Decide build type and version
+        id: meta
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            type=release
+            tag="${GITHUB_REF_NAME}"
+            if [[ "$tag" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+) ]]; then
+              major=${BASH_REMATCH[1]}; minor=${BASH_REMATCH[2]}; patch=${BASH_REMATCH[3]}
+              name="${tag#v}"
+              code=$(( major * 10000 + minor * 100 + patch ))
+            else
+              echo "::error::Tag $tag is not in vMAJOR.MINOR.PATCH form"; exit 1
+            fi
+          else
+            type="${{ github.event.inputs.build_type || 'debug' }}"
+            name="0.0.0-dev.${GITHUB_RUN_NUMBER}+${GITHUB_SHA::7}"
+            code="${GITHUB_RUN_NUMBER}"
+          fi
+          {
+            echo "type=$type"
+            echo "version_name=$name"
+            echo "version_code=$code"
+            echo "task=assemble${type^}"
+          } >> "$GITHUB_OUTPUT"
+          echo "Build $type, version $name ($code)"
+
+      - name: Build web assets (Android bundle)
+        run: npm run build:android
+
+      - name: Sync web assets into the Android project
+        run: npx cap sync android
+
+      - name: Restore release keystore
+        if: env.HAS_KEYSTORE == 'true'
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          echo "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/release.jks"
+          echo "ANDROID_KEYSTORE_FILE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+
+      - name: Build APK with Gradle
+        working-directory: android
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon --stacktrace "${{ steps.meta.outputs.task }}" \
+            -PappVersionName="${{ steps.meta.outputs.version_name }}" \
+            -PappVersionCode="${{ steps.meta.outputs.version_code }}"
+
+      - name: Collect and verify the APK
+        id: apk
+        run: |
+          type="${{ steps.meta.outputs.type }}"
+          src="android/app/build/outputs/apk/${type}/app-${type}.apk"
+          test -f "$src" || { echo "::error::$src was not produced"; ls -R android/app/build/outputs || true; exit 1; }
+          mkdir -p out
+          cp "$src" "out/app-${type}.apk"
+          apksigner=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
+          "$apksigner" verify --verbose --print-certs "out/app-${type}.apk" | head -12
+          (cd out && sha256sum "app-${type}.apk" | tee "app-${type}.apk.sha256")
+          echo "file=app-${type}.apk" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Android APK (${type})"
+            echo "- version: \`${{ steps.meta.outputs.version_name }}\` (code ${{ steps.meta.outputs.version_code }})"
+            if [ "${HAS_KEYSTORE}" = "true" ]; then echo "- signed with the release keystore from repository secrets"; else echo "- signed with the debug key (test signing only, not for app stores)"; fi
+            echo "- size: $(du -h "out/app-${type}.apk" | cut -f1)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: apk-${{ steps.meta.outputs.type }}
+          path: out/*
+          retention-days: 14
+          if-no-files-found: error
+
+  release:
+    # Only for version tags: publish the APK as a GitHub Release attachment.
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: apk-release
+          path: out
+
+      - name: Publish to GitHub Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          ls -l out
+          prerelease=""
+          [[ "$TAG" == *-* ]] && prerelease="--prerelease"
+          gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1 \
+            || gh release create "$TAG" --repo "$REPO" --title "$TAG" --generate-notes --verify-tag $prerelease
+          gh release upload "$TAG" out/app-release.apk out/app-release.apk.sha256 --repo "$REPO" --clobber

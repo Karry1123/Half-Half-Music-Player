@@ -169,6 +169,8 @@ https://<用户名>.github.io,https://halfhalf.vercel.app,https://halfhalf-*.ver
 
 保存后 Render 会自动重启服务。
 
+> 如果还要用 Android App（见 [README](README.zh-CN.md#android-app)），再加上 `https://localhost`：App 里的页面来源就是它。例如 `https://halfhalf.vercel.app,https://localhost`。
+
 ## 第 4 步：在网页里填令牌
 
 1. 打开前端页面（例如 `…/dashboard.html`）。右上角会显示 **「音乐服务需要令牌」**，点它。
@@ -209,6 +211,72 @@ Render 免费实例 15 分钟没有入站请求就会休眠，下次访问要等
 - 保活一个服务大约用掉每月 750 小时额度里的 720~744 小时，第二个免费服务就不能再保活了。
 - 如果能接受"第一次打开等 1 分钟"，可以不配 UptimeRobot：网页在冷启动期间会自动等待（最长 60 秒）。
 - Render 文档里没有提到外部保活。是否符合它当前的服务条款，请自行确认。
+
+---
+
+## 备选：后端放 Northflank（免费、常驻、不休眠）
+
+Render 免费实例会休眠，又只有每月 750 小时，一个 workspace 只够保活一个服务。如果 Render 上已经有别的项目，可以把本项目的后端放到 Northflank。官网写明其免费的 Sandbox 层是常驻计算（不休眠），所以**不需要 UptimeRobot**。镜像直接用仓库里的 `Dockerfile`，不用改代码。
+
+> 以下限制官网没有写明，注册后请在控制台确认：免费层的 CPU 和内存具体数值、出站流量额度、是否需要绑定信用卡、有没有亚洲（新加坡）机房、是否支持 WebSocket。yt-dlp + ffmpeg 比较吃内存，如果被系统杀进程（OOMKilled），说明内存不够，只能换平台或升级。
+> 官网：[northflank.com](https://northflank.com)，价格页：[northflank.com/pricing](https://northflank.com/pricing)。
+
+### 1. 创建项目
+1. 注册并登录，选择免费的 Developer Sandbox。
+2. **Create new → Project**。项目的区域在这里选：优先选亚洲（新加坡）；没有就选离你最近的。
+3. 在 **Integrations** 里把 GitHub 账号连接到 Northflank，授权访问 `Half-Half-Music-Player` 仓库。
+
+### 2. 创建服务
+1. 项目里 **Create new → Service → Combined service**（从代码构建并运行）。
+2. 名称填 `halfhalf-music`（创建后不能改）。
+3. **Repository** 选这个仓库，分支 `main`。
+4. **Build options** 选 **Dockerfile**，路径保持默认 `/Dockerfile`。
+5. **Networking**：Dockerfile 里有 `EXPOSE 10000`，Northflank 会自动识别端口 10000。确认它的 Protocol 是 **HTTP**、Accessibility 是 **Public**。如果没有自动出现，到服务的 **Configure → Networking → Add port** 手动添加。
+6. **Resources** 选免费层允许的最大计算方案。
+7. **Health checks**（在 Advanced 里）：类型选 HTTP，路径 `/health`，端口 10000。
+8. 先别点创建，继续填下面的环境变量。
+
+### 3. 环境变量（Runtime variables）
+
+| 变量 | 值 | 说明 |
+|---|---|---|
+| `API_TOKEN` | 随机字符串 | **必填**。终端运行 `node -e "console.log(crypto.randomUUID())"` 生成。不要发给别人，也不要放进仓库 |
+| `CORS_ORIGINS` | `https://<项目名>.vercel.app,https://<项目名>-*.vercel.app` | 前端网址，只写到域名。先填 `https://example.com` 也行，等前端部署好再改 |
+| `RATE_LIMIT` | `60` | 每个 IP 每分钟的请求次数 |
+| `MAX_DOWNLOADS` | `1` | 小内存时同时只下载一首 |
+
+`HOST`、`PORT`、`ENABLE_SIGNALING`、`YTDLP_JS_RUNTIMES` 等已经在 `Dockerfile` 里设置好，不用填。Northflank 不会像 Render 那样注入 `PORT`，所以端口必须保持 10000，和上面 Networking 里的端口一致。
+
+点 **Create service**，首次构建约 5~10 分钟，在 **Builds** 和 **Logs** 里看进度。
+
+### 4. 取地址并验证
+- 服务页顶部的 **Public URL**（形如 `https://p01--halfhalf-music--xxxx.code.run`）就是后端地址，结尾不带 `/`。
+- 验证：
+
+```bash
+curl https://<你的地址>/ping                      # → pong
+curl https://<你的地址>/api/health                # → 401（令牌保护生效）
+curl -H "Authorization: Bearer <API_TOKEN>" https://<你的地址>/api/health
+```
+
+### 5. 接上前端
+和 Render 的流程一样：
+1. Vercel 项目的环境变量 `MUSIC_API_URL` 填上面的地址，**Redeploy**。
+2. 回 Northflank 把 `CORS_ORIGINS` 改成真实前端网址，保存后服务会自动重启。
+3. 打开前端的「连接设置」，填 `API_TOKEN`，点测试，再点保存并应用。
+
+### 6. 可选
+- **Cookie：** 在服务创建页的 Environment → Advanced 里添加 **Secret files**，文件放 `/etc/secrets/bilibili.txt`，再加变量 `COOKIE_PATH=/etc/secrets/bilibili.txt`（YouTube 同理，变量是 `YT_COOKIE_PATH`）。
+- **TURN：** 填 `METERED_DOMAIN` + `METERED_API_KEY`，见上文 Render 部分。
+
+### 常见问题
+
+| 现象 | 处理 |
+|---|---|
+| 服务反复重启，日志里有 `OOMKilled` | 内存不够。把 `MAX_DOWNLOADS` 保持 1；仍然不行就要升级方案或换平台 |
+| 访问地址 502 / 无法连接 | Networking 里的端口不是 10000，或健康检查路径写错 |
+| 信令 `/ws` 连不上 | 免费层或其网关可能不支持 WebSocket，这时建房间会失败。可改用 `dashboard.html`（PeerJS 公共信令） |
+| 构建失败，找不到仓库 | 没有给 Northflank 授权访问该 GitHub 仓库 |
 
 ---
 

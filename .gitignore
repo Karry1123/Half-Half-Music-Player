@@ -14,3 +14,8 @@ music-service/.venv/
 *.log
 .DS_Store
 Thumbs.db
+
+# Android signing keys must never be committed
+*.jks
+*.keystore
+android/local.properties
