@@ -7,13 +7,13 @@
   "scripts": {
     "dev": "node node_modules/vite/bin/vite.js",
     "dev:all": "node scripts/dev-all.mjs",
-    "build": "node node_modules/vite/bin/vite.js build",
+    "build": "node node_modules/vite/bin/vite.js build && node scripts/bundle-dashboard.mjs",
     "start": "node server/index.js",
     "music": "npm --prefix music-service start",
     "test": "node --test \"tests/*.test.mjs\"",
     "nat-check": "node scripts/nat-check.mjs",
-    "build:deploy": "node node_modules/vite/bin/vite.js build && node scripts/write-app-config.mjs",
-    "build:android": "node node_modules/vite/bin/vite.js build && node scripts/write-app-config.mjs && node scripts/prepare-android-web.mjs",
+    "build:deploy": "npm run build && node scripts/write-app-config.mjs",
+    "build:android": "npm run build:deploy && node scripts/prepare-android-web.mjs",
     "cap:sync": "npm run build:android && node node_modules/@capacitor/cli/bin/capacitor sync android",
     "android:debug": "npm run cap:sync && node scripts/gradle.mjs assembleDebug"
   },
@@ -28,6 +28,10 @@
     "@capacitor/core": "^8.5.3",
     "@capacitor/filesystem": "^8.1.4",
     "@capawesome-team/capacitor-android-foreground-service": "^8.1.0",
+    "htm": "^3.1.1",
+    "lucide-react": "^0.460.0",
+    "peerjs": "^1.5.4",
+    "qrcode": "^1.5.4",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "ws": "^8.18.0",
@@ -38,6 +42,7 @@
     "@vitejs/plugin-react": "^4.5.0",
     "node-turn": "^0.0.6",
     "qrcode-terminal": "^0.12.0",
+    "tailwindcss": "^3.4.17",
     "vite": "^6.3.5"
   }
 }

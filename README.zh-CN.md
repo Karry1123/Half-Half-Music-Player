@@ -4,6 +4,8 @@
 
 两个人、两台设备，同步收听 Host 本机的音乐。Host 的音频文件经 WebRTC DataChannel 直传给 Guest，播放/暂停/拖动毫秒级同步；Host 可在页面里搜索下载歌手原版（见 [music-service](music-service/README.zh-CN.md)）。
 
+**在线使用：** https://karry1123.github.io/Half-Half-Music-Player/dashboard.html （GitHub Pages；Android 安装包见 [Releases](https://github.com/Karry1123/Half-Half-Music-Player/releases)）
+
 技术栈：React 18 + Vite 6 + Zustand 5 · 原生 RTCPeerConnection · Web Audio API · Node.js WebSocket 信令
 
 上线部署（GitHub Pages / Vercel + Render + UptimeRobot 保活）见 [DEPLOY.md](DEPLOY.md)。Android 安装包见下文「[Android App](#android-app)」。
@@ -54,6 +56,12 @@ npm run nat-check      # STUN / NAT 自检
   - 手机（Guest）：歌单每行有"保存到本机"；在手机上点下载，房主下载完后会自动传一份存到手机
   - 「本机曲库」面板：按添加时间 / 大小 / 歌名排序、单曲删除、导出为文件（桌面 Chrome / Edge 可选保存位置或整个文件夹，其他浏览器用普通下载）、存储用量与"申请持久保存"
   - iOS Safari 会清理 7 天未访问网站的数据，面板里会提示"添加到主屏幕"
+- **自定义歌单**（逻辑在 [`public/playlists.js`](public/playlists.js)，`tests/playlists.test.mjs` 覆盖）：
+  - 和曲目存在一起：网页用 IndexedDB 的 `playlists` 表（数据库升级到 v2），Android 用 `playlists-v1.json`。歌单只引用 `tracks.id`：删除歌单不会删音频；从本机删歌会自动从所有歌单里移除
+  - 内置「全部已下载 / 已导入」（虚拟歌单，永远等于整个曲库）和「默认曲库」（"稍后整理"，不能改名或删除）。升级后第一次打开，已有的歌全部并入默认曲库，不会丢
+  - 下载搜索结果、提取链接、选择 / 拖入本地文件时，先问放进哪个歌单（可以当场新建，也可以勾选"以后不再询问"）。每首歌的「⋯」里有"添加到歌单""从当前歌单移除""从本机删除"
+  - 单人：歌单头部的「播放全部」或双击歌单里任一首，播放队列立即换成这个歌单；上一首 / 下一首 / 随机 / 循环都只在歌单内
+  - 房间：房主点「在房间中播放」会广播 `set_playlist`，双方顶部显示"正在与对方一起收听歌单：【歌单名】"，Guest 的列表与房主队列一致；播放当前这首时 Guest 会预先缓存歌单里的下一首，切歌不用等传输
 - **播放模式与单人 / 双人**（队列算法在 [`public/playQueue.js`](public/playQueue.js)，纯逻辑，`tests/playQueue.test.mjs` 覆盖）：
   - 顺序 / 列表循环 / 单曲循环 / 随机。随机不打乱歌单，单独维护洗牌顺序：一轮内每首只播一次，新一轮第一首不会是刚播完的那首；"上一首"回到真正听过的歌，再"下一首"原路返回；中途加的歌本轮就能听到
   - 单人模式：主界面"单人听歌"，不建房间、不连 WebRTC，直接播本机曲库

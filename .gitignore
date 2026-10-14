@@ -19,3 +19,16 @@ Thumbs.db
 *.jks
 *.keystore
 android/local.properties
+
+# Build caches, IDE state, generated packages
+.gradle-cache/
+.build-tmp/
+mobile-check*.png
+.idea/
+*.apk
+*.aab
+*.hprof
+*.tmp.mjs
+.env.*
+!.env.example
+android/keystore.properties

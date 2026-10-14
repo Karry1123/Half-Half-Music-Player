@@ -5,6 +5,7 @@
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { mkdirSync } from 'node:fs';
 
 const androidDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'android');
 const win = process.platform === 'win32';
@@ -14,10 +15,19 @@ if (!args.length) {
   process.exit(2);
 }
 
-const wrapper = win ? 'gradlew.bat' : './gradlew';
-// On Windows the .bat has to go through cmd, so quote everything that may hold spaces or "&".
+const wrapper = './gradlew';
+// Invoke the same wrapper JAR directly on Windows. gradlew.bat expands unquoted
+// directory variables internally, breaking workspace names containing "&".
+const java = process.env.JAVA_HOME ? path.join(process.env.JAVA_HOME, 'bin', 'java.exe') : 'java.exe';
+const env = { ...process.env };
+if (win) {
+  // Long Windows sandbox TEMP paths exceed the JDK Unix-domain socket limit.
+  const temp = path.join(androidDir, '..', '.build-tmp');
+  mkdirSync(temp, { recursive: true });
+  env.JAVA_TOOL_OPTIONS = `${env.JAVA_TOOL_OPTIONS || ''} "-Djdk.net.unixdomain.tmpdir=${temp}"`.trim();
+}
 const result = win
-  ? spawnSync('cmd.exe', ['/d', '/s', '/c', `"${wrapper} ${args.map((a) => `"${a}"`).join(' ')}"`], { cwd: androidDir, stdio: 'inherit', windowsVerbatimArguments: true })
+  ? spawnSync(java, ['-classpath', path.join(androidDir, 'gradle/wrapper/gradle-wrapper.jar'), 'org.gradle.wrapper.GradleWrapperMain', ...args], { cwd: androidDir, stdio: 'inherit', env })
   : spawnSync(wrapper, args, { cwd: androidDir, stdio: 'inherit' });
 
 if (result.error) {

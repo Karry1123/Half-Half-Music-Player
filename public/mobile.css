@@ -1,0 +1,98 @@
+:root {
+  --safe-top: var(--safe-area-inset-top, env(safe-area-inset-top, 0px));
+  --safe-bottom: var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px));
+  --safe-left: var(--safe-area-inset-left, env(safe-area-inset-left, 0px));
+  --safe-right: var(--safe-area-inset-right, env(safe-area-inset-right, 0px));
+  --player-height: 0px;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; width: 100%; min-width: 0; overflow-x: clip; }
+body { padding: var(--safe-top) var(--safe-right) 0 var(--safe-left); }
+#root { min-width: 0; padding-bottom: calc(var(--player-height) + var(--safe-bottom) + 16px); }
+.sticky.top-0 { top: var(--safe-top); }
+/* Edge-to-edge Android: the status bar is transparent, so scrolled content (search box, song titles) used to run
+   under the clock and system icons. Paint the safe-area strip so content scrolls beneath it instead.
+   Height is 0 in a normal browser. z 55: above page content (header z-30, toasts z-50), below overlays and dialogs (z 60+). */
+body::before {
+  content: '';
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--safe-top);
+  background: rgba(14, 12, 11, 0.94);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+  z-index: 55;
+  pointer-events: none;
+}
+.player-bar { padding: 0 var(--safe-right) var(--safe-bottom) var(--safe-left); }
+.player-transport {
+  display: grid;
+  grid-template-columns: 44px 44px 52px 44px 44px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+}
+.player-transport > button {
+  display: grid;
+  place-items: center;
+  justify-self: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.player-transport > .player-primary { width: 52px; height: 52px; }
+.player-transport svg { display: block; flex-shrink: 0; }
+.search-result-row { display: grid; grid-template-columns: 44px minmax(0, 1fr) 44px; align-items: start; }
+.search-result-row > :last-child { justify-self: center; align-self: center; flex-shrink: 0; }
+.result-heading { flex-wrap: wrap; }
+.result-heading > :first-child,
+.search-result-card > div:nth-child(2) > :first-child {
+  white-space: normal; overflow: visible; overflow-wrap: anywhere;
+}
+.result-metadata { flex-wrap: wrap; gap: 4px 8px; line-height: 1.6; }
+.result-metadata > * { flex-shrink: 0; max-width: 100%; overflow-wrap: anywhere; }
+.result-artist { white-space: normal; overflow-wrap: anywhere; overflow: visible; }
+.result-metadata > .result-artist { flex-basis: 100%; }
+[role="dialog"], [role="alertdialog"] {
+  padding-top: max(16px, var(--safe-top));
+  padding-bottom: max(16px, var(--safe-bottom));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+/* Bottom sheets (rounded top corners) never reach the status bar: no top inset, only the gesture-bar inset */
+[role="dialog"].rounded-t-3xl { padding-top: 0; padding-bottom: var(--safe-bottom); }
+@media (max-width: 767px) {
+  .search-result-row { padding-top: 12px; padding-bottom: 12px; gap: 10px; }
+  .search-result-card { display: grid; grid-template-columns: 56px minmax(0, 1fr); align-items: start; }
+  .search-result-card > :last-child { grid-column: 2; align-items: flex-start; }
+  input, select, textarea { font-size: 16px !important; }
+  button { min-height: 44px; }
+  button[aria-label] { min-width: 44px; }
+  /* Status / profile chips in the home header: compact pills, still a comfortable touch target */
+  .hh-chip { min-height: 36px; }
+  button.hh-chip[aria-label] { min-width: 0; }
+  input[type="range"].hh { height: 32px; }
+  input[type="range"].hh::-webkit-slider-thumb { opacity: 1; width: 18px; height: 18px; margin-top: -7px; }
+  .player-bar > div { padding: 10px 16px 4px; gap: 6px; }
+  .player-bar > div > div:first-child > div:nth-child(2) { flex: 1; }
+  .player-bar > div > div:first-child .mt-1 { display: none; }
+  .connection-header > div { gap: 6px 10px; padding: 8px 16px; }
+  .connection-header > div > button:first-child { order: 0; flex: 1; }
+  .connection-header button[aria-label="连接设置"],
+  .connection-header button[aria-label="离开房间"] { order: 0; }
+  .connection-header > div > form { order: 2; flex-basis: 100%; flex-wrap: nowrap; gap: 8px; }
+  .connection-header > div > form > span { display: none; }
+  .connection-header > div > form > button { flex-shrink: 0; font-size: 12px; padding: 8px 10px; }
+  .connection-header > div > form > input { flex: 1; width: 0; min-width: 80px; height: 44px; padding: 8px; letter-spacing: 0; }
+  .connection-header > div > span { order: 3; font-size: 11px; }
+  .connection-header > div > span.flex-1 { display: none; }
+  .connection-header > div > div.flex.items-center { display: none; }
+  .connection-header > div > div.flex.flex-wrap { order: 2; flex-basis: 100%; }
+  .connection-header > div > span[role="status"] { padding: 3px 8px; }
+  main, section, header, .grid > *, .flex > * { min-width: 0; }
+}

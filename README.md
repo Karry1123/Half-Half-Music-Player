@@ -4,6 +4,8 @@
 
 Two people, two devices, listening to the Host's music in sync. The Host's audio file is sent to the Guest over a WebRTC DataChannel; play / pause / seek stay in sync to within milliseconds. The Host can also search for and download the original artist's version from inside the page (see [music-service](music-service/README.md)).
 
+**Try it online:** https://karry1123.github.io/Half-Half-Music-Player/dashboard.html (GitHub Pages; Android APK on the [Releases](https://github.com/Karry1123/Half-Half-Music-Player/releases) page)
+
 Stack: React 18 + Vite 6 + Zustand 5 · native RTCPeerConnection · Web Audio API · Node.js WebSocket signaling
 
 For production deployment (GitHub Pages / Vercel + Render + UptimeRobot keep-alive) see [DEPLOY.md](DEPLOY.md) (Chinese). For the Android APK see [Android app](#android-app) below.
@@ -54,6 +56,12 @@ You can browse songs while waiting for your partner; once they join, both of you
   - On a phone (Guest) every row has "save to this device"; when you tap download on the phone, the Host downloads the song and then sends a copy to the phone.
   - A "Local library" panel: sort by date added / size / title, delete single songs, export to files (desktop Chrome / Edge can pick a save location or a whole folder, other browsers use a normal download), storage usage and "request persistent storage".
   - iOS Safari clears site data after 7 days without a visit; the panel suggests "Add to Home Screen".
+- **Playlists** (logic in [`public/playlists.js`](public/playlists.js), covered by `tests/playlists.test.mjs`):
+  - Stored next to the tracks: IndexedDB store `playlists` on the web (database v2), `playlists-v1.json` on Android. A playlist only references `tracks.id`, so deleting a playlist never deletes audio, and deleting a song removes it from every playlist.
+  - Built-in: "全部已下载 / 已导入" (virtual, always the whole library) and "默认曲库" (the "sort later" inbox; cannot be renamed or deleted). On first launch after upgrading, every existing song is moved into 默认曲库, so nothing is lost.
+  - Downloading a search result, extracting a link, or importing / dropping files first asks which playlists to put the song in (you can create one right there, or tick "don't ask again"). Each song's "⋯" menu offers "add to playlist", "remove from this playlist" and "delete from device".
+  - Solo: "播放全部" (or double-clicking a song inside a playlist) replaces the play queue with that playlist; next / previous / shuffle / repeat stay inside it.
+  - Room: the Host's "在房间中播放" broadcasts `set_playlist`; both sides show "正在与对方一起收听歌单：【name】" and the Guest's list matches the Host's queue. While a song plays, the Guest prefetches the next song in the playlist, so a track change needs no transfer wait.
 - **Play modes and solo / duo** (queue algorithm in [`public/playQueue.js`](public/playQueue.js), pure logic, covered by `tests/playQueue.test.mjs`):
   - Sequential / loop all / loop one / shuffle. Shuffle does not reorder the playlist; it keeps its own shuffled order: each song plays once per round, and a new round never starts with the song that just finished. "Previous" goes back to what you actually heard, then "next" retraces the same path. Songs added mid-round are heard in the current round.
   - Solo mode: the "Solo listening" entry creates no room and makes no WebRTC connection; it plays your on-device library directly.

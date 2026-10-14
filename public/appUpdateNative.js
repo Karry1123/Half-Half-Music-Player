@@ -5,6 +5,7 @@
 //   FileOpener  @capacitor-community/file-opener    hands the APK to Android's package installer
 //   Browser     @capacitor/browser                  fallback: download in the system browser
 import { base64ToBytes, downloadCandidates, sha256Hex } from './appUpdate.js';
+import { nativePlugin } from './nativeBridge.js';
 
 const APK_MIME = 'application/vnd.android.package-archive';
 const DIR = 'CACHE';
@@ -17,10 +18,10 @@ export const isAndroidApp = () => !!(cap()?.isNativePlatform?.() && cap().getPla
 let plugins;
 const P = () =>
   (plugins ??= {
-    App: cap().registerPlugin('App'),
-    Filesystem: cap().registerPlugin('Filesystem'),
-    FileOpener: cap().registerPlugin('FileOpener'),
-    Browser: cap().registerPlugin('Browser'),
+    App: nativePlugin('App'),
+    Filesystem: nativePlugin('Filesystem'),
+    FileOpener: nativePlugin('FileOpener'),
+    Browser: nativePlugin('Browser'),
   });
 
 /** versionName of the installed APK (the CI build sets it from the git tag), e.g. "1.2.0" */
@@ -28,11 +29,6 @@ export async function getInstalledVersion() {
   return (await P().App.getInfo()).version;
 }
 
-/** Swallow the hardware back button while the force-update dialog is up.  Returns a function that restores it. */
-export async function blockBackButton() {
-  const handle = await P().App.addListener('backButton', () => {});
-  return () => handle.remove();
-}
 
 /** Plan A: let the system browser download the APK (the user then taps the finished download to install). */
 export async function openInBrowser(url) {
