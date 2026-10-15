@@ -1,5 +1,6 @@
 import express from 'express';
 import path from 'node:path';
+import { existsSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { config } from './config.js';
 import { DownloadManager } from './downloads.js';
@@ -263,6 +264,7 @@ server.listen(config.port, config.host, async () => {
   console.log(`  ffmpeg:   ${ffmpeg ? '可用' : '未安装 → yt-dlp 源只保存原始音频流，不转码'}`);
   console.log(`  音源:     ${providers.map((p) => p.name).join(', ')}`);
   console.log(`  YouTube:  ${config.youtube.proxy ? `代理 ${redact(config.youtube.proxy)}` : '直连（国内网络请设置 PROXY_URL）'}`);
+  console.log(`  YT Cookie: ${config.youtube.cookieFile && existsSync(config.youtube.cookieFile) ? '已加载' : '未配置（频繁下载可能被要求验证）'}`);
   console.log(`  B 站:     ${config.bilibili.cookieFile || config.bilibili.cookie ? `Cookie ${config.bilibili.cookieFile || 'BILIBILI_COOKIE'}` : '未配置 Cookie（最高 192K）'}`);
   accountInfo(); // 预热 B 站会话，并打印登录 / 大会员状态
 });
