@@ -1,4 +1,4 @@
-import { copyFileSync, chmodSync, existsSync } from 'node:fs';
+import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,15 +9,47 @@ if (existsSync(path.join(root, '.env'))) process.loadEnvFile(path.join(root, '.e
 const env = process.env;
 /** 相对路径按 music-service 目录解析，方便在 .env 里写 COOKIE_PATH=./cookies/bilibili.txt */
 const file = (p) => (p ? path.resolve(root, p) : null);
-/** yt-dlp 每次运行后会把 Cookie 写回文件；平台挂载的密钥文件常是只读的，所以先复制一份到临时目录 */
+/**
+ * 把各种来源的 Cookie 文本整理成 yt-dlp 认的 Netscape 格式：
+ * 去掉 BOM / 开头空行、补上首行标记、空格分隔改回 Tab，也接受浏览器扩展导出的 JSON 数组。
+ */
+export function normalizeCookies(text) {
+  const raw = String(text).replace(/^﻿/, '').trim();
+  const out = ['# Netscape HTTP Cookie File'];
+  let entries = 0, skipped = 0;
+  if (raw.startsWith('[')) {
+    for (const c of JSON.parse(raw)) {
+      if (!c?.domain || !c.name) { skipped++; continue; }
+      const domain = c.hostOnly === false && !c.domain.startsWith('.') ? `.${c.domain}` : c.domain;
+      out.push([(c.httpOnly ? '#HttpOnly_' : '') + domain, domain.startsWith('.') ? 'TRUE' : 'FALSE', c.path || '/', c.secure ? 'TRUE' : 'FALSE',
+        Math.floor(c.expirationDate || 0), c.name, c.value ?? ''].join('\t'));
+      entries++;
+    }
+    return { text: out.join('\n') + '\n', entries, skipped };
+  }
+  for (const line of raw.split(/\r?\n/)) {
+    const t = line.trim();
+    if (!t || /^#\s*(Netscape )?HTTP Cookie File/i.test(t) || (t.startsWith('#') && !t.startsWith('#HttpOnly_'))) continue;
+    let fields = t.split('\t');
+    if (fields.length !== 7) fields = t.split(/\s+/);
+    if (fields.length === 6) fields.push(''); // 空值 Cookie
+    if (fields.length !== 7) { skipped++; continue; }
+    out.push(fields.join('\t'));
+    entries++;
+  }
+  return { text: out.join('\n') + '\n', entries, skipped };
+}
+/** yt-dlp 每次运行后会把 Cookie 写回文件；平台挂载的密钥文件常是只读的，所以先整理格式并复制一份到临时目录 */
 const writableCopy = (p) => {
   if (!p || !existsSync(p)) return p;
   try {
     const copy = path.join(os.tmpdir(), `hh-${path.basename(p)}`);
-    copyFileSync(p, copy);
+    const { text, entries, skipped } = normalizeCookies(readFileSync(p, 'utf8'));
+    writeFileSync(copy, text, { mode: 0o600 });
     chmodSync(copy, 0o600);
+    console.log(`Cookie 文件 ${path.basename(p)}: ${entries} 条有效${skipped ? `，跳过 ${skipped} 行无法识别` : ''}`);
     return copy;
-  } catch (e) { console.error('Cookie 文件复制失败，直接使用原文件:', e.message); return p; }
+  } catch (e) { console.error('Cookie 文件整理失败，直接使用原文件:', e.message); return p; }
 };
 const list = (s) => (s || '').split(',').map((x) => x.trim()).filter(Boolean);
 
