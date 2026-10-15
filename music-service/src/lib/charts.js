@@ -39,7 +39,8 @@ export class ChartsCache {
       }
     } catch {}
     void this.refresh();
-    this.timer = setInterval(() => { void this.refresh(); }, DAY);
+    // refresh() only fetches charts older than a day, so checking often just retries failures sooner
+    this.timer = setInterval(() => { void this.refresh(); }, 30 * 60 * 1000);
     this.timer.unref?.();
     return this;
   }
@@ -58,7 +59,7 @@ export class ChartsCache {
       await Promise.all(CHARTS.map(async def => {
         if (this.cache[def.id] && this.now() - this.cache[def.id].updatedAt < DAY) return;
         try {
-          const response = await this.fetcher(def.url, { signal: AbortSignal.timeout(10000) });
+          const response = await this.fetcher(def.url, { signal: AbortSignal.timeout(20000) });
           if (!response.ok) throw new Error(`HTTP ${response.status}`);
           const data = await response.json();
           const tracks = def.parser === 'apple' ? parseAppleChart(data) : parseBillboardChart(data);
