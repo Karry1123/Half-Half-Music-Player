@@ -2,15 +2,15 @@
 // 本地：经由 /music-api 代理（仅 Host 本机可用）；部署后：app-config.js 里的 apiBase（如 Render 上的服务）
 const stored = (k) => { try { return localStorage.getItem(k) || ''; } catch { return ''; } };
 const BASE = (stored('hh.api') || window.HH_CONFIG?.apiBase || '/music-api').replace(/\/+$/, '');
-const TOKEN = stored('hh.apiToken'); // 公网部署的访问令牌，用户在页面里填写，只存在本机
+import { accessToken } from '../account.js';
 
 /** <audio> / EventSource 不能带请求头，令牌放在查询参数里 */
-const withToken = (url) => (TOKEN ? `${url}${url.includes('?') ? '&' : '?'}token=${encodeURIComponent(TOKEN)}` : url);
+const withToken = (url) => (accessToken() ? `${url}${url.includes('?') ? '&' : '?'}token=${encodeURIComponent(accessToken())}` : url);
 
 async function request(path, init = {}) {
   let res;
   try {
-    res = await fetch(`${BASE}${path}`, { ...init, headers: { ...init.headers, ...(TOKEN && { Authorization: `Bearer ${TOKEN}` }) } });
+    res = await fetch(`${BASE}${path}`, { ...init, headers: { ...init.headers, ...(accessToken() && { Authorization: `Bearer ${accessToken()}` }) } });
   } catch {
     throw new Error('无法连接音乐服务');
   }

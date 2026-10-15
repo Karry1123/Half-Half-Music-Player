@@ -35,7 +35,7 @@ export function cors(req, res, next) {
     res.set('Access-Control-Allow-Origin', origin);
   }
   res.set('Access-Control-Allow-Headers', 'Content-Type, Authorization, Range');
-  res.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   // 前端用 fetch 读音频分段 / 文件大小时需要这些响应头
   res.set('Access-Control-Expose-Headers', 'Content-Length, Content-Range, Accept-Ranges, Content-Type');
   res.set('Access-Control-Max-Age', '600');

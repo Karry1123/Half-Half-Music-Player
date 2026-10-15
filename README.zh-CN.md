@@ -83,6 +83,18 @@ npm start              # http://127.0.0.1:8090
 
 > 项目路径含 `&`，Windows 下 npm 的 `.cmd` 包装会把 `&` 当作命令分隔符，所以脚本里直接调用 `node node_modules/vite/bin/vite.js`。
 
+## 账号、云端歌单与 ZIP 导出
+
+音乐服务默认为**账号模式**：注册后需用一次性**邀请码**激活一次，激活前搜索、链接解析、下载、云端歌单和双人同步都会被服务端拒绝。激活状态保存在服务端，之后在任何设备（网页或 Android）登录都无需再填邀请码。登录凭据是 30 天有效的随机令牌（服务端只存 SHA-256），网页存在 localStorage，Android 存在 Capacitor Preferences。
+
+- **云端歌单**：只同步元数据（歌单名、歌名、歌手、音源 ID、页面链接），音频按需下载到各设备本地（“缓存全部”/ 单首下载）。音源失效会明确提示并可“替换音源”；两台设备同时修改会被拒绝（409），不会互相覆盖。
+- **ZIP 导出**：歌单或整个本机曲库可打包为一个 ZIP，文件名为 `歌手 - 歌名.扩展名`，附带 `metadata.json`；Android 上交给系统分享面板。
+- **数据库**：生产环境设置 `DATABASE_URL` 为 PostgreSQL 连接串（如 Northflank 免费 PostgreSQL）；不设置时用本地 SQLite 文件（`ACCOUNT_DB`，需要 Node >= 22.13），仅供开发。
+- **邀请码**：在服务所在环境运行 `node music-service/scripts/invite.mjs 7`（7 天有效、单次使用）。
+- `AUTH_MODE=legacy` 关闭账号系统，保留旧的共享 `API_TOKEN` 方式。
+
+详细说明、表结构和验收步骤见 [ACCOUNT_SYNC_EXPORT.md](ACCOUNT_SYNC_EXPORT.md)。
+
 ## Android App
 
 用 [Capacitor](https://capacitorjs.com) 把单文件 Dashboard（`public/dashboard.html`）封装成原生 APK。App 打开后直接进入 Dashboard，后端地址在构建时写进去（`MUSIC_API_URL`）。

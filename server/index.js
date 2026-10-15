@@ -10,6 +10,7 @@ import { iceConfigAsync } from './ice.js'; // 先导入：它会加载项目根�
 import { proxyMusic } from './musicProxy.js';
 import { attachSignaling } from './signaling.js';
 import { lanAddresses } from './turn.js';
+import { authorizeRequest } from './accountAccess.js';
 
 const PORT = Number(process.env.PORT) || 8080;
 const DIST = normalize(fileURLToPath(new URL('../dist/', import.meta.url)));
@@ -35,6 +36,7 @@ const server = http.createServer(async (req, res) => {
     return res.end(JSON.stringify({ ips: lanAddresses().map((a) => a.address) }));
   }
   if (req.url === '/ice.json') {
+    if (!(await authorizeRequest(req, res))) return;
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
     return iceConfigAsync().then((list) => res.end(JSON.stringify(list)));
   }

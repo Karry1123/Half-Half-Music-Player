@@ -12,6 +12,10 @@ services:
     healthCheckPath: /health
     autoDeploy: true
     envVars:
+      # 免费实例没有持久磁盘，账号数据库会随重启丢失：这里保持旧的 API_TOKEN 模式。
+      # 账号模式（邀请码激活）请部署到能挂持久卷的平台，并把卷挂到 /var/data/halfhalf
+      - key: AUTH_MODE
+        value: "legacy"
       # 访问令牌：Render 自动生成一串随机值，部署后在控制台 Environment 里查看，填到网页「连接设置」
       - key: API_TOKEN
         generateValue: true

@@ -79,7 +79,7 @@ export class DownloadManager extends EventEmitter {
   /**
    * @returns {{job: object, existing?: boolean} | {library: object}}
    */
-  enqueue(track, { format = 'mp3', quality = null } = {}) {
+  enqueue(track, { format = 'mp3', quality = null, cacheTtlMs = 0 } = {}) {
     for (const j of this.jobs.values()) {
       if (j.trackId === track.id && ACTIVE.includes(j.status)) return { job: pub(j), existing: true };
     }
@@ -94,6 +94,7 @@ export class DownloadManager extends EventEmitter {
       source: track.source,
       sourceName: track.sourceName,
       format,
+      cacheTtlMs,
       quality, // 指定音轨：B 站档位 id（30251 / 30280 …）或 YouTube format_id；null = 最佳
       qualityLabel: null,
       status: 'queued',
@@ -159,6 +160,7 @@ export class DownloadManager extends EventEmitter {
       const { size } = await stat(dest);
 
       await addToLibrary({
+        expiresAt: job.cacheTtlMs ? Date.now() + job.cacheTtlMs : null,
         trackId: track.id,
         file,
         title,

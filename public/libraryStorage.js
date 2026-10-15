@@ -47,6 +47,7 @@ export const usage = call('usage');
 export const requestPersist = call('requestPersist');
 export const exportTrack = call('exportTrack');
 export const exportAll = call('exportAll');
+export const exportBlob = isNative ? call('exportBlob') : undefined;
 export const listPlaylists = call('listPlaylists');
 export const putPlaylist = call('putPlaylist');
 export const deletePlaylist = call('deletePlaylist');

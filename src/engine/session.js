@@ -1,3 +1,4 @@
+import { accessToken } from '../account.js';
 // 会话引擎：把 信令 / WebRTC / 时钟同步 / 文件传输 / 播放器 串起来，
 // 并把所有需要展示的状态写进 useSession（React 只读 store，通过本模块的方法发起操作）。
 //
@@ -107,7 +108,7 @@ class SessionEngine {
     this.receiver = this.createReceiver();
     setInterval(() => this.heartbeat(), HEARTBEAT_MS);
     setInterval(() => this.publishStats(), 500);
-    this.connectSignaling();
+    // Signaling starts only after the account gate admits the user (src/main.jsx).
     // 曲库变化（下载完成）→ 合并进 Host 播放列表
     useMusic.subscribe((s, prev) => {
       if (s.library !== prev.library && get().role === 'host') this.syncLibrary(s.library);
@@ -186,7 +187,9 @@ class SessionEngine {
   // ═══════════════════════════════════════════════════════ 信令
   connectSignaling() {
     // 部署到静态托管时信令在后端服务上（app-config.js 的 signalUrl），本地开发走同源 /ws
-    this.sig = new Signaling(window.HH_CONFIG?.signalUrl || `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`);
+    const url = new URL(window.HH_CONFIG?.signalUrl || `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`);
+    if (accessToken()) url.searchParams.set('token', accessToken());
+    this.sig = new Signaling(url.href);
     this.sig.onopen = () => set({ signaling: 'open' });
     this.sig.onclose = () => set({ signaling: 'closed' });
     this.sig.onmessage = (m) => this.onSignal(m);

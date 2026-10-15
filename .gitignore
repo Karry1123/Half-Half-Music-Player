@@ -32,3 +32,7 @@ mobile-check*.png
 .env.*
 !.env.example
 android/keystore.properties
+music-service/data/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm

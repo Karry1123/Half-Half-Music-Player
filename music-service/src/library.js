@@ -1,6 +1,6 @@
 // downloads/library.json：已下载曲目的元数据索引（播放器可直接读取，无需再解析音频标签）
 import { existsSync } from 'node:fs';
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, writeFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { config } from './config.js';
 
@@ -24,6 +24,16 @@ export function listLibrary() {
 
 export function findInLibrary(trackId) {
   return listLibrary().find((e) => e.trackId === trackId) || null;
+}
+
+// Only new account-mode temporary downloads carry expiresAt. Existing local files are untouched.
+export async function cleanTemporaryDownloads() {
+  const expired = entries.filter(e => e.expiresAt && e.expiresAt < Date.now());
+  for (const e of expired) {
+    if (path.basename(e.file) !== e.file) continue;
+    await rm(path.join(config.downloadDir, e.file), { force: true });
+  }
+  entries = entries.filter(e => !expired.includes(e));
 }
 
 export function addToLibrary(entry) {

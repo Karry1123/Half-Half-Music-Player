@@ -39,9 +39,14 @@ ENV NODE_ENV=production \
     FFMPEG_PATH=ffmpeg \
     DOWNLOAD_DIR=/tmp/halfhalf/downloads \
     CACHE_DIR=/tmp/halfhalf/cache \
-    ENABLE_SIGNALING=1
+    ENABLE_SIGNALING=1 \
+    ACCOUNT_DB=/var/data/halfhalf/accounts.sqlite
 
-# 不以 root 运行；只需要写 /tmp（下载、缓存）和 /opt/yt-dlp（启动时自动更新）
+# 账号数据库：生产环境设置 DATABASE_URL（PostgreSQL，如 Northflank 免费数据库），容器重建不丢数据。
+# 没有 DATABASE_URL 时才退回这里的 SQLite 文件——容器重新部署后会清空，只适合试用
+RUN mkdir -p /var/data/halfhalf && chown node:node /var/data/halfhalf
+
+# 不以 root 运行；只需要写 /tmp（下载、缓存）、/opt/yt-dlp（启动时自动更新）和账号数据库目录
 USER node
 EXPOSE 10000
 

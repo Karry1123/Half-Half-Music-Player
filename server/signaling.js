@@ -4,6 +4,7 @@
 // 只接管 /ws 的 upgrade，不影响 Vite HMR 自己的 WebSocket。
 import { WebSocketServer } from 'ws';
 import { iceConfig } from './ice.js';
+import { authorizeAccount } from './accountAccess.js';
 
 /** @type {Map<string, {host: import('ws').WebSocket, guest: import('ws').WebSocket | null}>} */
 const rooms = new Map();
@@ -72,18 +73,36 @@ function onMessage(ws, msg) {
   }
 }
 
-export function attachSignaling(httpServer, path = '/ws') {
-  const wss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 });
+// 已连接的信令多久重新核对一次账号（被注销 / 退出后踢下线），避免每条信令都查一次数据库
+export const REAUTH_MS = Number(process.env.SIGNAL_REAUTH_MS) || 30_000;
 
-  httpServer.on('upgrade', (req, socket, head) => {
+/** authorize(token)：可以是异步的，抛错 / reject 即拒绝；传 null 关闭账号校验 */
+export function attachSignaling(httpServer, path = '/ws', authorize = authorizeAccount) {
+  const wss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 });
+  const tokenOf = (req) => new URL(req.url, 'http://localhost').searchParams.get('token');
+
+  httpServer.on('upgrade', async (req, socket, head) => {
     if (new URL(req.url, 'http://localhost').pathname !== path) return; // 交给其他 upgrade 监听者（如 Vite HMR）
+    if (authorize) {
+      try { await authorize(tokenOf(req)); }
+      catch { socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n'); socket.destroy(); return; }
+    }
     wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
   });
 
-  wss.on('connection', (ws) => {
+  wss.on('connection', (ws, req) => {
     ws.isAlive = true;
     ws.on('pong', () => (ws.isAlive = true));
-    ws.on('message', (raw) => {
+    let checkedAt = Date.now(), checking = null;
+    ws.on('message', async (raw) => {
+      // 核对进行中时后续消息一起等待同一个结果，消息顺序不变
+      if (authorize && (checking || Date.now() - checkedAt > REAUTH_MS)) {
+        checking ??= Promise.resolve()
+          .then(() => authorize(tokenOf(req)))
+          .then(() => { checkedAt = Date.now(); return true; }, () => false)
+          .finally(() => (checking = null));
+        if (!(await checking)) return ws.close(1008, 'Authentication required');
+      }
       let msg;
       try {
         msg = JSON.parse(raw);

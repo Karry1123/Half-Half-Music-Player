@@ -10,7 +10,7 @@ const script = html.match(/<script type="module">([\s\S]*?)<\/script>/)?.[1];
 if (!config || !script) throw new Error('Dashboard build markers missing');
 // Configuration is trusted repository source, not remote content.
 const theme = Function(`return (${config})`)();
-const css = await postcss([tailwind({ ...theme, content: [{ raw: html, extension: 'html' }] })])
+const css = await postcss([tailwind({ ...theme, content: [{ raw: html, extension: 'html' }, 'public/*.js'] })])
   .process('@tailwind base; @tailwind components; @tailwind utilities;', { from: undefined });
 await writeFile('dist/dashboard.css', css.css);
 await build({ stdin: { contents: script, resolveDir: path.resolve('public'), sourcefile: 'dashboard.js' },

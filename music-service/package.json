@@ -7,14 +7,20 @@
   "scripts": {
     "start": "node src/server.js",
     "setup:ytdlp": "node scripts/setup-ytdlp.mjs",
-    "test": "node --test \"tests/*.test.mjs\""
+    "test": "node --test \"tests/*.test.mjs\"",
+    "invite": "node scripts/invite.mjs"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22.13"
   },
   "dependencies": {
     "express": "^5.1.0",
     "opencc-js": "^1.0.5",
+    "pg": "^8.23.1",
     "undici": "^7.30.0"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.10",
+    "@electric-sql/pglite-socket": "^0.2.13"
   }
 }

@@ -164,6 +164,7 @@ async function getBinary(store, id) {
 
 const listeners = new Set();
 const channel = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('halfhalf-library') : null;
+channel?.unref?.(); // Node tests should not stay alive solely for browser change notifications.
 channel?.addEventListener('message', (e) => listeners.forEach((fn) => fn(e.data)));
 
 function emit(event) {

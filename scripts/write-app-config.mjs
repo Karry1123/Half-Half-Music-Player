@@ -55,10 +55,13 @@ await writeFile(
   `// 由 scripts/write-app-config.mjs 在构建时生成，请勿手改\nwindow.HH_CONFIG = ${JSON.stringify(cfg, null, 2)};\n`,
 );
 
-// GitHub Pages 没有服务端重写：找不到的路径会返回 404.html，让它和 index.html 一样即可进入单页应用
-await copyFile(path.join(dist, 'index.html'), path.join(dist, '404.html'));
+// Deep links must resolve assets at the configured mount, not at the missing route's directory.
+const base = process.env.VITE_BASE || '/';
+if (base !== './' && (!base.startsWith('/') || !base.endsWith('/') || base.startsWith('//') || /[<>"?#\\]/.test(base))) throw new Error('VITE_BASE 必须是 /、./ 或 /子目录/');
+const entry = `${base === './' ? '/' : base}dashboard.html`;
+await writeFile(path.join(dist, '404.html'), `<!doctype html><meta charset="utf-8"><title>Half&Half</title><script>location.replace(${JSON.stringify(entry)} + location.search + location.hash)</script>`);
 
 const html = await readFile(path.join(dist, 'index.html'), 'utf8');
 console.log(`app-config.js：${Object.keys(cfg).length ? JSON.stringify(cfg) : '空（本地 / 同源模式）'}`);
 console.log(`base：${html.match(/src="([^"]*assets\/[^"]+)"/)?.[1]?.replace(/assets\/.*/, '') || '/'}`);
-if (!apiBase) console.warn('⚠ 没有设置 MUSIC_API_URL：线上页面只能用演示数据搜索（双人同步、本地导入仍可用）');
+if (!apiBase) console.warn('没有设置 MUSIC_API_URL：账号模式需要同源 /music-api 代理；静态托管请配置后端地址。');

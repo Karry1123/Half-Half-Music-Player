@@ -83,6 +83,18 @@ Production: `npm run build && npm start` (`server/index.js` serves `dist/` + sig
 
 > The project path contains `&`. On Windows npm's `.cmd` wrappers treat `&` as a command separator, so the scripts call `node node_modules/vite/bin/vite.js` directly.
 
+## Accounts, cloud playlists and ZIP export
+
+The music service runs in **account mode** by default: sign up, then activate the account once with a single-use **invite code**. Until then search, link resolving, downloads, cloud playlists and the two-person sync are refused by the server. Activation is stored server side, so signing in on any other device (web or Android) needs no code again. Sessions are 30-day random bearer tokens (only their SHA-256 is stored); the web app keeps the token in localStorage, Android in Capacitor Preferences.
+
+- **Cloud playlists**: only metadata (names, titles, artists, source ids, page links) is synced; audio is downloaded on demand into each device's own storage ("Cache all" / per-track download). Dead sources show a clear warning with a "replace source" field. Concurrent edits from two devices are rejected (409) instead of overwriting each other.
+- **ZIP export**: a playlist (or the whole local library) can be packed into one ZIP named `Artist - Title.ext` with a `metadata.json`; on Android the ZIP goes to the system share sheet.
+- **Database**: set `DATABASE_URL` to a PostgreSQL connection string in production (e.g. a Northflank free PostgreSQL add-on); without it a local SQLite file (`ACCOUNT_DB`, Node >= 22.13) is used for development.
+- **Invite codes**: `node music-service/scripts/invite.mjs 7` (valid 7 days, single use), run where the service runs.
+- `AUTH_MODE=legacy` turns the account system off and keeps the old shared `API_TOKEN` behaviour.
+
+Details, table layout and test steps: [ACCOUNT_SYNC_EXPORT.md](ACCOUNT_SYNC_EXPORT.md) (Chinese).
+
 ## Android app
 
 [Capacitor](https://capacitorjs.com) wraps the single-file dashboard (`public/dashboard.html`) into a native APK. The app opens straight into the dashboard, and the backend address is baked in at build time (`MUSIC_API_URL`).

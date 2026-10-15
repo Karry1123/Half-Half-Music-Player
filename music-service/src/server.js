@@ -8,10 +8,11 @@ import { detectFfmpeg, detectYtdlp } from './lib/tools.js';
 import { pipeRemote } from './lib/transfer.js';
 import { accountInfo } from './providers/bilibili.js';
 import { resolveLink, streamSource } from './resolve.js';
-import { listLibrary, loadLibrary } from './library.js';
+import { listLibrary, loadLibrary, cleanTemporaryDownloads } from './library.js';
 import { parseTrackId, providers, timeoutFor } from './providers/index.js';
 import { makeTrack } from './providers/track.js';
 import { aggregateSearch, trackCache } from './search.js';
+import { Accounts, mountAccounts } from './accounts.js';
 
 const FORMATS = ['mp3', 'm4a', 'flac', 'best', 'original'];
 const QUALITY_RE = /^[\w-]{1,20}$/; // B 站音轨 id（30280）或 YouTube format_id（251 / 140-drc）
@@ -24,8 +25,14 @@ await downloads.init();
 const app = express();
 app.disable('x-powered-by');
 app.set('trust proxy', 1); // Render / Vercel 等前面有一层反向代理：限流按真实客户端 IP
-app.use(express.json({ limit: '16kb' }));
+app.use(express.json({ limit: '2mb' }));
 app.use(cors);
+// 账号库：设置了 DATABASE_URL 就用 PostgreSQL（如 Northflank 免费数据库），否则用本地 SQLite 文件（ACCOUNT_DB）
+const accounts = process.env.AUTH_MODE === 'legacy' ? null : await Accounts.open({ root: config.root });
+if (accounts) console.log(`账号数据库: ${accounts.db.dialect === 'postgres' ? 'PostgreSQL（DATABASE_URL）' : 'SQLite'}`);
+const accountGuard = accounts ? mountAccounts(app, accounts, rateLimit({ perMinute: 15, name: 'account' })) : null;
+if (accounts) setInterval(() => cleanTemporaryDownloads().catch(e => console.error('Temporary cache cleanup:', e.message)), 60000).unref();
+if (!accounts) app.get('/auth/config', (_req, res) => res.json({ required: false }));
 
 // ---------------------------------------------------------------- 保活 / 健康检查（不需要令牌，UptimeRobot 用）
 // 刻意保持极轻：不探测 yt-dlp、不读磁盘，几毫秒返回，也不会唤醒任何下载
@@ -38,11 +45,11 @@ app.head(['/ping', '/health'], (_req, res) => res.sendStatus(200)); // UptimeRob
 // 不需要令牌：好友那一端没有令牌，也要拿到 TURN 才能跨境连上。凭证本身是短期的，并且有限流
 if (config.signaling) {
   const { iceConfigAsync } = await import('../../server/ice.js');
-  app.get('/ice.json', rateLimit({ perMinute: 30, name: 'ice' }), async (_req, res) => res.set('Cache-Control', 'no-store').json(await iceConfigAsync()));
+  app.get('/ice.json', accountGuard || ((_req, _res, next) => next()), rateLimit({ perMinute: 30, name: 'ice' }), async (_req, res) => res.set('Cache-Control', 'no-store').json(await iceConfigAsync()));
 }
 
 // 以下全部需要访问令牌（配置了 API_TOKEN 时）
-app.use(['/api', '/files'], requireToken);
+app.use(['/api', '/files'], accountGuard || requireToken);
 app.use(['/api/search', '/api/resolve', '/api/download'], rateLimit());
 
 // ---------------------------------------------------------------- 状态
@@ -146,24 +153,36 @@ app.post('/api/download', async (req, res) => {
       artists: meta?.artist ? [String(meta.artist).slice(0, 100)] : [],
     });
 
-  const r = downloads.enqueue(track, { format, quality });
+  const r = downloads.enqueue(track, { format, quality, cacheTtlMs: accounts ? 3600000 : 0 });
+  if (accounts) await accounts.grant(req.account.id, track.id);
   if (r.library) return res.status(200).json({ status: 'exists', file: r.library.file, url: `/files/${encodeURIComponent(r.library.file)}`, entry: r.library });
   res.status(r.existing ? 200 : 202).json({ status: r.job.status, job: r.job, events: '/api/events' });
 });
 
-app.get('/api/downloads', (_req, res) => res.json(downloads.list()));
-app.get('/api/downloads/:id', (req, res) => {
+// 账号模式下每个账号只能看到自己发起过的下载
+const ownedBy = async (req) => (accounts ? accounts.ownedTracks(req.account.id) : null);
+const visible = (owned, trackId) => !owned || owned.has(trackId);
+app.get('/api/downloads', async (req, res) => {
+  const owned = await ownedBy(req);
+  res.json(downloads.list().filter((j) => visible(owned, j.trackId)));
+});
+app.get('/api/downloads/:id', async (req, res) => {
   const job = downloads.get(req.params.id);
-  job ? res.json(job) : res.status(404).json({ error: '任务不存在' });
+  job && (!accounts || (await accounts.owns(req.account.id, job.trackId))) ? res.json(job) : res.status(404).json({ error: '任务不存在' });
 });
 
 // Server-Sent Events：下载进度 / 完成 / 失败实时推送
-app.get('/api/events', (req, res) => {
+app.get('/api/events', async (req, res) => {
+  let owned = await ownedBy(req);
   res.set({ 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
   res.flushHeaders();
   const send = (event, data) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
-  send('snapshot', downloads.list());
-  const onJob = (job) => send('job', job);
+  send('snapshot', downloads.list().filter((j) => visible(owned, j.trackId)));
+  const onJob = async (job) => {
+    // 新发起的下载在授权之后才会出现：缓存里没有就重新读一次
+    if (owned && !owned.has(job.trackId)) owned = await ownedBy(req).catch(() => owned);
+    if (visible(owned, job.trackId)) send('job', job);
+  };
   downloads.on('job', onJob);
   const heartbeat = setInterval(() => res.write(': ping\n\n'), 25000);
   req.on('close', () => {
@@ -173,9 +192,19 @@ app.get('/api/events', (req, res) => {
 });
 
 // ---------------------------------------------------------------- 本地曲库
-app.get('/api/library', (_req, res) => res.json(listLibrary()));
+app.get('/api/library', async (req, res) => {
+  const owned = await ownedBy(req);
+  res.json(listLibrary().filter((t) => visible(owned, t.trackId)));
+});
 app.use(
   '/files',
+  async (req, res, next) => {
+    if (!accounts) return next();
+    let filename; try { filename = decodeURIComponent(req.path.slice(1)); } catch { return res.sendStatus(400); }
+    const entry = listLibrary().find(t => t.file === filename);
+    if (!entry || !(await accounts.owns(req.account.id, entry.trackId))) return res.sendStatus(404);
+    next();
+  },
   express.static(config.downloadDir, { dotfiles: 'deny', index: false, fallthrough: false, acceptRanges: true }),
 );
 
@@ -209,5 +238,5 @@ const server = app.listen(config.port, config.host, async () => {
 // Vite 主应用的 WebRTC 信令（/ws）：静态托管没有后端，信令跟音乐服务部署在一起
 if (config.signaling) {
   const { attachSignaling } = await import('../../server/signaling.js');
-  attachSignaling(server);
+  attachSignaling(server, '/ws', accounts ? (token) => accounts.user(token, true) : null);
 }

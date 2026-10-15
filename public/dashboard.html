@@ -98,7 +98,8 @@
       "htm": "https://esm.sh/htm@3.1.1",
       "lucide-react": "https://esm.sh/lucide-react@0.460.0?external=react",
       "peerjs": "https://esm.sh/peerjs@1.5.4",
-      "qrcode": "https://esm.sh/qrcode@1.5.4"
+      "qrcode": "https://esm.sh/qrcode@1.5.4",
+      "jszip": "https://esm.sh/jszip@3.10.1"
     }
   }
 </script>
@@ -114,7 +115,7 @@ import {
   Activity, AlertTriangle, ArrowDownUp, ArrowRight, Check, FolderDown, HardDrive, HardDriveDownload, CirclePlay, Clock as ClockIcon, Copy, Crown, Disc3, Download, FileAudio, Flame, Globe,
   ExternalLink, Gauge, Headphones, History, Home, ListOrdered, Server, Settings, Zap, Repeat, Repeat1, Shuffle, User, LayoutDashboard, Link, Link2, ListMusic, Loader2, LogOut, Music2, Pause, Play, QrCode,
   Radio, RefreshCw, Search, ShieldCheck, Signal, SkipBack, SkipForward, Sparkles, Square, Trash2, Upload, Users, Volume2, VolumeX,
-  Wifi, WifiOff, X, Plus, MoreHorizontal, ListPlus, ListMinus, Pencil, Library, Eye, EyeOff, ChevronDown,
+  Wifi, WifiOff, X, Plus, MoreHorizontal, ListPlus, ListMinus, Pencil, Library, Eye, EyeOff, ChevronDown, Cloud,
 } from 'lucide-react';
 import { Peer } from 'peerjs';
 import QRCode from 'qrcode';
@@ -128,6 +129,8 @@ function useBackLayer(open, close) {
 }
 import { MODE_LABEL, PLAY_MODES, PlayQueue } from './playQueue.js';
 import { ALL_ID, ALL_NAME, INBOX_ID, PlaylistStore, missingFromLibrary, playlistsOf, resolveScope } from './playlists.js';
+import { AccountClient } from './accountClient.js';
+import { AccountCard, AccountGate, CloudSheet, ZipExport } from './accountUI.js';
 import { checkForUpdate, DEFAULT_REPO } from './appUpdate.js';
 import * as NativeUpdate from './appUpdateNative.js';
 
@@ -140,10 +143,11 @@ const HH = window.HH_CONFIG || {};
 const stored = (k) => { try { return localStorage.getItem(k) || ''; } catch { return ''; } };
 const API_BASE = (params.has('api') ? params.get('api') : stored('hh.api') || HH.apiBase || (location.protocol.startsWith('http') ? '/music-api' : '')).replace(/\/+$/, '');
 // 公网部署的访问令牌（API_TOKEN）：只存在本机浏览器，绝不写进页面
-const API_TOKEN = stored('hh.apiToken');
-const authHeaders = (h = {}) => (API_TOKEN ? { ...h, Authorization: `Bearer ${API_TOKEN}` } : h);
+const account = new AccountClient(API_BASE);
+const accessToken = () => account.required ? account.token : stored('hh.apiToken');
+const authHeaders = (h = {}) => (accessToken() ? { ...h, Authorization: `Bearer ${accessToken()}` } : h);
 /** <audio> / EventSource 不能带请求头，令牌放在查询参数里 */
-const apiUrl = (path) => `${API_BASE}${path}${API_TOKEN ? `${path.includes('?') ? '&' : '?'}token=${encodeURIComponent(API_TOKEN)}` : ''}`;
+const apiUrl = (path) => `${API_BASE}${path}${accessToken() ? `${path.includes('?') ? '&' : '?'}token=${encodeURIComponent(accessToken())}` : ''}`;
 const PEER_OPTIONS = {
   ...(params.get('peerHost') && {
     host: params.get('peerHost'),
@@ -181,7 +185,7 @@ async function buildIce(settings = loadIceSettings()) {
   let source = '内置 STUN';
   if (location.protocol.startsWith('http') || HH.iceUrl) {
     try {
-      const r = await fetch(HH.iceUrl || '/ice.json', { signal: AbortSignal.timeout(HH.iceUrl ? 8000 : 3000), cache: 'no-store' }); // 后端在 Render 上时可能要冷启动
+      const r = await fetch(HH.iceUrl || new URL('./ice.json', location.href).href, { headers: authHeaders(), signal: AbortSignal.timeout(HH.iceUrl ? 8000 : 3000), cache: 'no-store' }); // 后端在 Render 上时可能要冷启动
       const list = r.ok ? await r.json() : null;
       if (Array.isArray(list) && list.length) [servers, source] = [list, '服务器下发'];
     } catch {}
@@ -215,7 +219,7 @@ async function applyIce(settings) {
   set({ ice: c.summary });
   return c;
 }
-let iceReady = applyIce();
+let iceReady = Promise.resolve();
 // 每台设备一个固定 id：掉线重连时房主据此认出"还是刚才那个人"，直接替换旧连接
 const CLIENT_ID = (() => {
   try {
@@ -294,6 +298,7 @@ const store = createStore({
   link: null, // { kind: 'lan'|'p2p'|'relay', rtt, protocol }：当前实际走的路径
   ice: null, // 当前 ICE 配置摘要（连接设置面板用）
   connSettingsOpen: false,
+  cloudOpen: false,
   peerAway: false, // 对方切到后台 / 暂时无响应
   ping: null,
   me: loadProfile(),
@@ -482,6 +487,7 @@ const api = {
 
   /** GET /api/search?q=&sources= */
   async search(q, sources) {
+    await account.assertActive();
     if (viaHost()) return rpc('search', { q, sources });
     if (get().apiMode === 'auth') throw new Error(AUTH_HINT);
     if (get().apiMode !== 'live') {
@@ -514,6 +520,7 @@ const api = {
 
   /** GET /api/resolve?url= → 链接对应的真实曲目（标题 / 时长 / 最高音质 / 体积）；演示模式返回 null */
   async resolve(url) {
+    await account.assertActive();
     if (viaHost()) return rpc('resolve', { url });
     if (get().apiMode === 'auth') throw new Error(AUTH_HINT);
     if (get().apiMode !== 'live') return null;
@@ -551,6 +558,7 @@ const api = {
    * @returns {Promise<{ blob: Blob, fileName: string }>}
    */
   async download(result, onProgress) {
+    await account.assertActive();
     // remote：房主电脑下载并加入它的曲库，曲库会同步过来，本机无需拿到文件
     if (viaHost() && !result.mock) {
       await rpc('download', { result }, onProgress);
@@ -894,6 +902,7 @@ class Session {
 
   // ───────────────────────── 房间
   async createRoom() {
+    try { await account.assertActive(); } catch (e) { return toast(e.message, 'warn'); }
     this.out.unlock();
     await iceReady;
     this.destroyPeer();
@@ -901,7 +910,9 @@ class Session {
     set({ role: 'host', conn: 'opening', roomCode: null, joinError: null });
     const peer = (this.peer = new Peer(PEER_PREFIX + code, PEER_OPTIONS));
     peer.on('open', () => set({ roomCode: code, conn: 'waiting' }));
-    peer.on('connection', (c) => {
+    peer.on('connection', async (c) => {
+      try { await account.verifyPeer(c.metadata?.ticket, code); } catch { c.close(); return; }
+      if (this.peer !== peer) { c.close(); return; }
       const cid = c.metadata?.clientId || null;
       if (this.conn?.open) {
         // 同一台设备重连（它那边已经判定掉线），或者旧连接已经静默：用新连接替换旧连接
@@ -928,6 +939,7 @@ class Session {
   }
 
   async joinRoom(code) {
+    try { await account.assertActive(); } catch (e) { return toast(e.message, 'warn'); }
     code = String(code).trim();
     if (!/^\d{6}$/.test(code)) return toast('房间码是 6 位数字', 'warn');
     this.out.unlock();
@@ -961,8 +973,11 @@ class Session {
     return peer;
   }
 
-  dial(code) {
-    const c = this.peer.connect(PEER_PREFIX + code, { reliable: true, serialization: 'binary', metadata: { clientId: CLIENT_ID } });
+  async dial(code) {
+    let ticket;
+    try { ticket = await account.peerTicket(code); } catch (e) { this.leave(); toast(e.message, 'warn'); return; }
+    if (!this.peer || this.peer.destroyed) return;
+    const c = this.peer.connect(PEER_PREFIX + code, { reliable: true, serialization: 'binary', metadata: { clientId: CLIENT_ID, ticket } });
     this.bind(c);
     return c;
   }
@@ -1129,7 +1144,14 @@ class Session {
   bind(c) {
     this.conn = c;
     this.byeReceived = false;
-    c.on('open', () => {
+    let opened = false;
+    const onOpen = async () => {
+      if (opened) return;
+      opened = true;
+      if (account.required && !this.isGuest) {
+        try { c.send({ type: 'account-admission', ticket: await account.peerTicket(get().roomCode) }); }
+        catch (e) { c.close(); toast(e.message, 'warn'); return; }
+      }
       if (this.conn !== c) return c.close(); // 已经被更新的连接取代
       const wasReconnect = this.isGuest ? !!this.rc : c.reconnected;
       this.stopReconnect();
@@ -1161,9 +1183,26 @@ class Session {
           this.send({ type: 'state', ...this.anchor });
         }
       }
-    });
-    c.on('data', (m) => {
+    };
+    c.on('open', onOpen);
+    if (c.open) queueMicrotask(onOpen);
+    let admitted = !account.required || !this.isGuest, pending = [], verifying = false;
+    c.on('data', async (m) => {
       if (this.conn !== c) return;
+      if (!admitted) {
+        if (m?.type === 'account-admission' && !verifying) {
+          verifying = true;
+          try {
+            await account.verifyPeer(m.ticket, get().roomCode);
+            if (this.conn !== c) return;
+            admitted = true;
+            for (const message of pending) this.onMessage(message);
+            pending = [];
+          } catch { c.close(); }
+        } else if (pending.length < 64) pending.push(m);
+        else c.close();
+        return;
+      }
       this.lastRx = now();
       if (get().peerAway && m.type !== 'bg') set({ peerAway: false });
       this.onMessage(m);
@@ -2530,6 +2569,7 @@ function PlaylistHeader({ view, items }) {
         title=${inRoom ? '加载这个歌单，和对方一起听' : '用这个歌单替换播放队列'}>
         <${inRoom ? Users : Play} size=${14} fill=${inRoom ? 'none' : 'currentColor'} /> ${inRoom ? '在房间中播放' : '播放全部'}
       </button>
+      <${ZipExport} variant="icon" storage=${LocalLib} name=${title} trackIds=${playlist?.trackIds} />
     </div>
   </div>`;
 }
@@ -3118,6 +3158,7 @@ function LocalLibraryModal() {
           disabled=${LocalLib.isNative || !list.length || !!busy} onClick=${exportAll} title=${LocalLib.canPickFolder() ? '选择一个文件夹，把所有歌曲写进去' : '逐个下载所有歌曲'}>
           ${busy?.startsWith?.('all') ? html`<${Loader2} size=${13} class="animate-spin" /> ${busy.slice(4) || '导出中'}` : html`<${FolderDown} size=${13} /> 全部导出`}
         </button>
+        <${ZipExport} storage=${LocalLib} name="本机曲库" />
       </div>
 
       <div class="scroll-thin min-h-[160px] flex-1 overflow-y-auto px-3 pb-4" role="list">
@@ -3156,19 +3197,19 @@ function ConnSettingsModal() {
   const ice = useStore((s) => s.ice);
   const [form, setForm] = useState(loadIceSettings);
   const [test, setTest] = useState(null);
-  const [svc, setSvc] = useState({ api: stored('hh.api'), token: API_TOKEN });
+  const [svc, setSvc] = useState({ api: stored('hh.api'), token: accessToken() });
   const [svcTest, setSvcTest] = useState(null);
   const [name, setName] = useState(get().me.name);
   const [showToken, setShowToken] = useState(false);
   useEffect(() => { if (open) { setForm(loadIceSettings()); setTest(null); setSvc({ api: stored('hh.api'), token: stored('hh.apiToken') }); setSvcTest(null); setName(get().me.name); setShowToken(false); } }, [open]);
-  const svcBase = (svc.api || HH.apiBase || '/music-api').replace(/\/+$/, '');
+  const svcBase = (svc.api || API_BASE).replace(/\/+$/, '');
   // 依次检查：服务是否在线（/health，可能要等冷启动）→ 跨域是否放行 → 令牌是否正确
   const testService = async () => {
     setSvcTest({ running: true });
     try {
       const h = await fetch(`${svcBase}/health`, { signal: AbortSignal.timeout(70000) });
       if (h.status === 403) return setSvcTest({ ok: false, text: '服务拒绝了这个网页的跨域请求：把当前网址加进后端的 CORS_ORIGINS' });
-      const r = await fetch(`${svcBase}/api/health`, { headers: svc.token ? { Authorization: `Bearer ${svc.token}` } : {}, signal: AbortSignal.timeout(15000) });
+      const r = await fetch(`${svcBase}/api/health`, { headers: account.required && svcBase === API_BASE ? authHeaders() : svc.token ? { Authorization: `Bearer ${svc.token}` } : {}, signal: AbortSignal.timeout(15000) });
       if (r.status === 401) return setSvcTest({ ok: false, text: svc.token ? '令牌不对（401）' : '服务开启了访问令牌，请填写 API_TOKEN' });
       if (!r.ok) return setSvcTest({ ok: false, text: `服务返回 HTTP ${r.status}` });
       const j = await r.json();
@@ -3233,7 +3274,7 @@ function ConnSettingsModal() {
     ${r.running ? html`<${Loader2} size=${13} class="mr-1 inline animate-spin" /> ${runningText}` : r.text}
   </div>`;
   const svcHost = (() => { try { return new URL(svcBase, location.href).host; } catch { return svcBase; } })();
-  const hasToken = !!stored('hh.apiToken');
+  const hasToken = !!accessToken();
   const me = get().me;
   return html`<div class="fixed inset-0 z-[70] flex items-end justify-center bg-ink-950/70 backdrop-blur-sm sm:items-center sm:p-6" onClick=${(e) => e.target === e.currentTarget && close()}>
     <section role="dialog" aria-modal="true" aria-label="连接设置" class="flex max-h-[92vh] w-full max-w-lg flex-col overflow-hidden rounded-t-3xl border border-ink-700 bg-ink-900 shadow-2xl sm:rounded-3xl">
@@ -3247,6 +3288,7 @@ function ConnSettingsModal() {
       </header>
 
       <div class="scroll-thin space-y-4 overflow-y-auto px-4 py-4 text-sm sm:px-5">
+        <${AccountCard} client=${account} className=${card} />
         <section class=${card} aria-labelledby="set-me">
           <h3 id="set-me" class="text-xs font-semibold uppercase tracking-wider text-sand-500">我的昵称</h3>
           <div class="flex items-center gap-3">
@@ -3259,10 +3301,10 @@ function ConnSettingsModal() {
         <section class=${card} aria-labelledby="set-svc">
           <div class="flex items-center gap-2">
             <h3 id="set-svc" class="flex-1 text-xs font-semibold uppercase tracking-wider text-sand-500">音乐服务（搜索 / 下载）</h3>
-            <span class=${cx('shrink-0 rounded-full px-2 py-0.5 text-[11px]', hasToken ? 'bg-sync/15 text-sync' : 'bg-white/5 text-sand-400')}>${hasToken ? '已填令牌' : '未填令牌'}</span>
+            <span class=${cx('shrink-0 rounded-full px-2 py-0.5 text-[11px]', hasToken ? 'bg-sync/15 text-sync' : 'bg-white/5 text-sand-400')}>${account.required ? '账号自动授权' : hasToken ? '已填令牌' : '未填令牌'}</span>
           </div>
           <div class="truncate text-xs text-sand-400" title=${svcBase}>服务器：<span class="text-sand-200">${API_BASE ? svcHost : '无（演示模式）'}</span></div>
-          <label class="block space-y-1.5">
+          ${account.required ? html`<p class="text-xs text-sand-400">已使用账号授权，无需填写 API_TOKEN。</p>` : html`          <label class="block space-y-1.5">
             <span class="text-xs text-sand-400">访问令牌 <span class="text-sand-500">（服务端没设置就留空）</span></span>
             <div class="flex gap-2">
               <div class="relative min-w-0 flex-1">
@@ -3275,6 +3317,7 @@ function ConnSettingsModal() {
               <button class="shrink-0 rounded-xl border border-ink-600 px-4 text-xs font-medium text-sand-200 hover:border-sync hover:text-sync disabled:opacity-40" disabled=${svcTest?.running} onClick=${testService}>测试</button>
             </div>
           </label>
+`}
           ${result(svcTest, '正在连接（服务休眠时首次唤醒要 30~60 秒）…')}
           <details class="group">
             <summary class="flex cursor-pointer list-none items-center gap-1 text-xs text-sand-500 hover:text-sand-200">
@@ -3561,6 +3604,9 @@ function HomeHeader() {
         <h1 class="truncate text-lg font-extrabold tracking-tight sm:text-2xl">Half<span class="text-gradient">&</span>Half <span class="hidden min-[380px]:inline">Music Player</span></h1>
         <p class="truncate text-[13px] text-sand-400 sm:text-sm">一人一半，耳机分你一只<span class="hidden text-sand-500 sm:inline"> · Two screens, one rhythm</span></p>
       </div>
+      ${account.required && html`<button class="glass inline-flex h-11 min-w-11 shrink-0 items-center justify-center gap-1.5 rounded-full px-3 text-sm text-sand-200 hover:text-sand-50 sm:px-4" onClick=${() => set({ cloudOpen: true })} aria-label="云端歌单" title="云端歌单：多设备同步，按需缓存">
+        <${Cloud} size=${18} /><span class="hidden sm:inline">云端歌单</span>
+      </button>`}
       <button class="glass inline-flex h-11 min-w-11 shrink-0 items-center justify-center gap-1.5 rounded-full px-3 text-sm text-sand-200 hover:text-sand-50 sm:px-4" onClick=${openSettings} aria-label="设置" title="昵称、音乐服务令牌、跨网络连接">
         <${Settings} size=${18} /><span class="hidden sm:inline">设置</span>
       </button>
@@ -4298,12 +4344,14 @@ function UpdateGate() {
 }
 
 function App() {
+  const cloudLocalPlaylists = useStore(s => s.playlists);
+  const cloudOpen = useStore(s => s.cloudOpen);
   const screen = useStore((s) => s.screen);
   const currentId = useStore((s) => s.currentId);
   const keyboardOpen = useKeyboardOpen();
   useEffect(() => {
     probeNetwork();
-    fetch('/lan.json').then((r) => (r.ok ? r.json() : null)).then((d) => d?.ips && set({ lanIps: d.ips })).catch(() => {});
+    fetch(new URL('./lan.json', location.href)).then((r) => (r.ok ? r.json() : null)).then((d) => d?.ips && set({ lanIps: d.ips })).catch(() => {});
   }, []);
   // 底部常驻播放器：播放台始终显示；主界面里有歌时才显示；软键盘弹出时隐藏
   const showPlayer = !keyboardOpen && (screen === 'deck' || !!currentId);
@@ -4317,6 +4365,7 @@ function App() {
   }, [showPlayer]);
 
   return html`
+    <${CloudSheet} open=${cloudOpen} onClose=${() => set({ cloudOpen: false })} client=${account} storage=${LocalLib} playlists=${cloudLocalPlaylists} restore=${() => session.restoreLocal()} />
     ${screen === 'home'
       ? html`<${HomeView} />`
       : html`<${ConnectionBar} />
@@ -4351,6 +4400,7 @@ function AppShell() {
     return () => { disposed = true; remove?.(); };
   }, []);
   useEffect(() => {
+    iceReady = applyIce();
     api.init();
     session.restoreLocal(); // 每次打开页面：自动识别本机已保存的歌曲
     if (/^\d{6}$/.test(params.get('room') || '')) session.joinRoom(params.get('room')); // 角色自动识别：带房间码进入即为 Guest
@@ -4367,7 +4417,7 @@ function AppShell() {
   return html`<${App} />`;
 }
 
-createRoot(document.getElementById('root')).render(html`<${AppShell} />`);
+createRoot(document.getElementById('root')).render(html`<${AccountGate} client=${account}><${AppShell} /><//>`);
 </script>
 </body>
 </html>

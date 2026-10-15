@@ -15,13 +15,13 @@ const missing = e => /does not exist|not exist|not found|ENOENT/i.test(e.message
 async function remove(path) {
   try { await fs().deleteFile({ path, directory }); } catch (e) { if (!missing(e)) throw e; }
 }
-async function writeBlob(path, blob) {
+async function writeBlob(path, blob, dir = directory) {
   const chunk = 192 * 1024; // Multiple of three, so appended base64 chunks decode independently.
   for (let start = 0; start < blob.size; start += chunk) {
     const bytes = new Uint8Array(await blob.slice(start, start + chunk).arrayBuffer());
     let raw = '';
     for (let i = 0; i < bytes.length; i += 8192) raw += String.fromCharCode(...bytes.subarray(i, i + 8192));
-    const options = { path, directory, data: btoa(raw), recursive: true };
+    const options = { path, directory: dir, data: btoa(raw), recursive: true };
     await (start ? fs().appendFile(options) : fs().writeFile(options));
   }
 }
@@ -154,6 +154,15 @@ export async function exportTrack(id) {
   await fs().copy({ from: `${pathFor(id)}.audio`, directory, to: path, toDirectory: 'CACHE' });
   const { uri } = await fs().getUri({ path, directory: 'CACHE' });
   await nativePlugin('FileOpener').open({ filePath: uri, contentType: track.mime });
+  return 'opened';
+}
+// Hand an in-memory file (e.g. a playlist ZIP) to the system open-with / share sheet.
+export async function exportBlob(blob, fileName, mime = blob.type || 'application/octet-stream') {
+  const path = `exports/${fileName.replace(/[\\/:*?"<>|\x00-\x1f]/g, '_')}`;
+  await fs().deleteFile({ path, directory: 'CACHE' }).catch(() => {});
+  await writeBlob(path, blob, 'CACHE');
+  const { uri } = await fs().getUri({ path, directory: 'CACHE' });
+  await nativePlugin('FileOpener').open({ filePath: uri, contentType: mime });
   return 'opened';
 }
 export async function exportAll() { throw new Error('Android 请逐首选择「导出」，再由系统应用保存或分享'); }
