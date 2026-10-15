@@ -45,7 +45,7 @@ function assertUniqueName(list, name, exceptId) {
 const dedupe = (ids) => [...new Set(ids.filter((x) => typeof x === 'string' && x))];
 
 export function makeInbox(trackIds = [], now = Date.now()) {
-  return { id: INBOX_ID, name: INBOX_NAME, coverUrl: null, createdAt: now, updatedAt: now, trackIds: dedupe(trackIds), system: true };
+  return { id: INBOX_ID, name: INBOX_NAME, coverUrl: null, isPublic: false, createdAt: now, updatedAt: now, trackIds: dedupe(trackIds), system: true };
 }
 
 /**
@@ -55,7 +55,7 @@ export function makeInbox(trackIds = [], now = Date.now()) {
  */
 export function migrate(stored, allTrackIds, now = Date.now()) {
   const valid = Array.isArray(stored) ? stored.filter((p) => p && typeof p.id === 'string' && p.id !== ALL_ID) : [];
-  const clean = valid.map((p) => ({ ...p, name: String(p.name || '未命名歌单'), trackIds: dedupe(Array.isArray(p.trackIds) ? p.trackIds : []) }));
+  const clean = valid.map((p) => ({ ...p, isPublic: p.isPublic === true, name: String(p.name || '未命名歌单'), trackIds: dedupe(Array.isArray(p.trackIds) ? p.trackIds : []) }));
   const hasInbox = clean.some((p) => p.id === INBOX_ID);
   const list = hasInbox ? clean : [makeInbox(allTrackIds, now), ...clean];
   return { list: sortPlaylists(list), migrated: !hasInbox };
@@ -68,7 +68,7 @@ export function sortPlaylists(list) {
 export function createPlaylist(list, name, { id = randomId(), now = Date.now() } = {}) {
   const n = normalizeName(name);
   assertUniqueName(list, n);
-  const playlist = { id, name: n, coverUrl: null, createdAt: now, updatedAt: now, trackIds: [] };
+  const playlist = { id, name: n, coverUrl: null, isPublic: false, createdAt: now, updatedAt: now, trackIds: [] };
   return { list: [...list, playlist], playlist };
 }
 
@@ -223,6 +223,37 @@ export class PlaylistStore {
     });
   }
 
+  setPublic(id, isPublic) {
+    return this.#mutate((list) => {
+      const p = find(list, id);
+      const np = { ...p, isPublic: isPublic === true, updatedAt: this.now() };
+      return { next: replace(list, np), puts: [np], result: np };
+    });
+  }
+
+  copyPublic(playlist) {
+    return this.#mutate((list) => {
+      const original = normalizeName(playlist.name || '好友的歌单');
+      let name = original, suffix = 1;
+      while (sameName(name, ALL_NAME) || list.some(p => sameName(p.name, name))) {
+        const tail = `（收藏 ${suffix++}）`;
+        name = [...original].slice(0, MAX_NAME - [...tail].length).join('') + tail;
+      }
+      const { playlist: copy } = createPlaylist(list, name, { now: this.now() });
+      copy.coverUrl = playlist.coverUrl || playlist.cover || null;
+      const seen = new Set();
+      copy.pending = (playlist.tracks || []).map(t => {
+        const sourceId = typeof t.sourceId === 'string' ? t.sourceId : '';
+        const identity = [t.title, t.artist].map(value => String(value || '').normalize('NFKC').trim().replace(/\s+/g, ' ').toLowerCase()).join('\n');
+        let hash = 2166136261;
+        for (const char of identity) hash = Math.imul(hash ^ char.codePointAt(0), 16777619);
+        const id = sourceId || `search:${(hash >>> 0).toString(16)}:${encodeURIComponent(identity).slice(0, 175)}`;
+        return { id, sourceId, title: String(t.title || ''), artist: String(t.artist || ''), cover: t.cover || '', duration: Number(t.duration) || 0 };
+      }).filter(t => t.title && !seen.has(t.id) && seen.add(t.id));
+      return { next: [...list, copy], puts: [copy], result: copy };
+    });
+  }
+
   rename(id, name) {
     return this.#mutate((list) => {
       const next = renamePlaylist(list, id, name, this.now());
@@ -287,7 +318,7 @@ export class PlaylistStore {
       const puts = [];
       for (const u of upserts) {
         const have = next.find((p) => p.id === u.id);
-        const np = { ...(have || { coverUrl: null }), id: u.id, name: u.id === INBOX_ID ? INBOX_NAME : String(u.name || '未命名歌单'), createdAt: have?.createdAt || u.createdAt || this.now(), updatedAt: this.now(), trackIds: dedupe(u.trackIds || []), pending: u.pending || [], ...(u.id === INBOX_ID && { system: true }) };
+        const np = { ...(have || { coverUrl: null }), id: u.id, isPublic: u.isPublic === true, coverUrl: u.coverUrl ?? null, name: u.id === INBOX_ID ? INBOX_NAME : String(u.name || '未命名歌单'), createdAt: have?.createdAt || u.createdAt || this.now(), updatedAt: this.now(), trackIds: dedupe(u.trackIds || []), pending: u.pending || [], ...(u.id === INBOX_ID && { system: true }) };
         next = have ? replace(next, np) : [...next, np];
         puts.push(np);
       }

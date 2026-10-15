@@ -177,3 +177,39 @@ test('store: concurrent writes are serialized (no lost updates)', async () => {
   await Promise.all(['t1', 't2', 't3', 't4'].map((t) => s.addTracks([INBOX_ID], [t])));
   assert.deepEqual(be.db.get(INBOX_ID).trackIds, ['t1', 't2', 't3', 't4']);
 });
+
+
+test('public playlist copies are private new playlists with pending songs and distinct names', async () => {
+  const be = memBackend();
+  const store = new PlaylistStore(be, { now: () => 42 });
+  await store.load([]);
+  const original = { id: 'friend-list', name: 'Night songs', isPublic: true, coverUrl: 'https://example.com/list.jpg', tracks: [
+    { title: 'Song', artist: 'Artist', sourceId: 'bilibili:BV123', cover: 'https://example.com/song.jpg', duration: 180 },
+    { title: 'Song', artist: 'Artist', sourceId: '', duration: 200 },
+  ] };
+  const copy = await store.copyPublic(original);
+  assert.notEqual(copy.id, original.id);
+  assert.equal(copy.isPublic, false);
+  assert.deepEqual(copy.trackIds, []);
+  assert.equal(copy.pending[0].id, 'bilibili:BV123');
+  assert.equal(copy.pending[0].cover, original.tracks[0].cover);
+  assert.match(copy.pending[1].id, /^search:/);
+  assert.equal(copy.pending[1].sourceId, '');
+  assert.equal(copy.coverUrl, original.coverUrl);
+  assert.deepEqual(be.db.get(copy.id), copy);
+  const second = await store.copyPublic(original);
+  assert.notEqual(second.name, copy.name);
+  assert.notEqual(second.id, copy.id);
+  await store.setPublic(copy.id, true);
+  assert.equal(be.db.get(copy.id).isPublic, true);
+  await store.applyRemote({ upserts: [{ id: copy.id, name: copy.name, isPublic: false, coverUrl: copy.coverUrl, trackIds: [], pending: copy.pending }] });
+  assert.equal(store.get(copy.id).isPublic, false);
+  assert.equal(store.get(copy.id).coverUrl, original.coverUrl);
+});
+
+test('existing and newly created playlists default to private', () => {
+  const { list } = migrate([{ id: 'old', name: 'Old playlist', trackIds: [] }], []);
+  assert.equal(list.find(p => p.id === 'old').isPublic, false);
+  assert.equal(list[0].isPublic, false);
+  assert.equal(createPlaylist(list, 'new playlist').playlist.isPublic, false);
+});

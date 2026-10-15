@@ -75,6 +75,7 @@ const list = (s) => (s || '').split(',').map((x) => x.trim()).filter(Boolean);
 
 export const config = {
   root,
+  dataDir: path.resolve(env.DATA_DIR || path.join(root, 'data')),
   // 默认只监听本机：这个服务会往磁盘写文件，不应暴露到局域网。公网部署（Docker / Render）设 HOST=0.0.0.0
   host: env.HOST || '127.0.0.1',
   port: Number(env.PORT) || 8090, // Render 会注入 PORT

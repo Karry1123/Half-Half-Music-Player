@@ -2,6 +2,7 @@ import { randomBytes, randomUUID, createHash, scrypt as scryptCallback, timingSa
 import { promisify } from 'node:util';
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
+import { isTrendingSong, validatePlays } from './lib/discover.js';
 const scrypt = promisify(scryptCallback);
 const hash = value => createHash('sha256').update(value).digest('hex');
 const fail = (status, code, message) => { throw Object.assign(new Error(message), { status, code }); };
@@ -14,6 +15,8 @@ const uniqueViolation = e => e.code === '23505' || /UNIQUE/i.test(e.message);
 // One schema for both engines. Millisecond timestamps need BIGINT on PostgreSQL.
 const SCHEMA = [
   'CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY, username TEXT UNIQUE NOT NULL, password TEXT NOT NULL, salt TEXT NOT NULL, activated INTEGER NOT NULL DEFAULT 0, created_at BIGINT NOT NULL)',
+  'CREATE TABLE IF NOT EXISTS play_counts(user_id TEXT NOT NULL REFERENCES users(id), song_key TEXT NOT NULL, title TEXT NOT NULL, artist TEXT NOT NULL, cover TEXT NOT NULL, completed INTEGER NOT NULL DEFAULT 0, updated_at BIGINT NOT NULL, PRIMARY KEY(user_id,song_key))',
+  'CREATE TABLE IF NOT EXISTS play_devices(user_id TEXT NOT NULL REFERENCES users(id), device_id TEXT NOT NULL, song_key TEXT NOT NULL, completed INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(user_id,device_id,song_key))',
   'CREATE TABLE IF NOT EXISTS sessions(token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), expires_at BIGINT NOT NULL)',
   'CREATE TABLE IF NOT EXISTS invites(code_hash TEXT PRIMARY KEY, expires_at BIGINT NOT NULL, used_by TEXT REFERENCES users(id), used_at BIGINT)',
   "CREATE TABLE IF NOT EXISTS libraries(user_id TEXT PRIMARY KEY REFERENCES users(id), revision INTEGER NOT NULL DEFAULT 0, metadata TEXT NOT NULL DEFAULT '[]', updated_at BIGINT NOT NULL)",
@@ -230,6 +233,41 @@ export class Accounts {
     const row = await this.one('SELECT revision, metadata FROM libraries WHERE user_id=$1', [userId]);
     return { revision: row ? Number(row.revision) : 0, playlists: row ? JSON.parse(row.metadata) : [] };
   }
+  async recordPlays(userId, body) {
+    const rows = validatePlays(body);
+    await this.db.tx(async db => {
+      for (const row of rows) {
+        // Lock the device row before computing the delta, including concurrent PostgreSQL uploads.
+        await db.run('INSERT INTO play_devices(user_id,device_id,song_key,completed) VALUES($1,$2,$3,0) ON CONFLICT(user_id,device_id,song_key) DO NOTHING', [userId, body.deviceId, row.key]);
+        const [old] = await db.all('SELECT completed FROM play_devices WHERE user_id=$1 AND device_id=$2 AND song_key=$3' + (db.dialect === 'postgres' ? ' FOR UPDATE' : ''), [userId, body.deviceId, row.key]);
+        const delta = Math.max(0, row.completed - Number(old.completed));
+        if (!delta) continue;
+        await db.run('UPDATE play_devices SET completed=$1 WHERE user_id=$2 AND device_id=$3 AND song_key=$4', [row.completed, userId, body.deviceId, row.key]);
+        await db.run('INSERT INTO play_counts(user_id,song_key,title,artist,cover,completed,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(user_id,song_key) DO UPDATE SET completed=play_counts.completed+excluded.completed,title=excluded.title,artist=excluded.artist,cover=excluded.cover,updated_at=excluded.updated_at', [userId, row.key, row.title, row.artist, row.cover, delta, Date.now()]);
+      }
+    });
+    return { ok: true };
+  }
+  async trending(now = Date.now()) {
+    if (this.trendingCache && now - this.trendingCache.at < 600000) return this.trendingCache.value;
+    const rows = await this.db.all('SELECT song_key, title, artist, cover, completed, updated_at FROM play_counts WHERE completed>0 ORDER BY updated_at DESC');
+    const songs = new Map();
+    for (const row of rows) {
+      if (!isTrendingSong(row)) continue;
+      const item = songs.get(row.song_key);
+      const plays = Math.min(Number(row.completed), 50); // cap each listener so one account cannot dominate the chart
+      if (item) item.completed += plays;
+      else songs.set(row.song_key, { key: row.song_key, title: row.title, artist: row.artist, cover: row.cover, completed: plays });
+    }
+    const value = { tracks: [...songs.values()].sort((a, b) => b.completed - a.completed || a.key.localeCompare(b.key)).slice(0, 10), stale: false };
+    this.trendingCache = { at: now, value };
+    return value;
+  }
+  async publicPlaylists(userId, friendId) {
+    if (!await this.areFriends(userId, friendId)) fail(403, 'NOT_FRIEND', '仅可查看已添加好友的公开歌单');
+    const { playlists } = await this.library(friendId);
+    return { playlists: playlists.filter(p => !p.deleted && p.isPublic === true).map(p => ({ id: p.id, name: p.name, coverUrl: p.coverUrl || null, tracks: p.tracks.map(t => ({ title: t.title, artist: t.artist, cover: t.cover || '', duration: t.duration, sourceId: t.sourceId })) })) };
+  }
   async saveLibrary(userId, revision, playlists) {
     const clean = validatePlaylists(playlists);
     if (!Number.isSafeInteger(revision) || revision < 0) fail(400, 'INPUT', '无效版本号');
@@ -315,11 +353,11 @@ export function validatePlaylists(value) {
     if (!Array.isArray(p.tracks)) fail(400, 'INPUT', '无效或重复歌单');
     total += p.tracks.length;
     if (total > 10000) fail(400, 'INPUT', '曲目总数不能超过 10000');
-    return { id: p.id, name: text(p.name, 80) || '未命名歌单', createdAt: time(p.createdAt), updatedAt: time(p.updatedAt), tracks: p.tracks.map(t => {
+    return { id: p.id, name: text(p.name, 80) || '未命名歌单', createdAt: time(p.createdAt), updatedAt: time(p.updatedAt), isPublic: p.isPublic === true, coverUrl: /^https:\/\//i.test(text(p.coverUrl, 2000)) ? text(p.coverUrl, 2000) : null, tracks: p.tracks.map(t => {
       if (!t || typeof t.id !== 'string' || !t.id || t.id.length > 200) fail(400, 'INPUT', '无效曲目');
       const pageUrl = text(t.pageUrl, 2000);
       if (pageUrl && !/^https:\/\//.test(pageUrl)) fail(400, 'INPUT', '音源页面必须使用 HTTPS');
-      return { id: t.id, title: text(t.title, 200), artist: text(t.artist, 200), sourceId: text(t.sourceId, 200), pageUrl, hash: text(t.hash, 100), duration: Number.isFinite(t.duration) ? Math.max(0, t.duration) : 0 };
+      return { id: t.id, title: text(t.title, 200), artist: text(t.artist, 200), cover: /^https:\/\//i.test(text(t.cover, 2000)) ? text(t.cover, 2000) : '', sourceId: text(t.sourceId, 200), pageUrl, hash: text(t.hash, 100), duration: Number.isFinite(t.duration) ? Math.max(0, t.duration) : 0 };
     }) };
   });
 }
@@ -341,11 +379,14 @@ export function mountAccounts(app, accounts, limiter) {
   app.post('/auth/activate', limiter, route(req => accounts.activate(token(req), req.body?.code)));
   app.post('/auth/logout', route(async req => { await accounts.logout(token(req)); return { ok: true }; }));
   app.get('/account/library', route(async req => accounts.library(await active(req))));
+  app.post('/account/plays', limiter, route(async req => accounts.recordPlays(await active(req), req.body)));
+  app.get('/discover/trending', route(async req => { await active(req); return accounts.trending(); }));
   app.put('/account/library', route(async req => accounts.saveLibrary(await active(req), req.body?.revision, req.body?.playlists)));
   app.get('/account/profile', route(async req => accounts.profile(await active(req))));
   app.put('/account/profile', route(async req => accounts.saveProfile(await active(req), req.body?.nickname)));
   app.get('/account/users', limiter, route(async req => accounts.searchUsers(await active(req), req.query.q)));
   app.get('/account/friends', route(async req => accounts.friends(await active(req))));
+  app.get('/account/friends/:id/playlists', route(async req => accounts.publicPlaylists(await active(req), req.params.id)));
   app.post('/account/friends', limiter, route(async req => accounts.requestFriend(await active(req), req.body?.userId)));
   app.post('/account/friends/:id/accept', route(async req => accounts.respondFriend(await active(req), req.params.id, true)));
   app.post('/account/friends/:id/decline', route(async req => accounts.respondFriend(await active(req), req.params.id, false)));

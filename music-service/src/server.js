@@ -15,6 +15,7 @@ import { parseTrackId, providers, timeoutFor } from './providers/index.js';
 import { makeTrack } from './providers/track.js';
 import { aggregateSearch, trackCache } from './search.js';
 import { Accounts, mountAccounts } from './accounts.js';
+import { ChartsCache, mountCharts } from './lib/charts.js';
 import { createAuthenticatedPeerWebSocket } from '../../server/peerAuth.js';
 import { TurnQuotaGuard, databaseQuotaStore, fileQuotaStore, setTurnQuotaGuard } from '../../server/turnQuota.js';
 
@@ -36,6 +37,11 @@ app.use(cors);
 const accounts = process.env.AUTH_MODE === 'legacy' ? null : await Accounts.open({ root: config.root });
 if (accounts) console.log(`账号数据库: ${accounts.db.dialect === 'postgres' ? 'PostgreSQL（DATABASE_URL）' : 'SQLite'}`);
 const accountGuard = accounts ? mountAccounts(app, accounts, rateLimit({ perMinute: 15, name: 'account' })) : null;
+const charts = new ChartsCache({ dataDir: config.dataDir });
+// Disk loading and remote refresh run in the background; requests always have a fallback.
+void charts.init().catch(e => console.error('[discover]', e.message));
+mountCharts(app, accountGuard || ((_req, res) => res.status(401).json({ error: '请先登录账号' })), charts);
+server.once('close', () => charts.stop());
 let quotaGuard;
 let mailer;
 try {

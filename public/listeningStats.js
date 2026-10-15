@@ -1,7 +1,7 @@
 // Persist actual listening time separately from the playback position: seeking is not listening.
 const DATABASE = 'half-half-listening-stats';
 const finite = (value, fallback = 0) => Number.isFinite(Number(value)) ? Number(value) : fallback;
-const emptyStats = () => ({ completedPlayCount: {}, coListeningTime: {} });
+const emptyStats = () => ({ completedPlayCount: {}, coListeningTime: {}, trackMetadata: {} });
 
 export function createListeningStatsPersistence(indexedDB) {
   let database;
@@ -63,6 +63,7 @@ export class ListeningStats {
       // Private browsing/storage failures must not stop playback or lose this session's accounting.
       this.storageError = error;
     }
+    this.stats.deviceId ||= globalThis.crypto?.randomUUID?.() || `device-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     this.loaded = true;
     for (const sample of this.pendingSamples.splice(0)) this.sample(sample);
     this.notify();
@@ -87,6 +88,7 @@ export class ListeningStats {
     };
     if (!this.loaded) { this.pendingSamples.push(sample); return; }
     if (!this.userId) return;
+    this.rememberTrack(sample);
     const previous = this.previous;
     if (!sample.trackId) { this.previous = null; this.session = null; return; }
     const sameTrack = previous?.trackId === sample.trackId;
@@ -164,7 +166,7 @@ export class ListeningStats {
     const snapshot = {
       userId: this.userId,
       records: this.records.filter(record => ids.has(record.id)).map(record => ({ ...record })),
-      stats: { completedPlayCount: { ...this.stats.completedPlayCount }, coListeningTime: { ...this.stats.coListeningTime } },
+      stats: { deviceId: this.stats.deviceId, trackMetadata: { ...this.stats.trackMetadata }, completedPlayCount: { ...this.stats.completedPlayCount }, coListeningTime: { ...this.stats.coListeningTime } },
     };
     this.dirty.clear();
     this.changed = false;
@@ -175,6 +177,29 @@ export class ListeningStats {
       throw error;
     });
     return this.write;
+  }
+
+  rememberTrack({ trackId, title, artist = '', cover = '' }) {
+    if (!trackId || !title) return;
+    const old = this.stats.trackMetadata[trackId];
+    const meta = { title, artist, cover: /^https:\/\//i.test(cover) ? cover : old?.cover || '' };
+    if (JSON.stringify(old) !== JSON.stringify(meta)) {
+      this.stats.trackMetadata[trackId] = meta;
+      this.changed = true;
+    }
+  }
+
+  completedUploads() {
+    const songs = new Map();
+    for (const [id, completed] of Object.entries(this.stats.completedPlayCount)) {
+      const meta = this.stats.trackMetadata[id];
+      if (!meta?.title || !completed || meta.title.length > 200 || meta.artist.length > 200) continue;
+      const key = [meta.title, meta.artist].map(x => x.trim().normalize('NFKC').toLowerCase().replace(/\s+/g, ' ')).join('\n');
+      const item = songs.get(key) || { ...meta, cover: /^https:\/\//i.test(meta.cover || '') && meta.cover.length <= 2000 ? meta.cover : '', completed: 0 };
+      item.completed += completed;
+      songs.set(key, item);
+    }
+    return [...songs.values()];
   }
 
   completedCount(trackId) { return this.stats.completedPlayCount[trackId] || 0; }

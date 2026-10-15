@@ -118,10 +118,14 @@ import {
 } from 'lucide-react';
 import { Peer } from 'peerjs';
 import { ListeningStats } from './listeningStats.js';
+import { DiscoverSections, sortPlaylistTracks } from './discoveryUI.js';
+import { ListeningStatsCards } from './statsUI.js';
+import { DailyGreeting } from './dailyGreeting.js';
 import * as LocalLib from './libraryStorage.js';
 import { installAndroidBack, pushBackLayer } from './mobileRuntime.js';
 import { nativePlugin } from './nativeBridge.js';
 import { observeAudio } from './audioState.js';
+import { installAudioGuard } from './audioGuard.js';
 import { FriendsPanel } from './friendsUI.js';
 const isAndroid = window.Capacitor?.getPlatform?.() === 'android';
 function useBackLayer(open, close) {
@@ -654,7 +658,14 @@ class DriftController {
 }
 
 // ════════════════════════════════════════════════════════════ 音频引擎（HTML5 Audio + Web Audio 分析）
+let audioGuard = null;
+let audioDuck = 1;
 class AudioOut {
+  appPauses = 0;
+  pauseElement() {
+    if (!this.audio.paused) this.appPauses++;
+    this.audio.pause();
+  }
   audio = new Audio();
   ctx = null;
   gain = null;
@@ -679,7 +690,7 @@ class AudioOut {
   /** 必须在用户手势中调用：创建 AudioContext 并接入分析器（频谱动画） */
   unlock() {
     // Android uses the media pipeline directly; a suspended analyser must not mute playback.
-    if (isAndroid) { this.audio.volume = get().volume; return; }
+    if (isAndroid) { this.audio.volume = get().volume * audioDuck; return; }
     if (!this.ctx) {
       try {
         this.ctx = new AudioContext();
@@ -688,7 +699,7 @@ class AudioOut {
         this.analyser = this.ctx.createAnalyser();
         this.analyser.fftSize = 64;
         src.connect(this.gain).connect(this.analyser).connect(this.ctx.destination);
-        this.gain.gain.value = get().volume;
+        this.gain.gain.value = get().volume * audioDuck;
         this.audio.volume = 1;
       } catch (e) {
         console.warn('Web Audio 不可用，退回纯 HTML5 Audio', e);
@@ -699,6 +710,7 @@ class AudioOut {
   }
 
   setVolume(v) {
+    v *= audioDuck;
     if (this.gain) this.gain.gain.setTargetAtTime(v, this.ctx.currentTime, 0.02);
     else this.audio.volume = v;
   }
@@ -711,7 +723,7 @@ class AudioOut {
     clearTimeout(this.timer);
     this.intent = false;
     this.pausedAt = 0;
-    this.audio.pause();
+    this.pauseElement();
     if (this.url) URL.revokeObjectURL(this.url);
     this.url = URL.createObjectURL(blob);
     const loaded = new Promise((resolve, reject) => {
@@ -751,7 +763,7 @@ class AudioOut {
     this.intent = false;
     this.pausedAt = pos;
     const stop = () => {
-      this.audio.pause();
+      this.pauseElement();
       if (this.audio.readyState) this.audio.currentTime = pos;
     };
     const wait = localMs - now();
@@ -870,7 +882,10 @@ class Session {
   /** 播放范围：正在播放的歌单（按歌单顺序），没有选歌单时是整个曲库 */
   scopeIds() {
     const id = get().activePlaylistId;
-    return resolveScope(id ? playlistStore.get(id) : null, get().library);
+    const scope = resolveScope(id ? playlistStore.get(id) : null, get().library);
+    if (!this.viewOrder || this.viewOrder.playlistId !== (id || ALL_ID)) return scope;
+    const available = new Set(scope);
+    return [...this.viewOrder.ids.filter(x => available.has(x)), ...scope.filter(x => !this.viewOrder.ids.includes(x))];
   }
 
   /** 当前曲目 + 播放范围 → 播放队列（增量对齐） */
@@ -888,11 +903,13 @@ class Session {
    * 播放一个歌单：队列立即换成这个歌单的全部曲目（随机模式重新洗牌），从 startItemId 或第一首开始。
    * 单人：直接播；房主在房间里：同时向 Guest 广播 set_playlist，对方横幅显示"正在一起收听歌单"。
    */
-  async playPlaylist(playlistId, { startItemId = null } = {}) {
+  async playPlaylist(playlistId, { startItemId = null, orderedIds = null } = {}) {
+    this.audioGuard?.interact();
     if (this.isGuest) return toast('房间里的歌单由房主决定：双击歌曲可以请房主切过去', 'warn');
     const pl = playlistId && playlistId !== ALL_ID ? playlistStore.get(playlistId) : null;
     if (playlistId && playlistId !== ALL_ID && !pl) return toast('这个歌单已经不存在了', 'warn');
     if (pl) await ensureInLibrary(missingFromLibrary(pl, get().library));
+    this.viewOrder = orderedIds ? { playlistId: pl?.id || ALL_ID, ids: [...orderedIds] } : null;
     set({ activePlaylistId: pl ? pl.id : null });
     const scope = this.scopeIds();
     if (!scope.length) return toast(pl ? `歌单《${pl.name}》里还没有歌` : '曲库里还没有歌', 'warn');
@@ -1178,6 +1195,7 @@ class Session {
   }
 
   leave() {
+    this.audioGuard?.cancelResume();
     const wasGuest = this.isGuest;
     this.send({ type: 'bye' });
     this.stopReconnect();
@@ -1417,6 +1435,7 @@ class Session {
       case 'pause':
       case 'seek':
         if (host) return;
+        if (m.by === 'host' && !m.quiet) this.audioGuard?.cancelResume();
         this.drift.reset();
         this.applyAnchor(m);
         if (m.by === 'host' && !m.quiet) this.noteAction(m.type, m.position);
@@ -1431,6 +1450,14 @@ class Session {
       case 'rpc-result':
         if (!host) onRpcReply(m);
         return;
+      case 'audio-guard-pause':
+        if (host && m.trackId === this.loadedId && ['becomingNoisy', 'loss', 'lossTransient', 'browserPause'].includes(m.reason)) {
+          this.audioGuard?.cancelResume();
+          toast(m.reason === 'becomingNoisy' ? '对方耳机已断开，已自动暂停' : '对方正在处理其他音频，已自动暂停');
+          this.act('pause', { by: 'guest', audioGuard: true });
+          this.out.stopAt(now(), this.anchor.position);
+        }
+        return;
       case 'req':
         if (host) this.act(m.action, { position: m.position, itemId: m.itemId, by: 'guest' });
         return;
@@ -1439,6 +1466,7 @@ class Session {
 
   // ───────────────────────── 操作入口（双方都能操作：Guest 发请求，Host 执行并广播）
   act(action, opts = {}) {
+    if (!opts.audioGuard) this.audioGuard?.interact();
     this.out.unlock();
     if (action === 'toggle') action = this.anchor.playing ? 'pause' : 'play';
     if (this.isGuest && !opts.by) return this.send({ type: 'req', action, position: opts.position, itemId: opts.itemId });
@@ -1480,6 +1508,7 @@ class Session {
   }
 
   applyAnchor(s) {
+    if (s.playing && this.audioGuard?.blocked) return;
     this.anchor = { trackId: s.trackId, playing: s.playing, position: s.position, at: s.at };
     set({ playing: s.playing });
     queueMicrotask(updateMediaPosition);
@@ -1569,6 +1598,7 @@ class Session {
   }
 
   setVolume(v) {
+    this.audioGuard?.cancelResume();
     this.out.setVolume(v);
     set({ volume: v });
     try { localStorage.setItem('hh.volume', String(v)); } catch {}
@@ -1863,6 +1893,29 @@ class Session {
 }
 
 const session = new Session();
+audioGuard = installAudioGuard({
+  audio: session.out.audio, nativePlugin, capacitor: window.Capacitor,
+  autoResume: () => stored('hh.audioGuard.autoResume') !== 'false',
+  isPlaying: () => session.out.intent,
+  consumeAppPause: () => { if (!session.out.appPauses) return false; session.out.appPauses--; return true; },
+  setDucking: factor => { audioDuck = factor; session.out.setVolume(get().volume); },
+  publish: () => set({ audioFocusTransient: !!audioGuard?.waiting }),
+  pause: reason => {
+    toast(reason === 'becomingNoisy' ? '耳机已断开，已暂停播放' : '其他应用正在播放，已暂停');
+    if (session.isGuest) {
+      const position = session.out.audio.currentTime;
+      session.out.stopAt(now(), position);
+      set({ playing: false });
+      session.send({ type: 'audio-guard-pause', reason, trackId: session.loadedId, position });
+    } else {
+      session.act('pause', { audioGuard: true });
+      session.out.stopAt(now(), session.anchor.position);
+      set({ playing: false });
+    }
+  },
+  resume: () => session.act('play', { audioGuard: true }),
+});
+session.audioGuard = audioGuard;
 observeAudio(session.out.audio, set, document, window.Capacitor?.isNativePlatform?.() ? nativePlugin('App') : null);
 if (window.Capacitor?.isNativePlatform?.()) nativePlugin('App').addListener('appStateChange', ({ isActive }) => { if (isActive) session.onResume(); }).catch(console.warn);
 window.__hh = { session, store, api, LocalLib }; // 调试用
@@ -1871,7 +1924,7 @@ window.__hh = { session, store, api, LocalLib }; // 调试用
 // 锁屏 / 通知栏 / 耳机线控 / 键盘媒体键 / 蓝牙耳机按键 → 播放、暂停、上一首、下一首、拖动进度。
 // Guest 按下这些键同样走 session.act()，会变成发给房主的请求，双方一起切。
 // 有声音在播放时，浏览器会把页面当作"正在播放媒体"，切后台通常可继续播放，但仍受系统音频焦点及进程管理限制。
-const mediaSession = 'mediaSession' in navigator ? navigator.mediaSession : null;
+const mediaSession = globalThis.navigator?.mediaSession || null;
 if (isAndroid) {
   const nativeMedia = nativePlugin('PlaybackSession');
   nativeMedia.addListener('action', ({ action, position }) => session.act(action, { position })).catch(console.warn);
@@ -1950,14 +2003,14 @@ if (mediaSession) {
     if (metaKey !== last.metaKey) {
       last.metaKey = metaKey;
       mediaSession.metadata = item
-        ? new MediaMetadata({
+        ? (typeof globalThis.MediaMetadata === 'function' ? new MediaMetadata({
             title: item.title,
             artist: item.artist || item.sourceLabel || '',
             album: s.role === 'host' ? 'Half&Half · 和伙伴同步收听' : s.role === 'guest' ? `Half&Half · 正在听 ${s.peer?.name || '房主'} 的歌` : 'Half&Half',
             artwork: item.cover
               ? [{ src: item.cover, sizes: '512x512' }, { src: fallbackArtwork(item.title), sizes: '512x512', type: 'image/png' }]
               : [{ src: fallbackArtwork(item.title), sizes: '512x512', type: 'image/png' }],
-          })
+          }) : null)
         : null;
     }
     const state = !item ? 'none' : s.playing ? 'playing' : 'paused';
@@ -1997,7 +2050,7 @@ if (NativeFG) {
     const s = get();
     const item = s.library.find(x => x.id === s.currentId);
     // Read current state inside the serialized job, never a stale subscription snapshot.
-    if (!item || !(s.playing || s.playbackPending || session.out.intent)) {
+    if (!item || !(s.playing || s.playbackPending || session.out.intent || s.audioFocusTransient)) {
       if (running) await NativeFG.stopForegroundService();
       running = false; lastKey = ''; return;
     }
@@ -2027,7 +2080,7 @@ if (NativeFG) {
   let desiredKey;
   store.subscribe(() => {
     const s = get(), item = s.library.find(x => x.id === s.currentId);
-    const key = JSON.stringify([s.playing || s.playbackPending || session.out.intent, item?.id, item?.title, item?.artist]);
+    const key = JSON.stringify([s.playing || s.playbackPending || session.out.intent || s.audioFocusTransient, item?.id, item?.title, item?.artist]);
     // A toast or progress update must not cause an endless failed-service retry loop.
     if (key === desiredKey) return;
     desiredKey = key;
@@ -2044,7 +2097,7 @@ function fromLocal(t, cover) {
     id: t.id, localId: t.id, hash: t.hash, sourceId: t.sourceId,
     title: t.title, artist: t.artist, duration: t.duration, size: t.size,
     source: t.source, sourceLabel: t.sourceLabel, quality: t.quality || (t.ext || '').toUpperCase(),
-    cover, addedBy: get().me.name, addedAt: t.addedAt,
+    cover, coverUrl: t.coverUrl, addedBy: get().me.name, addedAt: t.addedAt,
   };
 }
 
@@ -2122,7 +2175,15 @@ async function downloadPending(playlistId, keys) {
     if (get().pendingJobs[t.id]?.state === 'loading') continue;
     job(t.id, { state: 'loading' });
     try {
-      await cacheCloudTrack(t, { storage: LocalLib, download: (x) => downloadCloudTrack(account, x) });
+      let track = t;
+      if (!t.sourceId && t.id.startsWith('search:')) {
+        const result = await api.search(`${t.title} ${t.artist}`, []);
+        const match = result.results?.[0];
+        if (!match?.id) throw new Error('???????????????');
+        track = { ...t, id: match.id, sourceId: match.id, pageUrl: match.pageUrl || '', hash: '' };
+      }
+      await cacheCloudTrack(track, { storage: LocalLib, download: (x) => downloadCloudTrack(account, x) });
+      if (track !== t) await playlistStore.replacePending(playlistId, t.id, track);
       job(t.id, null);
       ok++;
     } catch (e) {
@@ -2719,11 +2780,12 @@ function PlaylistHeader({ view, items }) {
             ${custom && html`<button class="grid h-7 w-7 shrink-0 place-items-center rounded-full text-sand-500 hover:text-sand-50" onClick=${() => (setName(playlist.name), setRenaming(true))} aria-label="重命名歌单" title="重命名"><${Pencil} size=${13} /></button>`}
           </div>`}
       <div class="mt-0.5 text-xs text-sand-500 tabular">${items.length} 首${playlist?.pending?.length ? ` · ${playlist.pending.length} 首未下载` : ''}${total ? ` · ${fmtTime(total)}` : ''}${isActive && items.length ? ' · 正在播放' : ''}</div>
+      ${custom && html`<label class="mt-2 flex items-center gap-2 text-xs text-sand-400"><input type="checkbox" checked=${!!playlist.isPublic} onChange=${e => playlistStore.setPublic(view, e.target.checked).catch(e => toast(e.message, 'warn'))} />????????????????</label>`}
     </div>
     <div class="flex w-full items-center gap-1.5 sm:w-auto sm:shrink-0">
       ${custom && !renaming && html`<button class="grid h-9 w-9 shrink-0 place-items-center rounded-full text-sand-500 hover:bg-guest/10 hover:text-guest" onClick=${remove} aria-label="删除歌单" title="删除歌单（歌曲保留）"><${Trash2} size=${15} /></button>`}
       <button class="inline-flex flex-1 items-center justify-center gap-1.5 rounded-full bg-host px-3.5 py-2 text-xs font-semibold text-ink-950 hover:brightness-110 disabled:opacity-40 sm:flex-none"
-        disabled=${!items.length} onClick=${() => session.playPlaylist(view)}
+        disabled=${!items.length} onClick=${() => session.playPlaylist(view, { orderedIds: items.map(x => x.id) })}
         title=${inRoom ? '加载这个歌单，和对方一起听' : '用这个歌单替换播放队列'}>
         <${inRoom ? Users : Play} size=${14} fill=${inRoom ? 'none' : 'currentColor'} /> ${inRoom ? '在房间中播放' : '播放全部'}
       </button>
@@ -2742,22 +2804,26 @@ function LibraryPanel() {
   const roomPlaylist = useStore((s) => s.roomPlaylist);
   const offline = useStore((s) => s.offline);
   const isGuest = role === 'guest';
+  const [sort, setSort] = useState('default');
+  useStore(s => s.statsRevision);
 
   // Guest：看房主的曲库，房主在播歌单时只显示歌单里的歌（与房主队列一致）
   const byId = new Map(library.map((x) => [x.id, x]));
-  const items = isGuest
+  const unsorted = isGuest
     ? (roomPlaylist ? roomPlaylist.ids.map((id) => byId.get(id)).filter(Boolean) : library)
     : resolveScope(playlist, library).map((id) => byId.get(id)).filter(Boolean);
+  const items = isGuest ? unsorted : sortPlaylistTracks(unsorted, sort, trackCompletedCount);
   const totalSize = items.reduce((a, x) => a + (x.size || 0), 0);
   const pending = !isGuest && playlist ? playlist.pending || [] : [];
   const play = (x) => {
     if (x.id === currentId) return session.act('toggle');
     if (isGuest) return session.act('select', { itemId: x.id });
-    session.playPlaylist(view, { startItemId: x.id }); // 歌单里点任意一首：队列换成整个歌单，从这首开始
+    session.playPlaylist(view, { startItemId: x.id, orderedIds: items.map(t => t.id) }); // 歌单里点任意一首：队列换成整个歌单，从这首开始
   };
 
   return html`<${Panel} title=${isGuest ? '房间曲库 · 播放队列' : '我的歌单 · 播放队列'} icon=${Disc3} className="lg:max-h-[calc(100vh-190px)]"
     right=${html`<span class="flex items-center gap-2">
+      ${!isGuest && html`<select aria-label="????" class="max-w-32 rounded-lg bg-ink-800 p-1 text-xs" value=${sort} onChange=${e => setSort(e.target.value)}>${[['default', '??(????)'], ['count', '????'], ['name', '?? A-Z'], ['duration', '??']].map(([id, label]) => html`<option key=${id} value=${id}>${label}</option>`)}</select>`}
       <span class="hidden text-xs text-sand-500 tabular sm:inline">${items.length} 首 · ${fmtSize(totalSize)}</span>
       <button class="inline-flex items-center gap-1.5 rounded-lg border border-ink-600 px-2.5 py-1 text-xs text-sand-200 hover:border-sync hover:text-sync" onClick=${() => set({ localLibOpen: true })} title="管理保存在这台设备上的歌曲">
         <${HardDrive} size=${13} /> 本机曲库${offline.count ? ` · ${offline.count}` : ''}
@@ -2797,7 +2863,7 @@ function LibraryPanel() {
                 <span class=${cx('truncate text-sm font-medium', cur && 'text-host')}>${x.title}</span>
                 ${saved ? html`<${HardDrive} size=${12} class="shrink-0 text-sync" aria-label="已存本机" title="已保存在这台设备上，离线也能播放" />` : ''}
               </div>
-              <div class="truncate text-xs text-sand-400">${x.artist}${x.addedBy && x.addedBy !== get().me.name ? html` · <span class="text-guest/80">${x.addedBy} 添加</span>` : ''}</div>
+              <div class="truncate text-xs text-sand-400">${x.artist}${trackCompletedCount(x) > 0 && html`<span class="ml-2 text-host/80">?? ${trackCompletedCount(x)} ?</span>`}${x.addedBy && x.addedBy !== get().me.name ? html` · <span class="text-guest/80">${x.addedBy} 添加</span>` : ''}</div>
             </div>
           </div>
           <span class="hidden truncate text-xs text-sand-400 md:block">${x.sourceLabel} <${QualityBadge} q=${x.quality} /></span>
@@ -3392,6 +3458,7 @@ function ConnSettingsModal() {
   const [svcTest, setSvcTest] = useState(null);
   const [name, setName] = useState(get().me.name);
   const [showToken, setShowToken] = useState(false);
+  const [autoContinue, setAutoContinue] = useState(() => stored('hh.audioGuard.autoResume') !== 'false');
   useEffect(() => { if (open) { setForm(loadIceSettings()); setTest(null); setSvc({ api: stored('hh.api'), token: stored('hh.apiToken') }); setSvcTest(null); setName(get().me.name); setShowToken(false); } }, [open]);
   const svcBase = (svc.api || API_BASE).replace(/\/+$/, '');
   // 依次检查：服务是否在线（/health，可能要等冷启动）→ 跨域是否放行 → 令牌是否正确
@@ -3474,6 +3541,13 @@ function ConnSettingsModal() {
       </header>
 
       <div class="scroll-thin space-y-4 overflow-y-auto px-4 py-4 text-sm sm:px-5">
+        <section class=${card}>
+          <label class="flex items-center justify-between gap-3"><span>通话/播报结束后自动继续</span><input type="checkbox" checked=${autoContinue} onChange=${e => {
+            const enabled = e.target.checked; setAutoContinue(enabled);
+            try { localStorage.setItem('hh.audioGuard.autoResume', String(enabled)); } catch {}
+            if (!enabled) audioGuard?.cancelResume();
+          }} /></label>
+        </section>
         <${StatsPanel} /><${AccountCard} client=${account} className=${card} />
         <section class=${card} aria-labelledby="set-me">
           <h3 id="set-me" class="text-xs font-semibold uppercase tracking-wider text-sand-500">我的昵称</h3>
@@ -4007,6 +4081,14 @@ async function startPreview(r) {
   previewAudio.play().catch(() => {});
   set({ preview: { ...get().preview, loading: false } });
 }
+async function previewPublicTrack(track) {
+  try {
+    if (track.sourceId && /^(youtube|ytmusic|bilibili):/.test(track.sourceId)) return startPreview({ ...track, id: track.sourceId, source: track.sourceId.split(':')[0] });
+    const result = await api.search(`${track.title} ${track.artist}`, []);
+    if (!result.results?.length) return toast('?????????', 'warn');
+    return startPreview(result.results[0]);
+  } catch (e) { toast(`?????${e.message}`, 'warn'); }
+}
 const previewAudio = new Audio();
 previewAudio.onended = () => set({ preview: null });
 function stopPreview() {
@@ -4089,23 +4171,7 @@ function SkeletonGrid({ n = 6 }) {
 
 /** 未搜索时的"大家都在听"推荐流：先展示骨架，再淡入（点击即搜索） */
 function Discovery({ onPick }) {
-  const [ready, setReady] = useState(false);
-  useEffect(() => { const t = setTimeout(() => setReady(true), 650); return () => clearTimeout(t); }, []);
-  if (!ready) return html`<${SkeletonGrid} n=${6} />`;
-  return html`<div>
-    <div class="mb-3 flex items-center gap-1.5 text-sm text-sand-400"><${Flame} size=${15} class="text-host" /> 大家都在听</div>
-    <div class="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-      ${MOCK_CATALOG.slice(0, 12).map(([title, artist], i) => html`<button key=${title} class="glass rise group overflow-hidden rounded-2xl p-2.5 text-left transition hover:-translate-y-0.5" style=${{ animationDelay: `${i * 30}ms` }}
-        onClick=${() => onPick(`${title} ${artist}`)}>
-        <div class="relative aspect-square overflow-hidden rounded-xl" style=${{ background: gradient(title) }}>
-          <${Music2} size=${26} class="absolute inset-0 m-auto text-white/60 transition group-hover:scale-110" />
-          <span class="absolute bottom-1.5 right-1.5 grid h-7 w-7 place-items-center rounded-full bg-black/40 opacity-0 transition group-hover:opacity-100"><${Search} size=${13} /></span>
-        </div>
-        <div class="mt-2 truncate text-sm font-medium">${title}</div>
-        <div class="truncate text-xs text-sand-500">${artist}</div>
-      </button>`)}
-    </div>
-  </div>`;
+  return html`<${DiscoverSections} client=${account} fallback=${MOCK_CATALOG.slice(0, 10).map(([title, artist]) => ({ title, artist }))} onPick=${onPick} />`;
 }
 
 function SearchDiscovery({ onSearch, onSelectTrack }) {
@@ -4336,16 +4402,21 @@ function sampleListening(extra = {}) {
   if (!listeningStats || samplingListening) return;
   samplingListening = true;
   const s = get(), audio = session.out.audio;
-  try { listeningStats.sample({ trackId: session.loadedId || s.currentId, duration: audio.duration || s.duration,
+  const track = s.library.find(x => x.id === (session.loadedId || s.currentId));
+  try { listeningStats.sample({ trackId: track?.localId || session.loadedId || s.currentId, title: track?.title, artist: track?.artist, cover: track?.coverUrl || track?.cover, duration: audio.duration || s.duration,
     currentTime: audio.currentTime, playing: !audio.paused && !audio.ended && audio.readyState >= 2,
     connected: s.conn === 'open' && !!session.conn?.open, friendId: session.invitation?.userId,
     seeking: audio.seeking, playbackRate: audio.playbackRate, ...extra }); } finally { samplingListening = false; }
 }
+function trackCompletedCount(track) { return listeningStats?.completedCount(track?.localId || track?.id) || 0; }
 function StatsPanel() {
   useStore(s => s.statsRevision);
-  const format = seconds => `${Math.floor(seconds / 3600)} 小时 ${Math.floor(seconds % 3600 / 60)} 分钟`;
-  return html`<section class="mb-4 space-y-3 rounded-2xl border border-ink-700 p-5"><h2 class="font-semibold">收听统计</h2>${[['week', '本周'], ['month', '本月'], ['year', '本年']].map(([period, label]) => html`<p key=${period} class="text-sm text-sand-400">${label}收听时长：${format(listeningStats?.summary(period) || 0)}</p>`)}</section>`;
+  const tracks = useStore(s => s.library), me = useStore(s => s.me);
+  const [friends, setFriends] = useState([]);
+  useEffect(() => { if (account.user?.isActivated) account.request('/account/friends').then(data => setFriends(data.friends || data)).catch(() => {}); }, []);
+  return html`<${ListeningStatsCards} stats=${listeningStats} tracks=${tracks} me=${me} friends=${friends} count=${trackCompletedCount} />`;
 }
+
 function CoListenPill() {
   const s = useStore(s => s);
   if (!s.role || !['open', 'reconnecting'].includes(s.conn)) return null;
@@ -4396,7 +4467,7 @@ function NativePlayer({ open, close, expand }) {
       <button class="mx-auto p-3 text-sand-400" onClick=${close} aria-label="收起播放器"><${ChevronDown} size=${28} /></button>
       <div class="mx-auto flex w-full max-w-md flex-1 flex-col items-center justify-center gap-7">
         <div class=${cx('vinyl grid h-64 w-64 shrink-0 place-items-center rounded-full animate-spin-slow shadow-2xl', !s.playing && 'paused-anim')}><${Cover} item=${item} size=${170} round="rounded-full" /></div>
-        <div class="w-full text-center"><h2 class="text-xl font-bold">${item?.title || '未在播放'}</h2><p class="mt-2 text-sand-400">${item?.artist || '选择喜欢的音乐'}</p><p class="mt-2 text-xs text-sand-400">已完整聆听 ${listeningStats?.completedCount(item?.id) || 0} 次</p></div>
+        <div class="w-full text-center"><h2 class="text-xl font-bold">${item?.title || '未在播放'}</h2><p class="mt-2 text-sand-400">${item?.artist || '选择喜欢的音乐'}</p><p class="mt-2 text-xs text-sand-400">已完整聆听 ${trackCompletedCount(item)} 次</p></div>
         <${SeekBar} />
         <div class="flex w-full items-center justify-around"><${PlayModeButton} /><button disabled=${!can} onClick=${() => session.act('prev')} aria-label="上一首"><${SkipBack} size=${28} /></button><button class="rounded-full bg-host p-5 text-ink-950 disabled:opacity-30" disabled=${!can} onClick=${() => session.act('toggle')} aria-label=${s.playing ? '暂停' : '播放'}><${s.playing ? Pause : Play} size=${30} /></button><button disabled=${!can || !s.canNext} onClick=${() => session.act('next')} aria-label="下一首"><${SkipForward} size=${28} /></button><button disabled=${s.role === 'guest'} onClick=${() => set({ queueSheetOpen: true })} aria-label="切换歌单" title="切换歌单"><${ListMusic} size=${24} /></button></div>
         <div class="flex w-full items-center gap-3 text-sand-400"><${s.volume ? Volume2 : VolumeX} size=${20} /><input type="range" class="hh flex-1" min="0" max="1" step="0.01" value=${s.volume} style=${{ '--fill': `${s.volume * 100}%` }} aria-label="音量" onInput=${e => session.setVolume(Number(e.target.value))} /></div>
@@ -4419,10 +4490,26 @@ function App() {
     for (const event of events) audio.addEventListener(event, sample);
     audio.addEventListener('ended', ended, true);
     const timer = setInterval(sample, 1000);
+    let uploading = false;
+    const upload = async () => {
+      if (uploading || !account.user?.isActivated) return;
+      uploading = true;
+      try {
+        await stats.ready();
+        const tracks = await LocalLib.listTracks().catch(() => []);
+        for (const t of tracks) stats.rememberTrack({ trackId: t.id, title: t.title, artist: t.artist, cover: t.coverUrl });
+        await stats.flush();
+        const plays = stats.completedUploads();
+        for (let i = 0; i < plays.length; i += 100) await account.request('/account/plays', { deviceId: stats.stats.deviceId, plays: plays.slice(i, i + 100) });
+      } catch {} finally { uploading = false; }
+    };
+    upload();
+    const uploadTimer = setInterval(upload, 60000);
+    window.addEventListener('online', upload);
     const flush = () => { sample(); stats.flush().catch(console.warn); };
     window.addEventListener('pagehide', flush);
     const unstore = store.subscribe(sample);
-    return () => { sample(); stats.flush().catch(console.warn); unsubscribe(); unstore(); clearInterval(timer); for (const event of events) audio.removeEventListener(event, sample); audio.removeEventListener('ended', ended, true); window.removeEventListener('pagehide', flush); };
+    return () => { sample(); stats.flush().catch(console.warn); unsubscribe(); unstore(); clearInterval(timer); clearInterval(uploadTimer); window.removeEventListener('online', upload); for (const event of events) audio.removeEventListener(event, sample); audio.removeEventListener('ended', ended, true); window.removeEventListener('pagehide', flush); };
   }, []);
   const [tab, setTab] = useState('discover'), [playerOpen, setPlayerOpen] = useState(false);
   const [presence, setPresence] = useState({}), [invitation, setInvitation] = useState(null);
@@ -4482,7 +4569,7 @@ function App() {
     <main class="mx-auto max-w-5xl px-4 pt-5" style=${{ paddingBottom: 'calc(170px + var(--safe-bottom, 0px))' }}>
       ${tab === 'discover' && html`<${SearchDiscovery} onSearch=${homeSearch} onSelectTrack=${track => { stopPreview(); downloadWithPicker(track); }} />`}
       ${tab === 'library' && html`<div class="mb-4 flex justify-end"><button class="inline-flex items-center gap-2 rounded-xl border border-ink-600 px-4 py-3 text-sm" title=${cloudStatus?.error ? `${cloudLabel}：${cloudStatus.error}` : cloudLabel} aria-label=${cloudLabel} onClick=${() => set({ cloudOpen: true })}><${Cloud} size=${18} /> ${cloudLabel}</button></div><${RoomPlaylistBanner} /><${LibraryPanel} />`}
-      ${tab === 'friends' && html`<${FriendsPanel} stats=${listeningStats} client=${account} presence=${presence} invite=${userId => sendSocial({ type: 'INVITE_LISTEN_REQUEST', userId })} history=${history} />`}
+      ${tab === 'friends' && html`<${FriendsPanel} onPreview=${previewPublicTrack} onCollect=${async p => { await playlistStore.copyPublic(p); toast('????????'); }} stats=${listeningStats} client=${account} presence=${presence} invite=${userId => sendSocial({ type: 'INVITE_LISTEN_REQUEST', userId })} history=${history} />`}
       ${tab === 'settings' && html`<${StatsPanel} /><${AccountCard} client=${account} className="space-y-4 rounded-2xl border border-ink-700 p-5" /><button class="mt-5 rounded-xl border border-ink-600 p-4" onClick=${() => set({ connSettingsOpen: true })}><${Settings} size=${18} /> 网络诊断 / 连接与播放设置</button><${ConnectionBar} />`}
     </main>
     ${!keyboardOpen && html`<${NativePlayer} open=${playerOpen} close=${() => setPlayerOpen(false)} expand=${() => setPlayerOpen(true)} />
@@ -4490,6 +4577,7 @@ function App() {
         <div class="mx-auto grid h-16 max-w-5xl grid-cols-4">${[['discover', '发现/检索', Search], ['library', '曲库/歌单', Library], ['friends', '好友/动态', Users], ['settings', '设置/账号', Settings]].map(([id, label, Icon]) => html`<button key=${id} aria-current=${tab === id ? 'page' : undefined} class=${cx('flex flex-col items-center justify-center gap-1 text-xs', tab === id ? 'text-host' : 'text-sand-400')} onClick=${() => setTab(id)}><${Icon} size=${21} />${label}</button>`)}</div>
       </nav>`}
     ${invitation && html`<div class="fixed inset-0 z-[90] grid place-items-center bg-black/70 p-5"><section role="dialog" aria-modal="true" aria-label="一起听邀请" class="w-full max-w-sm space-y-5 rounded-3xl bg-ink-900 p-6"><p>${invitation.nickname} 邀请你一起听歌，是否加入？</p><div class="flex justify-end gap-4">${[false, true].map(accept => html`<button class="rounded-xl border border-ink-600 px-5 py-3" onClick=${() => { session.out.unlock(); sendSocial({ type: 'INVITE_LISTEN_RESPONSE', inviteId: invitation.inviteId, accept }); setInvitation(null); }}>${accept ? '加入' : '暂不'}</button>`)}</div></section></div>`}
+    <${DailyGreeting} />
     <${PreviewDock} />
     <${Toasts} />
     <${DropOverlay} />

@@ -94,14 +94,20 @@ test('phone adds a song to a playlist → web sees it as not downloaded → down
   await phone.store.load(['ph1']);
   await web.store.load([]);
   const p = await phone.store.create('通勤');
+  await phone.store.setPublic(p.id, true);
   await phone.store.addTracks([p.id], ['ph1']);
   await phone.sync.sync();
   await web.sync.sync();
   const onWeb = web.store.get(p.id);
   assert.equal(onWeb.name, '通勤');
+  assert.equal(onWeb.isPublic, true);
   assert.deepEqual(onWeb.trackIds, []);
   assert.deepEqual(onWeb.pending.map((t) => [t.id, t.title]), [['bilibili:BV1', '晴天']]);
   assert.deepEqual(web.store.get(INBOX_ID).pending.map((t) => t.id), ['bilibili:BV1'], 'default library is shared too');
+  await phone.store.setPublic(p.id, false);
+  await phone.sync.sync();
+  await web.sync.sync();
+  assert.equal(web.store.get(p.id).isPublic, false);
 
   web.tracks.push({ id: 'w1', sourceId: 'bilibili:BV1', hash: 'other-encode', title: '晴天' }); // web downloads it
   await web.sync.sync();
@@ -121,4 +127,33 @@ test('phone adds a song to a playlist → web sees it as not downloaded → down
   await web.sync.sync();
   await phone.sync.sync();
   assert.deepEqual(phone.store.get(p.id).trackIds, []);
+});
+
+
+test('public visibility and covers survive three-way merge, including remote true to false', () => {
+  const tracks = new Map([['t', { id: 't', sourceId: 'song', title: 'Song', cover: 'https://example.com/song.jpg' }]]);
+  const local = localView({ id: 'p', name: 'Playlist', isPublic: true, coverUrl: 'https://example.com/list.jpg', trackIds: ['t'] }, tracks);
+  const first = mergePlaylists({ local: [local], cloud: [], now: 1 });
+  assert.equal(first.cloud[0].isPublic, true);
+  assert.equal(first.base.p.isPublic, true);
+  assert.equal(first.cloud[0].coverUrl, 'https://example.com/list.jpg');
+  assert.equal(first.cloud[0].tracks[0].cover, 'https://example.com/song.jpg');
+  const remote = structuredClone(first.cloud);
+  remote[0].isPublic = false;
+  const pull = mergePlaylists({ local: [local], cloud: remote, base: first.base, now: 2 });
+  assert.equal(pull.cloud[0].isPublic, false);
+  assert.equal(pull.upserts[0].isPublic, false);
+  assert.equal(pull.base.p.isPublic, false);
+  assert.equal(pull.upserts[0].coverUrl, 'https://example.com/list.jpg');
+  const localEdit = mergePlaylists({ local: [{ ...local, isPublic: false }], cloud: first.cloud, base: first.base, now: 2 });
+  assert.equal(localEdit.cloud[0].isPublic, false);
+});
+
+test('visibility edits keep a playlist when the other device deletes it', () => {
+  const base = { p: { name: 'Playlist', keys: [], isPublic: false } };
+  const result = mergePlaylists({ local: [view('p', 'Playlist', [], { isPublic: true })], cloud: [{ id: 'p', deleted: true, updatedAt: 5 }], base, now: 6 });
+  assert.deepEqual(result.deletes, []);
+  assert.equal(result.cloud[0].isPublic, true);
+  const remoteEdit = mergePlaylists({ local: [], cloud: [{ ...cloudPl('p', 'Playlist', []), isPublic: true }], base, now: 6 });
+  assert.equal(remoteEdit.upserts[0].isPublic, true);
 });

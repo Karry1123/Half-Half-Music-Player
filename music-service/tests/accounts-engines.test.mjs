@@ -148,6 +148,6 @@ test('nickname is shared by every device of the account; playlist deletion marke
     assert.deepEqual(await a.saveProfile(u.user.id, '月亮邮差'), { nickname: '月亮邮差' });
     assert.deepEqual(await a.profile(u.user.id), { nickname: '月亮邮差' });
     const saved = await a.saveLibrary(u.user.id, 0, [{ id: 'gone', deleted: true, updatedAt: 5, tracks: [{ id: 'x' }] }, { id: 'p', name: '歌单', createdAt: 1, updatedAt: 2, tracks: [] }]);
-    assert.deepEqual(saved.playlists, [{ id: 'gone', deleted: true, updatedAt: 5 }, { id: 'p', name: '歌单', createdAt: 1, updatedAt: 2, tracks: [] }]);
+    assert.deepEqual(saved.playlists, [{ id: 'gone', deleted: true, updatedAt: 5 }, { id: 'p', coverUrl: null, isPublic: false, name: '歌单', createdAt: 1, updatedAt: 2, tracks: [] }]);
   } finally { await a.close(); }
 });

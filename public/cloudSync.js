@@ -14,7 +14,7 @@ const TOMBSTONE_TTL = 180 * 86400000; // 删除标记保留半年，足够让久
 export const trackKey = (t) => (t?.sourceId ? t.sourceId : t?.hash ? `hash:${t.hash}` : null);
 
 export function toCloudTrack(t) {
-  return { id: trackKey(t), title: t.title || '', artist: t.artist || '', sourceId: t.sourceId || '', pageUrl: /^https:\/\//.test(t.pageUrl || '') ? t.pageUrl : '', hash: t.hash || '', duration: Number(t.duration) || 0 };
+  return { id: trackKey(t), title: t.title || '', artist: t.artist || '', cover: [t.coverUrl, t.cover].find(value => typeof value === 'string' && /^https:\/\//i.test(value)) || '', sourceId: t.sourceId || '', pageUrl: /^https:\/\//.test(t.pageUrl || '') ? t.pageUrl : '', hash: t.hash || '', duration: Number(t.duration) || 0 };
 }
 
 /** 本机曲库索引：cloudTrack → 本机 tracks.id（按音源 ID 或指纹） */
@@ -43,7 +43,7 @@ export function localView(p, tracksById) {
     if (t && trackKey(t)) push(toCloudTrack(t));
   }
   for (const ct of p.pending || []) push(ct);
-  return { id: p.id, name: p.name, createdAt: p.createdAt || 0, keys, tracks };
+  return { id: p.id, name: p.name, isPublic: p.isPublic === true, coverUrl: p.coverUrl || null, createdAt: p.createdAt || 0, keys, tracks };
 }
 
 /** 三方合并曲目列表：以云端顺序为准，去掉本机删掉的，追加本机新加的 */
@@ -106,23 +106,23 @@ export function mergePlaylists({ local, cloud, base = {}, legacyPrefix = '', now
       for (const s of sources) if (s?.tracks) for (const t of s.tracks instanceof Map ? s.tracks.values() : s.tracks) if (t?.id && !m.has(t.id)) m.set(t.id, t);
       return m;
     };
-    const unchangedLocally = L && B && L.name === B.name && sameKeys(L.keys, B.keys) && !L.renamedFrom;
+    const unchangedLocally = L && B && L.name === B.name && (L.isPublic === true) === (B.isPublic === true) && (L.coverUrl || null) === (B.coverUrl || null) && sameKeys(L.keys, B.keys) && !L.renamedFrom;
     const cloudKeys = C && !C.deleted ? C.tracks.map((t) => t.id) : null;
-    const unchangedInCloud = C && !C.deleted && B && C.name === B.name && sameKeys(cloudKeys, B.keys);
+    const unchangedInCloud = C && !C.deleted && B && C.name === B.name && (C.isPublic === true) === (B.isPublic === true) && (C.coverUrl || null) === (B.coverUrl || null) && sameKeys(cloudKeys, B.keys);
 
     let merged = null; // { name, keys, tracks, createdAt }
     let tombstone = null;
     if (L && C && !C.deleted) {
       const name = B && L.name !== B.name ? L.name : C.name;
-      merged = { name, keys: mergeKeys(B?.keys || [], L.keys, cloudKeys), tracks: tracksOf(C, L), createdAt: C.createdAt || L.createdAt };
+      merged = { name, isPublic: B && (L.isPublic === true) !== (B.isPublic === true) ? L.isPublic === true : C.isPublic === true, coverUrl: B && (L.coverUrl || null) !== (B.coverUrl || null) ? L.coverUrl || null : C.coverUrl || null, keys: mergeKeys(B?.keys || [], L.keys, cloudKeys), tracks: tracksOf(C, L), createdAt: C.createdAt || L.createdAt };
     } else if (L && C?.deleted) {
       if (unchangedLocally) { deletes.push(id); tombstone = C; } // 另一台设备删了、这台没再改过 → 跟着删
-      else merged = { name: L.name, keys: L.keys, tracks: L.tracks, createdAt: L.createdAt }; // 本机还在改：保留并重新上传
+      else merged = { name: L.name, isPublic: L.isPublic === true, coverUrl: L.coverUrl || null, keys: L.keys, tracks: L.tracks, createdAt: L.createdAt }; // 本机还在改：保留并重新上传
     } else if (L) {
-      merged = { name: L.name, keys: L.keys, tracks: L.tracks, createdAt: L.createdAt };
+      merged = { name: L.name, isPublic: L.isPublic === true, coverUrl: L.coverUrl || null, keys: L.keys, tracks: L.tracks, createdAt: L.createdAt };
     } else if (C && !C.deleted) {
       if (B && unchangedInCloud) tombstone = { id, deleted: true, updatedAt: now }; // 本机删了、云端没人动过 → 删除
-      else merged = { name: C.name, keys: cloudKeys, tracks: tracksOf(C), createdAt: C.createdAt };
+      else merged = { name: C.name, isPublic: C.isPublic === true, coverUrl: C.coverUrl || null, keys: cloudKeys, tracks: tracksOf(C), createdAt: C.createdAt };
     } else if (C?.deleted) {
       tombstone = C;
     }
@@ -134,10 +134,10 @@ export function mergePlaylists({ local, cloud, base = {}, legacyPrefix = '', now
     if (!merged) continue;
     const tracks = merged.keys.map((k) => merged.tracks.get(k)).filter(Boolean);
     const keys = tracks.map((t) => t.id);
-    const changedInCloud = !C || C.deleted || C.name !== merged.name || !sameKeys(cloudKeys, keys);
-    nextCloud.push({ id, name: merged.name, createdAt: merged.createdAt || now, updatedAt: changedInCloud ? now : C.updatedAt || now, tracks });
-    if (!L || L.name !== merged.name || !sameKeys(L.keys, keys) || L.renamedFrom) upserts.push({ id, name: merged.name, createdAt: merged.createdAt || now, keys, tracks: new Map(tracks.map((t) => [t.id, t])) });
-    nextBase[id] = { name: merged.name, keys };
+    const changedInCloud = !C || C.deleted || C.name !== merged.name || (C.isPublic === true) !== merged.isPublic || (C.coverUrl || null) !== merged.coverUrl || !sameKeys(cloudKeys, keys);
+    nextCloud.push({ id, name: merged.name, isPublic: merged.isPublic, coverUrl: merged.coverUrl, createdAt: merged.createdAt || now, updatedAt: changedInCloud ? now : C.updatedAt || now, tracks });
+    if (!L || L.name !== merged.name || (L.isPublic === true) !== merged.isPublic || (L.coverUrl || null) !== merged.coverUrl || !sameKeys(L.keys, keys) || L.renamedFrom) upserts.push({ id, name: merged.name, isPublic: merged.isPublic, coverUrl: merged.coverUrl, createdAt: merged.createdAt || now, keys, tracks: new Map(tracks.map((t) => [t.id, t])) });
+    nextBase[id] = { name: merged.name, isPublic: merged.isPublic, coverUrl: merged.coverUrl, keys };
   }
   const order = new Map(cloud.map((p, i) => [p.id, i]));
   nextCloud.sort((a, b) => (order.get(a.id) ?? Infinity) - (order.get(b.id) ?? Infinity));
@@ -230,14 +230,14 @@ export class CloudSync {
           }
         }
         const index = indexTracks(tracks);
-        const upserts = result.upserts.map((u) => ({ id: u.id, name: u.name, createdAt: u.createdAt, ...splitForDevice(u.keys, u.tracks, index) }));
+        const upserts = result.upserts.map((u) => ({ id: u.id, name: u.name, isPublic: u.isPublic, coverUrl: u.coverUrl, createdAt: u.createdAt, ...splitForDevice(u.keys, u.tracks, index) }));
         // 歌单内容没变、但这台设备刚下载了其中"未下载"的歌：把它从 pending 挪进 trackIds
         const touched = new Set([...upserts.map((u) => u.id), ...result.deletes]);
         for (const p of store.list) {
           if (touched.has(p.id)) continue;
           const v = localView(p, tracksById);
           const split = splitForDevice(v.keys, v.tracks, index);
-          if (!sameKeys(split.trackIds, p.trackIds) || split.pending.length !== (p.pending || []).length) upserts.push({ id: p.id, name: p.name, createdAt: p.createdAt, ...split });
+          if (!sameKeys(split.trackIds, p.trackIds) || split.pending.length !== (p.pending || []).length) upserts.push({ id: p.id, name: p.name, isPublic: p.isPublic === true, coverUrl: p.coverUrl || null, createdAt: p.createdAt, ...split });
         }
         if (upserts.length || result.deletes.length) await store.applyRemote({ upserts, deletes: result.deletes });
         await saveBase(userId, result.base);
