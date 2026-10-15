@@ -28,6 +28,8 @@ RUN npm ci --omit=dev --prefix music-service --no-audit --no-fund
 COPY server ./server
 COPY music-service/src ./music-service/src
 COPY music-service/public ./music-service/public
+# scripts/invite.mjs：在服务 Shell 里运行 node music-service/scripts/invite.mjs 7 生成邀请码
+COPY music-service/scripts ./music-service/scripts
 COPY deploy/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
