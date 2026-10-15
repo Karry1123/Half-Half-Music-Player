@@ -42,6 +42,7 @@ ENV NODE_ENV=production \
     DOWNLOAD_DIR=/tmp/halfhalf/downloads \
     CACHE_DIR=/tmp/halfhalf/cache \
     ENABLE_SIGNALING=1 \
+    DATA_DIR=/var/data/halfhalf \
     ACCOUNT_DB=/var/data/halfhalf/accounts.sqlite
 
 # 账号数据库：生产环境设置 DATABASE_URL（PostgreSQL，如 Northflank 免费数据库），容器重建不丢数据。
