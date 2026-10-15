@@ -55,10 +55,23 @@ export async function cleanStaleDownloads() {
   await removeCached(SHA_PATH);
 }
 
+/**
+ * Filesystem.downloadFile (Capacitor 8, Android) ignores `recursive` and never creates the parent folder,
+ * so writing cache/update/... fails with ENOENT on a fresh install. Create the folder first.
+ */
+async function ensureUpdateDir() {
+  try {
+    await P().Filesystem.mkdir({ path: APK_PATH.slice(0, APK_PATH.lastIndexOf('/')), directory: DIR, recursive: true });
+  } catch (e) {
+    if (!/exist/i.test(e?.message || '')) throw e;
+  }
+}
+
 /** Companion "<apk>.sha256" asset ("<hex>  app-release.apk"), downloaded natively because the browser cannot fetch release assets (CORS). */
 async function fetchCompanionSha(url) {
   const { Filesystem } = P();
   try {
+    await ensureUpdateDir();
     await Filesystem.downloadFile({ url, path: SHA_PATH, directory: DIR, recursive: true, connectTimeout: 10000, readTimeout: 10000 });
     const { data } = await Filesystem.readFile({ path: SHA_PATH, directory: DIR, encoding: 'utf8' });
     return /\b([0-9a-f]{64})\b/i.exec(String(data))?.[1].toLowerCase() || null;
@@ -92,6 +105,7 @@ export async function downloadAndInstall({ update, mirrors = [], onPhase = () =>
     try {
       onPhase('downloading', { source: hostOf(url), mirrored: url !== apk.url });
       onProgress(0, apk.size);
+      await ensureUpdateDir();
       const listener = await Filesystem.addListener('progress', (e) => e.url === url && onProgress(e.bytes, e.contentLength || apk.size));
       try {
         await Filesystem.downloadFile({ url, path: APK_PATH, directory: DIR, recursive: true, progress: true, connectTimeout: 15000, readTimeout: 30000 });
