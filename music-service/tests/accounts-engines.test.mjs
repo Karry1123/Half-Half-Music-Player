@@ -28,6 +28,50 @@ const engines = {
 };
 
 for (const [name, open] of Object.entries(engines)) {
+  test(`${name}: public IDs and normalized nicknames migrate existing duplicate profiles safely`, async () => {
+    const { accounts: a, stop } = await open();
+    try {
+      // Recreate the pre-migration columns with real existing rows and references.
+      await a.db.exec('DROP INDEX users_short_id_unique');
+      await a.db.exec('DROP INDEX profiles_nickname_normalized_unique');
+      await a.db.exec('ALTER TABLE users DROP COLUMN short_id');
+      await a.db.exec('ALTER TABLE profiles DROP COLUMN nickname_normalized');
+      for (const [index, nickname] of ['Orange', 'orange', 'Orange (2)', 'ＯＲＡＮＧＥ'].entries()) {
+        const id = `legacy-${index}`;
+        await a.db.run('INSERT INTO users VALUES($1,$2,$3,$4,1,$5)', [id, `user-${index}`, 'password-hash', 'salt', index + 1]);
+        await a.db.run('INSERT INTO profiles VALUES($1,$2,$3)', [id, nickname, index + 1]);
+      }
+      await a.db.run('INSERT INTO sessions VALUES($1,$2,$3)', ['existing-token-hash', 'legacy-1', Date.now() + 10000]);
+      await a.db.run('INSERT INTO libraries VALUES($1,1,$2,$3)', ['legacy-1', '[]', 1]);
+      await a.migrate();
+      const users = await a.db.all('SELECT id, short_id FROM users ORDER BY id');
+      assert.deepEqual(users.map(user => user.id), ['legacy-0', 'legacy-1', 'legacy-2', 'legacy-3']);
+      assert.equal(new Set(users.map(user => user.short_id)).size, 4);
+      for (const user of users) assert.match(user.short_id, /^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{7}$/);
+      assert.equal((await a.profile('legacy-0')).nickname, 'Orange');
+      assert.equal((await a.profile('legacy-1')).nickname, 'orange (3)');
+      assert.equal((await a.profile('legacy-2')).nickname, 'Orange (2)');
+      const before = await a.db.all('SELECT * FROM profiles ORDER BY user_id');
+      await a.migrate();
+      assert.deepEqual(await a.db.all('SELECT * FROM profiles ORDER BY user_id'), before);
+      assert.deepEqual(await a.db.all('SELECT id, short_id FROM users ORDER BY id'), users);
+      assert.equal((await a.one('SELECT user_id FROM sessions')).user_id, 'legacy-1');
+      assert.equal((await a.library('legacy-1')).revision, 1);
+      await assert.rejects(a.saveProfile('legacy-1', 'oRaNgE'), { status: 409, code: 'NICKNAME_TAKEN' });
+      await assert.rejects(a.saveProfile('legacy-1', 'ＯＲＡＮＧＥ'), { status: 409, code: 'NICKNAME_TAKEN' });
+      await a.saveProfile('legacy-0', 'ORANGE'); // own normalized nickname is allowed
+      const newUser = await a.register('new-user', 'local-test-password');
+      assert.match(newUser.user.shortId, /^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{7}$/);
+      assert.equal((await a.user(newUser.token)).shortId, newUser.user.shortId);
+      assert.equal((await a.searchUsers(newUser.user.id, users[0].short_id.toLowerCase()))[0].id, 'legacy-0');
+      assert.equal((await a.searchUsers(newUser.user.id, 'user-1'))[0].id, 'legacy-1');
+      assert.equal((await a.searchUsers(newUser.user.id, 'orange (2)'))[0].id, 'legacy-2');
+      const results = await Promise.allSettled(['legacy-1', 'legacy-2'].map(id => a.saveProfile(id, 'Unique')));
+      assert.equal(results.filter(result => result.status === 'fulfilled').length, 1);
+      assert.equal(results.find(result => result.status === 'rejected').reason.code, 'NICKNAME_TAKEN');
+    } finally { await a.close(); await stop(); }
+  });
+
   test(`${name}: activation persists across devices, invites are single use, logout revokes`, async () => {
     const { accounts: a, stop } = await open();
     try {

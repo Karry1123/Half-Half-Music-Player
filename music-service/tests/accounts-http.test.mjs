@@ -22,6 +22,11 @@ test('HTTP activation gate, token revocation and account library separation', as
     assert.equal((await request('/api/search', a.token)).status, 200);
     const b = (await request('/auth/register', null, { username: 'account-b', password: 'local-test-password-b' })).body;
     await request('/auth/activate', b.token, { code: await db.invite() });
+    await request('/account/profile', a.token, { nickname: 'Orange' }, 'PUT');
+    const nicknameConflict = await request('/account/profile', b.token, { nickname: 'orange' }, 'PUT');
+    assert.equal(nicknameConflict.status, 409);
+    assert.equal(nicknameConflict.body.code, 'NICKNAME_TAKEN');
+    assert.equal(nicknameConflict.body.error, '该昵称已被使用，请换一个昵称');
     await request('/account/library', a.token, { revision: 0, playlists: [{ id: 'p', name: '私有歌单', tracks: [] }] }, 'PUT');
     assert.deepEqual((await request('/account/library', b.token)).body.playlists, []);
     assert.equal((await request('/account/library', a.token, { revision: 0, playlists: [] }, 'PUT')).status, 409);

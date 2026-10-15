@@ -5,7 +5,11 @@ import path from 'node:path';
 const scrypt = promisify(scryptCallback);
 const hash = value => createHash('sha256').update(value).digest('hex');
 const fail = (status, code, message) => { throw Object.assign(new Error(message), { status, code }); };
-const publicUser = u => ({ id: u.id, username: u.username, isActivated: !!Number(u.activated) });
+const publicUser = u => ({ id: u.id, username: u.username, shortId: u.short_id, isActivated: !!Number(u.activated) });
+const normalizeNickname = name => name.normalize('NFKC').replace(/\s+/g, ' ').trim().toLowerCase();
+const SHORT_ID_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+const newShortId = () => [...randomBytes(7)].map(byte => SHORT_ID_ALPHABET[byte % SHORT_ID_ALPHABET.length]).join('');
+const uniqueViolation = e => e.code === '23505' || /UNIQUE/i.test(e.message);
 
 // One schema for both engines. Millisecond timestamps need BIGINT on PostgreSQL.
 const SCHEMA = [
@@ -124,7 +128,43 @@ export class Accounts {
   }
   /** In-memory SQLite, for tests. */
   static memory() { return Accounts.open({ url: '', file: ':memory:' }); }
-  async migrate() { for (const sql of SCHEMA) await this.db.exec(sql); }
+  async migrate() {
+    await this.db.tx(async db => {
+      for (const sql of SCHEMA) await db.exec(sql);
+      // Serialize concurrent deploys before inspecting/altering existing production tables.
+      if (db.dialect === 'postgres') await db.exec('LOCK TABLE users, profiles IN ACCESS EXCLUSIVE MODE');
+      const columns = async table => db.dialect === 'postgres'
+        ? (await db.all('SELECT column_name AS name FROM information_schema.columns WHERE table_schema=current_schema() AND table_name=$1', [table])).map(row => row.name)
+        : (await db.all(`PRAGMA table_info(${table})`)).map(row => row.name);
+      if (!(await columns('users')).includes('short_id')) await db.exec('ALTER TABLE users ADD COLUMN short_id TEXT');
+      if (!(await columns('profiles')).includes('nickname_normalized')) await db.exec('ALTER TABLE profiles ADD COLUMN nickname_normalized TEXT');
+      const users = await db.all('SELECT id, short_id FROM users ORDER BY created_at, id');
+      const shortIds = new Set(users.map(user => user.short_id).filter(Boolean));
+      for (const user of users) if (!user.short_id) {
+        let shortId; do { shortId = newShortId(); } while (shortIds.has(shortId));
+        shortIds.add(shortId);
+        await db.run('UPDATE users SET short_id=$1 WHERE id=$2', [shortId, user.id]);
+      }
+      const profiles = await db.all('SELECT user_id, nickname, nickname_normalized FROM profiles ORDER BY updated_at, user_id');
+      const claimed = new Set(profiles.map(profile => profile.nickname_normalized).filter(Boolean));
+      // Reserve legacy names before assigning suffixes so no unrelated name is displaced.
+      const reserved = new Set(profiles.map(profile => normalizeNickname(profile.nickname)));
+      for (const profile of profiles) if (!profile.nickname_normalized) {
+        let nickname = profile.nickname, normalized = normalizeNickname(nickname), suffix = 2;
+        if (claimed.has(normalized)) {
+          do {
+            const ending = ` (${suffix++})`;
+            nickname = [...profile.nickname].slice(0, Math.max(1, 16 - ending.length)).join('') + ending;
+            normalized = normalizeNickname(nickname);
+          } while (claimed.has(normalized) || reserved.has(normalized));
+        }
+        claimed.add(normalized);
+        await db.run('UPDATE profiles SET nickname=$1, nickname_normalized=$2 WHERE user_id=$3', [nickname, normalized, profile.user_id]);
+      }
+      await db.exec('CREATE UNIQUE INDEX IF NOT EXISTS users_short_id_unique ON users(short_id)');
+      await db.exec('CREATE UNIQUE INDEX IF NOT EXISTS profiles_nickname_normalized_unique ON profiles(nickname_normalized)');
+    });
+  }
   close() { return this.db.close(); }
   async one(sql, params) { return (await this.db.all(sql, params))[0] || null; }
   async grant(userId, trackId) { await this.db.run('INSERT INTO download_grants VALUES($1,$2) ON CONFLICT DO NOTHING', [userId, trackId]); }
@@ -136,8 +176,16 @@ export class Accounts {
     const salt = randomBytes(16).toString('hex');
     const digest = (await scrypt(password, salt, 64)).toString('hex');
     const id = randomUUID();
-    try { await this.db.run('INSERT INTO users VALUES($1,$2,$3,$4,0,$5)', [id, username, digest, salt, Date.now()]); }
-    catch (e) { if (e.code === '23505' || /UNIQUE/i.test(e.message)) fail(409, 'EXISTS', '该账号已注册'); throw e; }
+    for (let attempt = 0; ; attempt++) {
+      try {
+        await this.db.run('INSERT INTO users(id,username,password,salt,activated,created_at,short_id) VALUES($1,$2,$3,$4,0,$5,$6)', [id, username, digest, salt, Date.now(), newShortId()]);
+        break;
+      } catch (e) {
+        if (!uniqueViolation(e)) throw e;
+        if (await this.one('SELECT id FROM users WHERE username=$1', [username])) fail(409, 'EXISTS', '该账号已注册');
+        if (attempt >= 19) throw e;
+      }
+    }
     return this.issue(id);
   }
   async login(username, password) {
@@ -200,16 +248,21 @@ export class Accounts {
   async saveProfile(userId, nickname) {
     const name = typeof nickname === 'string' ? nickname.replace(/\s+/g, ' ').trim() : '';
     if (!name || [...name].length > 16) fail(400, 'INPUT', '昵称需 1–16 个字');
-    await this.db.run('INSERT INTO profiles VALUES($1,$2,$3) ON CONFLICT(user_id) DO UPDATE SET nickname=excluded.nickname, updated_at=excluded.updated_at', [userId, name, Date.now()]);
+    try {
+      await this.db.run('INSERT INTO profiles(user_id,nickname,updated_at,nickname_normalized) VALUES($1,$2,$3,$4) ON CONFLICT(user_id) DO UPDATE SET nickname=excluded.nickname, updated_at=excluded.updated_at, nickname_normalized=excluded.nickname_normalized', [userId, name, Date.now(), normalizeNickname(name)]);
+    } catch (e) {
+      if (uniqueViolation(e)) fail(409, 'NICKNAME_TAKEN', '该昵称已被使用，请换一个昵称');
+      throw e;
+    }
     return { nickname: name };
   }
   async searchUsers(userId, query) {
     const q = String(query || '').trim().slice(0, 80);
     if (!q) return [];
-    return this.db.all("SELECT u.id, COALESCE(p.nickname,u.username) AS nickname FROM users u LEFT JOIN profiles p ON p.user_id=u.id WHERE u.id<>$1 AND u.activated=1 AND (u.id=$2 OR LOWER(COALESCE(p.nickname,u.username)) LIKE $3 ESCAPE '!') ORDER BY u.id LIMIT 25", [userId, q, '%' + q.toLowerCase().replace(/[!%_]/g, c => '!' + c) + '%']);
+    return this.db.all("SELECT u.id, u.username, u.short_id AS \"shortId\", COALESCE(p.nickname,u.username) AS nickname FROM users u LEFT JOIN profiles p ON p.user_id=u.id WHERE u.id<>$1 AND u.activated=1 AND (u.id=$2 OR u.short_id=$4 OR LOWER(u.username) LIKE $3 ESCAPE '!' OR p.nickname_normalized LIKE $3 ESCAPE '!') ORDER BY u.id LIMIT 25", [userId, q, '%' + normalizeNickname(q).replace(/[!%_]/g, c => '!' + c) + '%', q.toUpperCase()]);
   }
   async friends(userId) {
-    return this.db.all('SELECT f.requester, f.addressee, f.status, f.created_at, f.updated_at, u.id, COALESCE(p.nickname,u.username) AS nickname FROM friendships f JOIN users u ON u.id=CASE WHEN f.requester=$1 THEN f.addressee ELSE f.requester END LEFT JOIN profiles p ON p.user_id=u.id WHERE f.requester=$1 OR f.addressee=$1 ORDER BY f.updated_at DESC', [userId]);
+    return this.db.all('SELECT f.requester, f.addressee, f.status, f.created_at, f.updated_at, u.id, u.username, u.short_id AS "shortId", COALESCE(p.nickname,u.username) AS nickname FROM friendships f JOIN users u ON u.id=CASE WHEN f.requester=$1 THEN f.addressee ELSE f.requester END LEFT JOIN profiles p ON p.user_id=u.id WHERE f.requester=$1 OR f.addressee=$1 ORDER BY f.updated_at DESC', [userId]);
   }
   async areFriends(a, b) {
     return !!await this.one("SELECT 1 AS ok FROM friendships WHERE pair_key=$1 AND status='accepted'", [[a, b].sort().join(':')]);

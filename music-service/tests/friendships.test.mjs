@@ -50,6 +50,24 @@ test('SQLite simultaneous reciprocal requests produce one pending relationship',
   assert.equal((await a.friends(alice)).length, 1);
 });
 
+test('friends expose sidchy03 own latest nickname and username, never the viewing account profile', async t => {
+  const { accounts: a, users: [viewer] } = await fixture(t);
+  const friend = await a.register('sidchy03', 'correct horse battery staple');
+  await a.activate(friend.token, await a.invite());
+  await a.saveProfile(viewer, '橘子汽水');
+  await a.saveProfile(friend.user.id, '海盐');
+  await a.requestFriend(viewer, friend.user.id);
+  await a.respondFriend(friend.user.id, viewer, true);
+  assert.equal((await a.friends(viewer))[0].nickname, '海盐');
+  await a.saveProfile(friend.user.id, '月亮邮差');
+  const result = (await a.friends(viewer))[0];
+  assert.equal(result.id, friend.user.id);
+  assert.equal(result.username, 'sidchy03');
+  assert.equal(result.nickname, '月亮邮差');
+  assert.equal(result.shortId, friend.user.shortId);
+  assert.equal((await a.friends(friend.user.id))[0].nickname, '橘子汽水');
+});
+
 // Exercise the real authenticated websocket flow, including forged acceptance and readiness.
 import http from 'node:http';
 import WebSocket from 'ws';
@@ -87,8 +105,11 @@ test('friends presence and private invitations use server IDs and host readiness
     alice.send({ type: 'PRESENCE_UPDATE', nowPlaying: { title: 'Song', playing: true } });
     const presence = await take(bob, 'FRIEND_PRESENCE');
     assert.equal(presence.userId, alice.id); assert.equal(presence.nowPlaying.title, 'Song');
-    alice.send({ type: 'INVITE_LISTEN_REQUEST', userId: bob.id });
+    await a.saveProfile(alice.id, '邀请人的最新昵称');
+    await a.saveProfile(bob.id, '被邀请人的昵称');
+    alice.send({ type: 'INVITE_LISTEN_REQUEST', userId: bob.id, nickname: '伪造昵称' });
     const invitation = await take(bob, 'INVITE_LISTEN_REQUEST');
+    assert.equal(invitation.nickname, '邀请人的最新昵称');
     eve.send({ type: 'INVITE_LISTEN_RESPONSE', inviteId: invitation.inviteId, accept: true });
     await take(eve, 'error');
     bob.send({ type: 'INVITE_LISTEN_RESPONSE', inviteId: invitation.inviteId, accept: true });
@@ -124,7 +145,7 @@ test('invitation readiness received during ICE fetch survives and dials once', a
     on(type, callback) { this.handlers[type] = callback; }
     connect(id, options) { dials++; return { peer: id, metadata: options.metadata }; }
   }
-  const context = vm.createContext({ now: () => 0, account: { assertActive: async () => {} }, applyIce: () => ice, Peer: FakePeer, peerOptions: () => ({}), clearTimeout, setTimeout() {}, set() {}, CLIENT_ID: 'client' });
+  const context = vm.createContext({ now: () => 0, syncProfile: async () => {}, account: { assertActive: async () => {} }, applyIce: () => ice, Peer: FakePeer, peerOptions: () => ({}), clearTimeout, setTimeout() {}, set() {}, CLIENT_ID: 'client' });
   const Session = vm.runInContext('(class {' + methods + '})', context);
   const session = new Session();
   Object.assign(session, { stopReconnect() {}, destroyPeer() { this.invitation = null; this.invitationReady = null; }, out: { unlock() {}, stopAt() { stopped = true; } }, bind(c) { this.conn = c; } });

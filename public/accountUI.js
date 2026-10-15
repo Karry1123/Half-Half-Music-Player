@@ -212,6 +212,7 @@ export function AccountCard({ client, className = '' }) {
     <div class="flex items-center gap-3">
       <span class="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-sync/15 text-sm font-semibold uppercase text-sync">${client.user.username.slice(0, 1)}</span>
       <span class="min-w-0 flex-1"><span class="block truncate text-sm font-medium">${client.user.username}</span>
+        <span class="block text-xs text-sand-400">我的 ID：${client.user.shortId || client.user.short_id || '正在加载'}</span>
         <span class="inline-flex items-center gap-1 text-xs text-sync"><${Check} size=${11} /> 已激活 · 全部服务可用</span></span>
       <button class=${cx(ghost, 'shrink-0 hover:border-guest hover:text-guest')} disabled=${busy} onClick=${logout}><${LogOut} size=${14} /> 退出</button>
     </div>

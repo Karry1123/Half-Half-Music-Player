@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import { engine } from '../engine/session.js';
 import { useMusic } from '../store/useMusic.js';
 import { useSession } from '../store/useSession.js';
@@ -37,32 +36,6 @@ function PingMeter() {
   );
 }
 
-function RoomCode() {
-  const code = useSession((s) => s.roomCode);
-  const [copied, setCopied] = useState(false);
-  const copy = async () => {
-    const link = `${location.origin}${location.pathname}?room=${code}`;
-    try {
-      await navigator.clipboard.writeText(link);
-    } catch {
-      prompt('复制邀请链接：', link); // 非 HTTPS 的局域网地址没有剪贴板权限
-    }
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
-  };
-  return (
-    <span className="room-code">
-      <span className="muted" style={{ fontSize: 12 }}>
-        房间
-      </span>
-      <b>{code}</b>
-      <button className="icon-btn" style={{ width: 26, height: 26 }} onClick={copy} title="复制邀请链接" aria-label="复制邀请链接">
-        <Icon name={copied ? 'check' : 'copy'} size={15} />
-      </button>
-    </span>
-  );
-}
-
 export function ConnectionBar() {
   const role = useSession((s) => s.role);
   const link = useLinkState();
@@ -74,7 +47,6 @@ export function ConnectionBar() {
         <span className="brand-mark" />
         Half&amp;Half
       </span>
-      <RoomCode />
       <span className={`tag ${role}`}>{role === 'host' ? 'Host · 音源' : 'Guest'}</span>
       <span className="light" data-state={link.state} role="status">
         <span className="dot" />

@@ -14,7 +14,6 @@
     · npm run dev:all 后访问 http://localhost:8080/dashboard.html：自动对接 music-service（/music-api/api/*）
 
   URL 参数
-    ?room=123456          以 Guest 身份自动加入房间（角色自动识别）
     ?name=小明            昵称
     ?api=http://host:8090 指定 music-service 地址（默认同源 /music-api）；?api= 留空强制演示模式
     ?peerHost=localhost&peerPort=9000&peerPath=/   使用自建 PeerServer（默认 PeerJS 公共云）
@@ -118,7 +117,7 @@ import {
   Wifi, WifiOff, X, Plus, MoreHorizontal, ListPlus, ListMinus, Pencil, Library, Eye, EyeOff, ChevronDown, Cloud, CloudDownload,
 } from 'lucide-react';
 import { Peer } from 'peerjs';
-import QRCode from 'qrcode';
+import { ListeningStats } from './listeningStats.js';
 import * as LocalLib from './libraryStorage.js';
 import { installAndroidBack, pushBackLayer } from './mobileRuntime.js';
 import { nativePlugin } from './nativeBridge.js';
@@ -323,6 +322,7 @@ const store = createStore({
   currentId: null,
   loaded: false,
   playing: false,
+  playbackPending: false,
   duration: 0,
   volume: Number((() => { try { return localStorage.getItem('hh.volume'); } catch { return null; } })() ?? 0.8),
   peerReady: false,
@@ -707,19 +707,22 @@ class AudioOut {
     return this.ctx ? (this.ctx.outputLatency || 0) + (this.ctx.baseLatency || 0) : 0;
   }
 
-  load(blob) {
+  load(blob, { autoplay = false } = {}) {
     clearTimeout(this.timer);
     this.intent = false;
     this.pausedAt = 0;
     this.audio.pause();
     if (this.url) URL.revokeObjectURL(this.url);
     this.url = URL.createObjectURL(blob);
-    this.audio.src = this.url;
-    this.audio.currentTime = 0;
-    return new Promise((resolve, reject) => {
+    const loaded = new Promise((resolve, reject) => {
       this.audio.onloadedmetadata = () => resolve(this.audio.duration);
       this.audio.onerror = () => reject(new Error('浏览器无法解码该音频'));
     });
+    this.audio.src = this.url;
+    this.audio.currentTime = 0;
+    // Solo playback must continue in the ended event, before metadata/bridge/timers.
+    if (autoplay) this.playAt(now(), 0);
+    return loaded;
   }
 
   /** 在本地时刻 localMs 让听到的位置为 pos；已过去则直接跳到"现在应在的位置" */
@@ -730,7 +733,13 @@ class AudioOut {
     this.audio.playbackRate = 1;
     const start = () => {
       this.audio.currentTime = Math.max(0, pos + (now() - localMs) / 1000 + this.latency);
-      this.audio.play().catch((e) => e.name === 'NotAllowedError' && this.onBlocked?.());
+      const source = this.audio.src;
+      this.audio.play().catch((e) => {
+        if (this.audio.src !== source || !this.intent || e.name === 'AbortError') return;
+        this.intent = false;
+        if (e.name === 'NotAllowedError') this.onBlocked?.();
+        this.onPlayError?.(e);
+      });
     };
     const wait = localMs - now();
     if (wait > 8) this.timer = setTimeout(start, wait);
@@ -800,6 +809,12 @@ class Session {
   constructor() {
     this.out.onEnded = () => this.onEnded();
     this.out.onBlocked = () => note('浏览器拦截了自动播放，点一下页面任意位置即可出声', 'warn');
+    this.out.onPlayError = (e) => {
+      this.anchor.playing = false;
+      set({ playing: false, playbackPending: false });
+      console.warn('音频播放失败', e);
+      toast(`音频播放失败：${e.message}`, 'warn');
+    };
     setInterval(() => this.tick(), HEARTBEAT_MS);
     // 自动播放策略：页面上的第一次（以及之后每次）点击都顺手解锁音频
     for (const ev of ['pointerdown', 'keydown']) document.addEventListener(ev, () => this.out.unlock(), { capture: true });
@@ -846,7 +861,7 @@ class Session {
   /** Host / 单人：从 pos 立即（带提前量）继续播放，并通知对方 */
   resumeFrom(pos) {
     if (pos === 0) this.out.audio.currentTime = 0;
-    const lead = this.conn?.open ? Math.min(1000, Math.max(120, this.peerRtt * 1.5 + 60)) : 40;
+    const lead = this.conn?.open ? Math.min(1000, Math.max(120, this.peerRtt * 1.5 + 60)) : 0;
     const anchor = { trackId: this.loadedId, playing: true, position: pos, at: now() + lead };
     this.applyAnchor(anchor);
     this.send({ type: 'play', ...anchor, by: 'host', quiet: true });
@@ -881,11 +896,13 @@ class Session {
     set({ activePlaylistId: pl ? pl.id : null });
     const scope = this.scopeIds();
     if (!scope.length) return toast(pl ? `歌单《${pl.name}》里还没有歌` : '曲库里还没有歌', 'warn');
-    const q = this.queue.setTracks(scope, null);
+    const q = this.queue = new PlayQueue({ mode: get().playMode });
+    q.setTracks(scope, null);
     if (q.mode === 'shuffle') q.newRound();
     const target = startItemId && scope.includes(startItemId) ? startItemId : q.peekNext() || scope[0];
     this.announcePlaylist();
     await this.loadTrack(target, { autoplay: true, via: 'select' });
+    this.notifySynced();
   }
 
   /** 房主：告诉 Guest 现在播放哪个歌单（随带最新曲库，保证双方队列一致） */
@@ -901,7 +918,8 @@ class Session {
     set({ playMode: this.queue.mode });
     try { localStorage.setItem('hh.playMode', this.queue.mode); } catch {}
     this.broadcastLibrary();
-    toast(MODE_LABEL[this.queue.mode]);
+    this.notifySynced();
+    if (!this.conn?.open) toast(MODE_LABEL[this.queue.mode]);
   }
 
   get isGuest() {
@@ -914,6 +932,7 @@ class Session {
     clearTimeout(this.joinTimer);
     this.destroyPeer();
     this.invitation = info;
+    await syncProfile();
     await account.assertActive();
     await applyIce();
     if (this.invitation !== info) return;
@@ -991,7 +1010,7 @@ class Session {
   async joinRoom(code) {
     try { await account.assertActive(); } catch (e) { return toast(e.message, 'warn'); }
     code = String(code).trim();
-    if (!/^\d{6}$/.test(code)) return toast('房间码是 6 位数字', 'warn');
+    if (!/^\d{6}$/.test(code)) return toast('同听会话无效', 'warn');
     this.out.unlock();
     await iceReady;
     this.destroyPeer();
@@ -1168,7 +1187,7 @@ class Session {
     this.guestClientId = null;
     set({ link: null, peerAway: false });
     this.destroyPeer();
-    set({ role: null, roomCode: null, conn: 'idle', peer: null, ping: null, peerReady: false, transfer: null, screen: 'home' });
+    set({ role: null, roomCode: null, conn: 'idle', peer: null, ping: null, peerReady: false, transfer: null, screen: 'home', coListenOpen: false, queueSheetOpen: false });
     if (wasGuest) {
       // 曲库属于房主，离开后清空；本地缓存的音频也一并释放
       this.out.stopAt(now(), 0);
@@ -1223,7 +1242,7 @@ class Session {
       // 连上后自动进入播放台（重连时不打断用户正在看的页面）
       set({ conn: 'open', joinError: null, peerAway: false, ...(!wasReconnect && { screen: 'deck' }) });
       if (wasReconnect) note(this.isGuest ? '已重新连接，正在校准同步…' : `${get().peer?.name || '对方'} 已重新连接`, 'sync');
-      else toast(this.isGuest ? '已加入房间，开始同步' : '伙伴已加入 🎧');
+      else toast(this.isGuest ? '已加入同听，开始同步' : '伙伴已加入 🎧');
       clearInterval(this.statsTimer);
       this.statsTimer = setInterval(() => this.pollPath(c), 3000);
       setTimeout(() => this.pollPath(c), 800);
@@ -1298,6 +1317,12 @@ class Session {
     if (this.conn?.open) this.conn.send(msg);
   }
 
+  notifySynced() {
+    if (this.isGuest || !this.conn?.open) return;
+    const id = this.pendingNotice = crypto.randomUUID();
+    this.send({ type: 'sync_notice', id });
+  }
+
   async burstPings() {
     for (let i = 0; i < 8 && this.conn?.open; i++) {
       this.send({ type: 'ping', t0: now(), rtt: this.clock.rtt });
@@ -1308,6 +1333,12 @@ class Session {
   onMessage(m) {
     const host = !this.isGuest;
     switch (m.type) {
+      case 'sync_notice':
+        this.send({ type: 'sync_ack', id: m.id });
+        return;
+      case 'sync_ack':
+        if (this.pendingNotice === m.id) { this.pendingNotice = null; toast('已同步至对方'); }
+        return;
       case 'hb':
         return;
       case 'bg':
@@ -1320,13 +1351,13 @@ class Session {
         return;
       case 'hello':
         if (!host) rememberRoom(get().roomCode, String(m.name)); // "快速重新连接"记忆
-        return set({ peer: { name: String(m.name).slice(0, 16), color: m.color } });
+        return set({ peer: { name: String(m.name || this.invitation?.nickname || '好友').slice(0, 16), color: m.color } });
       case 'full':
         toast('房间已满（仅限两人）', 'warn');
         return this.leave();
       case 'ping':
         this.peerRtt = m.rtt || this.peerRtt;
-        if (m.rtt) set({ ping: Math.round(m.rtt) });
+        // Each side measures its own data-channel RTT from pong.
         return this.send({ type: 'pong', t0: m.t0, t1: now(), t2: now() });
       case 'pong':
         this.clock.handlePong(m);
@@ -1414,10 +1445,10 @@ class Session {
     const by = opts.by || 'host';
     if (action === 'select') return this.loadTrack(opts.itemId, { autoplay: true, by, via: 'select' });
     if (action === 'next' || action === 'prev') {
-      if (action === 'prev' && this.position() > 3) return this.transport('seek', 0, by);
+      if (action === 'prev' && this.position() > 3) { this.transport('seek', 0, by); this.notifySynced(); return; }
       const q = this.syncQueue();
       const target = action === 'next' ? q.peekNext() : q.peekPrev();
-      if (target) this.loadTrack(target, { autoplay: true, by, via: action });
+      if (target) this.loadTrack(target, { autoplay: true, by, via: action }).then(() => this.notifySynced());
       return;
     }
     this.transport(action, opts.position, by);
@@ -1425,7 +1456,7 @@ class Session {
 
   transport(action, position, by, quiet = false) {
     if (!this.loadedId) return;
-    const lead = this.conn?.open ? Math.min(1000, Math.max(120, this.peerRtt * 1.5 + 60)) : 40;
+    const lead = this.conn?.open ? Math.min(1000, Math.max(120, this.peerRtt * 1.5 + 60)) : 0;
     const at = now() + lead;
     const dur = this.out.audio.duration || get().duration;
     let { playing } = this.anchor;
@@ -1444,6 +1475,7 @@ class Session {
     const anchor = { trackId: this.loadedId, playing, position: pos, at };
     this.applyAnchor(anchor);
     this.send({ type: action, ...anchor, by, quiet });
+    if (!quiet && (action === 'play' || action === 'pause')) this.notifySynced();
     if (by === 'guest' && !quiet) this.noteAction(action, pos);
   }
 
@@ -1505,7 +1537,7 @@ class Session {
       }
     }
     // Guest 每 2 秒补一次时钟样本
-    if (this.isGuest && this.conn?.open && now() - this.lastPing > 2000) {
+    if (this.conn?.open && now() - this.lastPing > 2000) {
       this.lastPing = now();
       this.send({ type: 'ping', t0: now(), rtt: this.clock.rtt });
     }
@@ -1544,35 +1576,53 @@ class Session {
 
   // ───────────────────────── 切歌
   async loadTrack(id, { autoplay = false, by = 'host', quiet = false, via = 'select' } = {}) {
-    const item = get().library.find((x) => x.id === id);
-    const blob = await this.blobFor(id);
-    if (!item || !blob) return item && toast(`本机找不到《${item.title}》的音频文件`, 'warn');
-    this.syncQueue().moveTo(id, via); // 记入已播栈 / 从本轮随机中移除
     const token = ++this.token;
-    this.sendGen++;
-    clearTimeout(this.autoplay?.timer);
-    this.autoplay = null;
-    this.loadedId = null;
-    this.anchor = { trackId: id, playing: false, position: 0, at: now() };
-    set({ currentId: id, loaded: false, playing: false, peerReady: false, duration: item.duration || 0, waitingPeer: false });
-    this.send({ type: 'track', meta: item, by, quiet });
-    this.broadcastLibrary();
-    if (by === 'guest') note(`${get().peer?.name || '对方'} 切换到《${item.title}》`);
-    let duration;
+    // Media snapshots briefly say paused during ended/src changes. Keep the service
+    // and its partial wake lock until this transition completes (or fails).
+    set({ playbackPending: autoplay });
     try {
-      duration = await this.out.load(blob);
-    } catch (e) {
-      return toast(`无法播放《${item.title}》：${e.message}`, 'warn');
+      const item = get().library.find((x) => x.id === id);
+      const blob = this.blobs.get(id) || await this.blobFor(id);
+      if (token !== this.token) return;
+      if (!item || !blob) return item && toast(`本机找不到《${item.title}》的音频文件`, 'warn');
+      this.syncQueue().moveTo(id, via); // 记入已播栈 / 从本轮随机中移除
+      this.sendGen++;
+      clearTimeout(this.autoplay?.timer);
+      this.autoplay = null;
+      this.loadedId = null;
+      this.anchor = { trackId: id, playing: false, position: 0, at: now() };
+      set({ currentId: id, loaded: false, playing: false, peerReady: false, duration: item.duration || 0, waitingPeer: false });
+      this.send({ type: 'track', meta: item, by, quiet });
+      this.broadcastLibrary();
+      if (by === 'guest') note(`${get().peer?.name || '对方'} 切换到《${item.title}》`);
+      let duration;
+      const immediate = autoplay && !this.conn?.open;
+      const startedAt = now();
+      try {
+        duration = await this.out.load(blob, { autoplay: immediate });
+      } catch (e) {
+        if (token !== this.token) return;
+        this.out.stopAt(now(), 0);
+        set({ playing: false });
+        return toast(`无法播放《${item.title}》：${e.message}`, 'warn');
+      }
+      if (token !== this.token) return;
+      this.loadedId = id;
+      set({ loaded: true, duration });
+      if (!item.duration || Math.abs(item.duration - duration) > 1) this.patch(id, { duration }); // 以实际解码时长为准
+      if (!autoplay) return;
+      if (immediate) {
+        this.anchor = { trackId: id, playing: this.out.intent, position: 0, at: startedAt };
+        set({ playing: this.out.intent && !this.out.audio.paused });
+        return;
+      }
+      // 等对方缓冲好一起开始（最多 12 秒）
+      if (!this.conn?.open || get().peerReady) return this.transport('play', 0, 'host', true);
+      set({ waitingPeer: true });
+      this.autoplay = { id, timer: setTimeout(() => this.startAutoplay(), PEER_WAIT_MS) };
+    } finally {
+      if (token === this.token) set({ playbackPending: false });
     }
-    if (token !== this.token) return;
-    this.loadedId = id;
-    set({ loaded: true, duration });
-    if (!item.duration || Math.abs(item.duration - duration) > 1) this.patch(id, { duration }); // 以实际解码时长为准
-    if (!autoplay) return;
-    // 等对方缓冲好一起开始（最多 12 秒）
-    if (!this.conn?.open || get().peerReady) return this.transport('play', 0, 'host', true);
-    set({ waitingPeer: true });
-    this.autoplay = { id, timer: setTimeout(() => this.startAutoplay(), PEER_WAIT_MS) };
   }
 
   startAutoplay() {
@@ -1590,7 +1640,7 @@ class Session {
     this.drift.reset();
     this.out.stopAt(now(), 0);
     this.anchor = { trackId: m.meta.id, playing: false, position: 0, at: 0 };
-    set({ currentId: m.meta.id, loaded: false, playing: false, duration: m.meta.duration || 0 });
+    set({ currentId: m.meta.id, loaded: false, playing: false, playbackPending: false, duration: m.meta.duration || 0 });
     if (m.by === 'host' && !m.quiet) note(`${get().peer?.name || '对方'} 切换到《${m.meta.title}》`);
     const cached = this.blobs.get(m.meta.id);
     if (cached) return this.guestLoad(m.meta.id, cached, token);
@@ -1794,6 +1844,13 @@ class Session {
     if (!this.isGuest) {
       const q = this.syncQueue();
       set({ upNext: q.peekNext({ auto: true }), canNext: !!q.peekNext() });
+      // Read the next local file while current audio is still audible. On ended,
+      // loadTrack can use the bounded blob cache without awaiting the bridge.
+      const next = get().upNext;
+      if (isAndroid && next && next !== get().currentId && !this.prefetching.has(next)) {
+        this.prefetching.add(next);
+        this.blobFor(next).catch(console.warn).finally(() => this.prefetching.delete(next));
+      }
     }
     const { library, currentId, playMode, upNext, canNext } = get();
     this.send({ type: 'library', items: library, currentId, playMode, upNext, canNext, playlist: this.isGuest ? undefined : this.playlistInfo() });
@@ -1940,7 +1997,7 @@ if (NativeFG) {
     const s = get();
     const item = s.library.find(x => x.id === s.currentId);
     // Read current state inside the serialized job, never a stale subscription snapshot.
-    if (!item || !s.playing) {
+    if (!item || !(s.playing || s.playbackPending || session.out.intent)) {
       if (running) await NativeFG.stopForegroundService();
       running = false; lastKey = ''; return;
     }
@@ -1970,7 +2027,7 @@ if (NativeFG) {
   let desiredKey;
   store.subscribe(() => {
     const s = get(), item = s.library.find(x => x.id === s.currentId);
-    const key = JSON.stringify([s.playing, item?.id, item?.title, item?.artist]);
+    const key = JSON.stringify([s.playing || s.playbackPending || session.out.intent, item?.id, item?.title, item?.artist]);
     // A toast or progress update must not cause an endless failed-service retry loop.
     if (key === desiredKey) return;
     desiredKey = key;
@@ -2090,22 +2147,26 @@ async function replacePendingSource(playlistId, key, url) {
 }
 
 /** 改昵称：本机立即生效、房间里的对方同步看到；登录账号时同时保存到账号，其他设备打开时跟着更新 */
-function setMyName(nick, { push = true } = {}) {
+async function setMyName(nick, { push = true } = {}) {
   const name = String(nick || '').replace(/\s+/g, ' ').trim().slice(0, 16);
   if (!name) return;
+  if (push && cloudSync.enabled) {
+    try { await account.request('/account/profile', { nickname: name }, 'PUT'); }
+    catch (e) { toast(e.code === 'NICKNAME_TAKEN' ? '该昵称已被使用，请换一个昵称' : `昵称保存失败：${e.message}`, 'warn'); return false; }
+  }
   if (name !== get().me.name) {
     set({ me: profileOf(name) });
-    try { localStorage.setItem('hh.name', name); } catch {}
+    try { localStorage.setItem(`hh.name.${account.user?.id || 'local'}`, name); } catch {}
     session.send({ type: 'hello', ...get().me });
   }
-  if (push && cloudSync.enabled) account.request('/account/profile', { nickname: name }, 'PUT').catch((e) => toast(`昵称没能保存到账号：${e.message}`, 'warn'));
+  return true;
 }
-/** 登录后：账号里有昵称就用它；还没有就把这台设备现在的昵称存进去 */
+/** 登录后以账号资料为准；不把设备上另一个账号留下的昵称写入新账号。 */
 async function syncProfile() {
   if (!cloudSync.enabled) return;
   try {
     const { nickname } = await account.request('/account/profile');
-    nickname ? setMyName(nickname, { push: false }) : setMyName(get().me.name);
+    await setMyName(nickname || account.user.username, { push: false });
   } catch (e) { console.warn('[profile]', e.message); }
 }
 
@@ -2271,7 +2332,7 @@ function saveWhenListed(sourceId, timeout = 20000) {
 const rpcPending = new Map();
 function rpc(method, args, onProgress) {
   if (!session.conn?.open || !session.isGuest) {
-    return Promise.reject(new Error('搜索由房主电脑提供：加入房间后即可搜索、下载真实音乐'));
+    return Promise.reject(new Error('搜索由房主提供：接受好友的同听邀请后即可搜索、下载真实音乐'));
   }
   const id = uid();
   return new Promise((resolve, reject) => {
@@ -2367,21 +2428,11 @@ const PATH_TIP = {
 function ConnectionBar() {
   const link = useStore((s) => s.link);
   const role = useStore((s) => s.role);
-  const roomCode = useStore((s) => s.roomCode);
   const ping = useStore((s) => s.ping);
   const me = useStore((s) => s.me);
   const peer = useStore((s) => s.peer);
   const apiMode = useStore((s) => s.apiMode);
   const status = useLinkStatus();
-  const [code, setCode] = useState(() => params.get('room') || '');
-  const [copied, setCopied] = useState(false);
-
-  const copyLink = async () => {
-    const link = `${location.origin}${location.pathname}?room=${roomCode}`;
-    try { await navigator.clipboard.writeText(link); } catch { prompt('复制邀请链接：', link); }
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
-  };
   const rename = () => setMyName(prompt('你的昵称', me.name));
 
   return html`<header class="connection-header relative md:sticky md:top-0 z-30 border-b border-ink-700/70 bg-ink-950/80 backdrop-blur-xl">
@@ -2392,32 +2443,8 @@ function ConnectionBar() {
         <${Home} size=${14} class="text-sand-500" />
       </button>
 
-      ${role
-        ? html`<div class="flex flex-wrap items-center gap-2">
-            <span class=${cx('inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold', role === 'host' ? 'bg-host/15 text-host' : 'bg-guest/15 text-guest')}>
-              ${role === 'host' ? html`<${Crown} size=${13} /> Host 房主` : html`<${Users} size=${13} /> Guest 房客`}
-            </span>
-            <span class="inline-flex items-center gap-2 rounded-lg border border-ink-700 bg-ink-850 py-1 pl-3 pr-1">
-              <span class="text-xs text-sand-400">房间</span>
-              <b class="tabular tracking-[0.2em]">${roomCode || '······'}</b>
-              <button class="grid h-7 w-7 place-items-center rounded-md text-sand-400 hover:bg-ink-700 hover:text-sand-50 disabled:opacity-40" disabled=${!roomCode} onClick=${copyLink} aria-label="复制邀请链接" title="复制邀请链接">
-                <${copied ? Check : Copy} size=${14} />
-              </button>
-            </span>
-          </div>`
-        : html`<form class="flex flex-wrap items-center gap-2" onSubmit=${(e) => { e.preventDefault(); session.joinRoom(code); }}>
-            <span class="inline-flex items-center gap-1 rounded-full bg-sync/15 px-2.5 py-1 text-xs font-semibold text-sync" title="单人模式：不连接任何人，直接播放本机曲库"><${User} size=${13} /> 单人模式</span>
-            <span class="hidden text-xs text-sand-500 sm:inline">想一起听？</span>
-            <button type="button" class="inline-flex items-center gap-1.5 rounded-lg bg-host px-3 py-1.5 text-sm font-semibold text-ink-950 hover:brightness-110" onClick=${() => session.createRoom()}>
-              <${Crown} size=${15} /> 创建房间
-            </button>
-            <span class="text-xs text-sand-500">或</span>
-            <input value=${code} onInput=${(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))} inputmode="numeric" placeholder="6 位房间码" aria-label="房间码"
-              class="w-28 rounded-lg border border-ink-700 bg-ink-850 px-3 py-1.5 text-center text-sm tracking-[0.2em] tabular outline-none focus:border-guest" />
-            <button class="inline-flex items-center gap-1.5 rounded-lg bg-guest px-3 py-1.5 text-sm font-semibold text-ink-950 hover:brightness-110 disabled:opacity-40" disabled=${code.length !== 6}>
-              <${Users} size=${15} /> 加入
-            </button>
-          </form>`}
+      <span class="text-xs text-sand-400">${role ? '好友同听' : '从好友列表邀请一起听'}</span>
+      <${CoListenPill} />
 
       <span class="inline-flex items-center gap-2 rounded-full border border-ink-700 bg-ink-850 px-3 py-1 text-xs font-medium" role="status">
         <span class="relative flex h-2 w-2">
@@ -3153,7 +3180,7 @@ function PlayerBar() {
             <${playing ? Pause : Play} size=${20} fill="currentColor" class=${playing ? '' : 'translate-x-px'} />
           </button>
           <button class="text-sand-200 hover:text-sand-50 disabled:opacity-30" disabled=${!canSkip || !canNext} onClick=${() => session.act('next')} aria-label="下一首" title=${playMode === 'shuffle' ? '随机下一首' : '下一首'}><${SkipForward} size=${20} fill="currentColor" /></button>
-          <button class="text-sand-400 hover:text-sand-50" onClick=${() => set({ localLibOpen: true })} aria-label="打开本机曲库" title="本机曲库"><${ListMusic} size=${20} /></button>
+          <button disabled=${role === 'guest'} onClick=${() => set({ queueSheetOpen: true })} aria-label="切换歌单" title="切换歌单"><${ListMusic} size=${20} /></button>
         </div>
         <${SeekBar} />
       </div>
@@ -3389,7 +3416,7 @@ function ConnSettingsModal() {
     try { localStorage.setItem(ICE_KEY, JSON.stringify(form)); } catch {}
     // 昵称：立即生效，房间里的对方同步看到新名字
     const nick = name.replace(/\s+/g, ' ').trim().slice(0, 16);
-    if (nick && nick !== get().me.name) setMyName(nick);
+    if (nick && nick !== get().me.name && !await setMyName(nick)) return;
     // 音乐服务地址 / 令牌变了：重新加载页面让所有请求用上新配置
     const svcChanged = svc.api.trim() !== stored('hh.api') || svc.token.trim() !== stored('hh.apiToken');
     if (svcChanged) {
@@ -3447,7 +3474,7 @@ function ConnSettingsModal() {
       </header>
 
       <div class="scroll-thin space-y-4 overflow-y-auto px-4 py-4 text-sm sm:px-5">
-        <${AccountCard} client=${account} className=${card} />
+        <${StatsPanel} /><${AccountCard} client=${account} className=${card} />
         <section class=${card} aria-labelledby="set-me">
           <h3 id="set-me" class="text-xs font-semibold uppercase tracking-wider text-sand-500">我的昵称</h3>
           <div class="flex items-center gap-3">
@@ -3682,13 +3709,6 @@ async function probeNetwork() {
 }
 
 /** 邀请链接：页面在 localhost 打开时换成局域网 IP，手机扫码才能访问 */
-function inviteLink(code) {
-  const local = ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname);
-  const origin = local && get().lanIps.length ? `${location.protocol}//${get().lanIps[0]}:${location.port}` : location.origin;
-  return `${origin}${location.pathname}?room=${code}`;
-}
-
-/** 软键盘弹出检测：输入时隐藏底部常驻播放器，避免遮挡与布局塌陷 */
 function useKeyboardOpen() {
   const [open, setOpen] = useState(false);
   useEffect(() => {
@@ -3782,97 +3802,6 @@ function HomeHeader() {
 }
 
 // ───────────────────────── 2. 双人入口卡片
-function QrPanel({ link }) {
-  const [src, setSrc] = useState(null);
-  useEffect(() => {
-    QRCode.toDataURL(link, { margin: 1, width: 360, color: { dark: '#0e0c0b', light: '#f7f0e8' } }).then(setSrc).catch(() => setSrc(null));
-  }, [link]);
-  return html`<div class="rise flex items-center gap-4 rounded-2xl bg-black/20 p-3">
-    ${src ? html`<img src=${src} alt="邀请二维码" class="h-28 w-28 rounded-xl" />` : html`<div class="shimmer h-28 w-28 rounded-xl" />`}
-    <div class="min-w-0 text-xs text-sand-400">
-      <div class="mb-1 text-sm font-medium text-sand-50">手机扫码加入</div>
-      需与电脑在同一网络
-      <div class="mt-2 break-all font-mono text-[10px] text-sand-500">${link}</div>
-    </div>
-  </div>`;
-}
-
-function HostCard({ onCreateRoom }) {
-  const view = useViewState();
-  const roomCode = useStore((s) => s.roomCode);
-  const role = useStore((s) => s.role);
-  const library = useStore((s) => s.library);
-  const [copied, setCopied] = useState(false);
-  const [showQr, setShowQr] = useState(false);
-  useBackLayer(showQr, () => setShowQr(false));
-  const fileInput = useRef(null);
-  const active = role === 'host';
-  const link = roomCode ? inviteLink(roomCode) : '';
-
-  const copy = async () => {
-    try { await navigator.clipboard.writeText(link); } catch { prompt('复制邀请链接：', link); }
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1600);
-  };
-
-  return html`<section class=${cx('glass relative overflow-hidden rounded-3xl p-6 transition sm:p-7', active && 'ring-1 ring-host/40')} aria-labelledby="host-title">
-    <div class="pointer-events-none absolute -right-16 -top-16 h-48 w-48 rounded-full bg-host/20 blur-3xl" />
-    <div class="relative flex items-start justify-between gap-3">
-      <div>
-        <span class="inline-flex items-center gap-1 rounded-full bg-host/15 px-2.5 py-1 text-[11px] font-semibold text-host"><${Crown} size=${12} /> Host 房主</span>
-        <h2 id="host-title" class="mt-3 text-xl font-bold">创建房间</h2>
-        <p class="mt-1 text-sm text-sand-400">音乐在你这边，对方无需下载即可同步收听</p>
-      </div>
-      <${Radio} size=${28} class="text-host/60" />
-    </div>
-
-    <div class="relative mt-6 space-y-4">
-      ${view === 'idle' || role === 'guest'
-        ? html`<button class="group inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-host to-[#f5b97a] px-5 py-3.5 font-semibold text-ink-950 shadow-lg shadow-host/20 transition hover:brightness-110 active:scale-[.98] disabled:opacity-40"
-            disabled=${role === 'guest'} onClick=${onCreateRoom}>
-            <${Sparkles} size=${18} /> 生成专属房间 <${ArrowRight} size=${16} class="transition group-hover:translate-x-0.5" />
-          </button>`
-        : view === 'creating'
-          ? html`<div class="flex items-center justify-center gap-2 rounded-2xl bg-black/20 py-4 text-sm text-sand-400"><${Loader2} size=${16} class="animate-spin" /> 正在向信令服务器注册房间…</div>`
-          : html`<div class="rise space-y-4">
-              <div class="flex items-center justify-between gap-3 rounded-2xl bg-black/25 px-4 py-3">
-                <div>
-                  <div class="text-[11px] uppercase tracking-widest text-sand-500">房间码</div>
-                  <div class="mt-1 flex gap-1.5 font-mono text-2xl font-bold tabular sm:text-3xl" aria-label=${`房间码 ${roomCode}`}>
-                    ${roomCode.split('').map((d, i) => html`<span key=${i} class="grid h-10 w-8 place-items-center rounded-lg bg-white/5 sm:h-12 sm:w-9">${d}</span>`)}
-                  </div>
-                </div>
-                <div class="flex flex-col gap-2">
-                  <button class="inline-flex items-center gap-1.5 rounded-xl bg-white/10 px-3 py-2 text-xs font-medium hover:bg-white/15" onClick=${copy}>
-                    <${copied ? Check : Link} size=${14} /> ${copied ? '已复制' : '复制链接'}
-                  </button>
-                  <button class=${cx('inline-flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-medium', showQr ? 'bg-host/20 text-host' : 'bg-white/10 hover:bg-white/15')} onClick=${() => setShowQr(!showQr)} aria-pressed=${showQr}>
-                    <${QrCode} size=${14} /> 二维码
-                  </button>
-                </div>
-              </div>
-              ${showQr && html`<${QrPanel} link=${link} />`}
-              <div class="flex items-center gap-3 rounded-2xl border border-white/5 px-4 py-3">
-                <span class="ripple relative grid h-9 w-9 shrink-0 place-items-center rounded-full bg-host/15 text-host"><${Users} size=${16} /></span>
-                <div class="min-w-0 flex-1">
-                  <div class="breathe text-sm font-medium">等待伙伴加入中…</div>
-                  <div class="text-xs text-sand-500">把链接或房间码发给 Ta，期间可以先在下方挑歌</div>
-                </div>
-                <button class="text-xs text-sand-500 hover:text-guest" onClick=${() => session.leave()} title="取消房间"><${X} size=${16} /></button>
-              </div>
-            </div>`}
-
-      ${view === 'idle' && html`<ul class="space-y-1.5 text-xs text-sand-500">
-        <li class="flex items-center gap-2"><${Check} size=${13} class="text-host" /> 歌在你这边，对方不用下载，边收边播</li>
-        <li class="flex items-center gap-2"><${Check} size=${13} class="text-host" /> 生成 6 位房间码 / 邀请链接 / 二维码</li>
-        <li class="flex items-center gap-2"><${Check} size=${13} class="text-host" /> 播放模式、切歌由你掌控，双方毫秒级同步</li>
-      </ul>`}
-      ${library.length > 0 && view !== 'idle' && html`<div class="flex items-center gap-1.5 text-xs text-sync"><${ListMusic} size=${13} /> 歌单已备 ${library.length} 首，伙伴进来就能听</div>`}
-    </div>
-  </section>`;
-}
-
-// ───────────────────────── 入口 A：单人沉浸听歌
 function SoloCard() {
   const library = useStore((s) => s.library);
   const offline = useStore((s) => s.offline);
@@ -4053,105 +3982,6 @@ function LinkCard({ r, onSelectTrack }) {
 }
 
 /** 6 位分段输入：自动跳格、退格回退、方向键、粘贴一键填充、输满自动提交 */
-function CodeInput({ value, onChange, onComplete, invalid, disabled }) {
-  const refs = useRef([]);
-  const focus = (i) => refs.current[Math.max(0, Math.min(5, i))]?.focus();
-  const write = (start, chars) => {
-    const arr = value.padEnd(6, ' ').split('');
-    let i = start;
-    for (const ch of chars) if (i < 6) arr[i++] = ch;
-    const next = arr.join('').replace(/\s+$/, '').replace(/\s/g, '');
-    onChange(next);
-    focus(i);
-    if (next.length === 6) onComplete(next);
-  };
-  return html`<div class=${cx('flex justify-between gap-2', invalid && 'shake')} role="group" aria-label="6 位房间码">
-    ${Array.from({ length: 6 }, (_, i) => html`<input key=${i} ref=${(el) => (refs.current[i] = el)}
-      value=${value[i] || ''} disabled=${disabled}
-      inputmode="numeric" autocomplete=${i === 0 ? 'one-time-code' : 'off'} maxlength="1" aria-label=${`第 ${i + 1} 位`}
-      class=${cx('h-14 w-full min-w-0 rounded-2xl border bg-black/25 text-center font-mono text-2xl font-bold tabular outline-none transition sm:h-16',
-        invalid ? 'border-guest/60 text-guest' : value[i] ? 'border-guest/40 text-sand-50' : 'border-white/10 text-sand-50',
-        'focus:border-guest focus:bg-guest/10 focus:shadow-[0_0_0_4px_rgb(236_122_150_/_15%)] disabled:opacity-50')}
-      onFocus=${(e) => e.target.select()}
-      onInput=${(e) => {
-        const d = e.target.value.replace(/\D/g, '');
-        if (d) write(i, d.slice(-1));
-        else e.target.value = value[i] || '';
-      }}
-      onKeyDown=${(e) => {
-        if (e.key === 'Backspace') {
-          e.preventDefault();
-          if (value[i]) onChange(value.slice(0, i) + value.slice(i + 1));
-          else if (i > 0) { onChange(value.slice(0, i - 1) + value.slice(i)); focus(i - 1); }
-        } else if (e.key === 'ArrowLeft') focus(i - 1);
-        else if (e.key === 'ArrowRight') focus(i + 1);
-        else if (e.key === 'Enter' && value.length === 6) onComplete(value);
-      }}
-      onPaste=${(e) => {
-        e.preventDefault();
-        const text = e.clipboardData.getData('text');
-        const digits = (text.match(/room=(\d{6})/)?.[1] || text).replace(/\D/g, '').slice(0, 6); // 粘贴整条邀请链接也能识别
-        if (digits) write(0, digits);
-      }} />`)}
-  </div>`;
-}
-
-function GuestCard({ onJoinRoom }) {
-  const view = useViewState();
-  const role = useStore((s) => s.role);
-  const joinError = useStore((s) => s.joinError);
-  const recent = useStore((s) => s.recentRooms);
-  const [code, setCode] = useState(() => params.get('room') || '');
-  const [shakeKey, setShakeKey] = useState(0);
-  const joining = view === 'joining';
-  useEffect(() => { if (joinError) setShakeKey((k) => k + 1); }, [joinError]);
-
-  const submit = (c = code) => {
-    if (c.length !== 6) return setShakeKey((k) => k + 1);
-    onJoinRoom(c);
-  };
-
-  return html`<section class=${cx('glass relative overflow-hidden rounded-3xl p-6 transition sm:p-7', role === 'guest' && 'ring-1 ring-guest/40')} aria-labelledby="guest-title">
-    <div class="pointer-events-none absolute -left-16 -top-16 h-48 w-48 rounded-full bg-guest/20 blur-3xl" />
-    <div class="relative flex items-start justify-between gap-3">
-      <div>
-        <span class="inline-flex items-center gap-1 rounded-full bg-guest/15 px-2.5 py-1 text-[11px] font-semibold text-guest"><${Users} size=${12} /> Guest 房客</span>
-        <h2 id="guest-title" class="mt-3 text-xl font-bold">加入房间</h2>
-        <p class="mt-1 text-sm text-sand-400">输入伙伴给你的 6 位房间码，也可直接粘贴邀请链接</p>
-      </div>
-      <${Headphones} size=${28} class="text-guest/60" />
-    </div>
-
-    <form class="relative mt-6 space-y-4" onSubmit=${(e) => { e.preventDefault(); submit(); }}>
-      <${CodeInput} key=${shakeKey} value=${code} onChange=${(v) => { setCode(v); if (joinError) set({ joinError: null }); }}
-        onComplete=${(v) => submit(v)} invalid=${!!joinError || shakeKey > 0 && code.length < 6 && !joining} disabled=${joining || role === 'host'} />
-      <div class="min-h-[18px] text-xs" aria-live="polite">
-        ${joinError ? html`<span class="text-guest">${joinError}</span>` : joining ? html`<span class="inline-flex items-center gap-1.5 text-sand-400"><${Loader2} size=${13} class="animate-spin" /> 正在与房主握手…</span>` : ''}
-      </div>
-      <div class="flex gap-2">
-        <button class="group inline-flex flex-1 items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-guest to-[#f39ab0] px-5 py-3.5 font-semibold text-ink-950 shadow-lg shadow-guest/20 transition hover:brightness-110 active:scale-[.98] disabled:opacity-40"
-          disabled=${joining || role === 'host' || code.length !== 6}>
-          ${joining ? html`<${Loader2} size=${18} class="animate-spin" />` : html`<${CirclePlay} size=${18} />`} 立即加入
-        </button>
-        ${joining && html`<button type="button" class="rounded-2xl bg-white/10 px-4 text-sm hover:bg-white/15" onClick=${() => session.leave()}>取消</button>`}
-      </div>
-    </form>
-
-    ${recent.length > 0 && html`<div class="relative mt-5 border-t border-white/5 pt-4">
-      <div class="mb-2 flex items-center gap-1.5 text-xs text-sand-500"><${History} size=${13} /> 快速重新连接</div>
-      <div class="flex flex-wrap gap-2">
-        ${recent.map((r) => html`<button key=${r.code} disabled=${joining || role === 'host'}
-          class="inline-flex items-center gap-2 rounded-xl bg-white/5 px-3 py-2 text-left text-xs transition hover:bg-guest/10 hover:text-guest disabled:opacity-40"
-          onClick=${() => { setCode(r.code); onJoinRoom(r.code); }}>
-          <span class="font-mono font-semibold tracking-wider">${r.code}</span>
-          <span class="text-sand-500">${r.hostName || '房主'} · ${ago(r.at)}</span>
-        </button>`)}
-      </div>
-    </div>`}
-  </section>`;
-}
-
-// ───────────────────────── 3. 检索与探索
 function PlatformBadge({ source, label }) {
   const [color, text] = BRAND[source] || ['#3e352d', label || source];
   return html`<span class="inline-flex shrink-0 items-center rounded-md px-1.5 py-px text-[10px] font-bold text-white" style=${{ background: color }}>${text}</span>`;
@@ -4240,7 +4070,7 @@ function ResultCard({ r, i, onSelectTrack }) {
         : dl?.status === 'done'
           ? html`<span class="inline-flex items-center gap-1 rounded-xl bg-sync/15 px-3 py-2 text-xs font-medium text-sync"><${Check} size=${14} /> 已加入歌单</span>`
           : html`<button class="inline-flex items-center gap-1.5 rounded-xl bg-white/10 px-3 py-2 text-xs font-medium transition hover:bg-host hover:text-ink-950"
-              onClick=${() => onSelectTrack(r)} title=${role === 'guest' ? '下载后分享给房主' : '下载并加入房间歌单'}>
+              onClick=${() => onSelectTrack(r)} title=${role === 'guest' ? '下载后分享给房主' : '下载并加入同听歌单'}>
               ${dl?.status === 'error' ? html`<${RefreshCw} size=${14} /> 重试` : html`<${Download} size=${14} /> <span class="hidden sm:inline">下载并</span>加入歌单`}
             </button>`}
     </div>
@@ -4352,7 +4182,7 @@ function SearchDiscovery({ onSearch, onSelectTrack }) {
                 ? html`<div class="glass mx-auto max-w-lg rounded-2xl p-6 text-center">
                     <${Headphones} size=${26} class="mx-auto text-guest" />
                     <div class="mt-3 font-semibold">搜索由房主电脑提供</div>
-                    <p class="mt-1.5 text-sm text-sand-400">这台设备不是运行音乐服务的电脑。加入房间后，就能借用房主电脑搜索、下载真实音乐，下载的歌会直接进入房间歌单。</p>
+                    <p class="mt-1.5 text-sm text-sand-400">这台设备不是运行音乐服务的电脑。接受好友的同听邀请后，就能借用房主的音乐服务搜索、下载，下载的歌会直接进入同听歌单。</p>
                   </div>`
                 : html`<${Discovery} onPick=${(q) => { setKeyword(q); run(q); }} />`}
     </div>
@@ -4376,8 +4206,6 @@ function HomeView() {
     <${HomeHeader} />
     <main class="relative z-10 mx-auto mt-8 grid max-w-7xl gap-5 px-5 md:grid-cols-2 xl:grid-cols-3" aria-label="选择听歌方式">
       <${SoloCard} />
-      <${HostCard} onCreateRoom=${handlers.onCreateRoom} />
-      <${GuestCard} onJoinRoom=${handlers.onJoinRoom} />
     </main>
     <${LibraryShelf} />
     <${SearchDiscovery} onSearch=${handlers.onSearch} onSelectTrack=${handlers.onSelectTrack} />
@@ -4502,6 +4330,42 @@ function UpdateGate() {
   </div>`;
 }
 
+let listeningStats = null;
+let samplingListening = false;
+function sampleListening(extra = {}) {
+  if (!listeningStats || samplingListening) return;
+  samplingListening = true;
+  const s = get(), audio = session.out.audio;
+  try { listeningStats.sample({ trackId: session.loadedId || s.currentId, duration: audio.duration || s.duration,
+    currentTime: audio.currentTime, playing: !audio.paused && !audio.ended && audio.readyState >= 2,
+    connected: s.conn === 'open' && !!session.conn?.open, friendId: session.invitation?.userId,
+    seeking: audio.seeking, playbackRate: audio.playbackRate, ...extra }); } finally { samplingListening = false; }
+}
+function StatsPanel() {
+  useStore(s => s.statsRevision);
+  const format = seconds => `${Math.floor(seconds / 3600)} 小时 ${Math.floor(seconds % 3600 / 60)} 分钟`;
+  return html`<section class="mb-4 space-y-3 rounded-2xl border border-ink-700 p-5"><h2 class="font-semibold">收听统计</h2>${[['week', '本周'], ['month', '本月'], ['year', '本年']].map(([period, label]) => html`<p key=${period} class="text-sm text-sand-400">${label}收听时长：${format(listeningStats?.summary(period) || 0)}</p>`)}</section>`;
+}
+function CoListenPill() {
+  const s = useStore(s => s);
+  if (!s.role || !['open', 'reconnecting'].includes(s.conn)) return null;
+  return html`<button class="shrink-0 rounded-full bg-sync/15 px-3 py-2 text-xs text-sync" onClick=${() => set({ coListenOpen: true })}>当前同听中</button>`;
+}
+function CoListenDrawer() {
+  const s = useStore(s => s);
+  const close = () => set({ coListenOpen: false });
+  useBackLayer(s.coListenOpen, close);
+  if (!s.coListenOpen) return null;
+  return html`<div class="fixed inset-0 z-[85] flex items-end bg-black/60" onClick=${e => e.target === e.currentTarget && close()}><section role="dialog" aria-modal="true" aria-label="同听控制台" class="w-full space-y-5 rounded-t-3xl border border-ink-700 bg-ink-900 p-6" style=${{ paddingBottom: 'calc(24px + var(--safe-bottom, 0px))' }}><header class="flex justify-between"><h2>当前同听中</h2><button onClick=${close} aria-label="关闭"><${X} size=${20} /></button></header><p>${s.peer?.name || session.invitation?.nickname || '好友'}</p><p class="text-sm text-sand-400">${s.conn === 'open' ? '已连接' : s.conn === 'reconnecting' ? '正在重连' : '连接已断开'} · Ping ${s.ping ?? '–'} ms</p>${s.role === 'host' ? html`<button class="rounded-xl bg-host px-4 py-3 text-ink-950" onClick=${() => set({ queueSheetOpen: true })}>更换同听歌单</button>` : html`<p class="text-sm text-sand-400">由好友控制播放和歌单</p>`}</section></div>`;
+}
+function QueueSheet() {
+  const s = useStore(s => s), close = () => set({ queueSheetOpen: false });
+  useBackLayer(s.queueSheetOpen, close);
+  if (!s.queueSheetOpen) return null;
+  const choices = [{ id: ALL_ID, name: ALL_NAME, trackIds: s.library.map(t => t.id) }, ...s.playlists];
+  return html`<div class="fixed inset-0 z-[90] flex items-end bg-black/60" onClick=${e => e.target === e.currentTarget && close()}><section role="dialog" aria-modal="true" aria-label="切换歌单" class="flex h-[50dvh] w-full flex-col rounded-t-3xl border border-ink-700 bg-ink-900 p-5" style=${{ paddingBottom: 'calc(20px + var(--safe-bottom, 0px))' }}><header class="mb-4 flex justify-between"><h2>切换歌单</h2><button onClick=${close} aria-label="关闭"><${X} size=${20} /></button></header><div class="scroll-thin flex-1 space-y-2 overflow-y-auto">${choices.map(p => html`<button key=${p.id} disabled=${s.role === 'guest'} class="flex w-full justify-between rounded-xl border border-ink-700 p-4 text-left disabled:opacity-40" onClick=${async () => { close(); await session.playPlaylist(p.id); }}><span>${p.name}</span><span class="text-sand-400">${p.trackIds.length + (p.pending?.length || 0)} 首</span></button>`)}</div></section></div>`;
+}
+
 function NativePlayer({ open, close, expand }) {
   const s = useStore(s => s), item = s.library.find(x => x.id === s.currentId);
   const [dy, setDy] = useState(0), start = useRef(null);
@@ -4519,6 +4383,7 @@ function NativePlayer({ open, close, expand }) {
     <div class="mini-player fixed inset-x-0 z-40 border-t border-ink-700 bg-ink-950/95 px-4 py-2 backdrop-blur-xl" style=${{ paddingLeft: 'max(16px, var(--safe-left))', paddingRight: 'max(16px, var(--safe-right))', bottom: 'calc(64px + var(--safe-bottom, 0px))' }}>
       <div class="mx-auto flex max-w-5xl items-center gap-3">
         <button class="flex min-w-0 flex-1 items-center gap-3 text-left" onClick=${expand} aria-label="展开播放器"><${Cover} item=${item} size=${44} /><span class="min-w-0"><span class="block truncate text-sm font-semibold">${item?.title || '从曲库选择一首歌'}</span><span class="text-xs text-sand-400">${s.conn === 'open' ? '♫ 正在一起听' : item?.artist || 'Half&Half'}</span></span></button>
+        <${CoListenPill} />
         <button class="p-3 disabled:opacity-30" disabled=${!can} onClick=${() => session.act('toggle')} aria-label=${s.playing ? '暂停' : '播放'}><${s.playing ? Pause : Play} size=${23} /></button>
         <button class="p-3 disabled:opacity-30" disabled=${!can || !s.canNext} onClick=${() => session.act('next')} aria-label="下一首"><${SkipForward} size=${23} /></button>
       </div>
@@ -4527,13 +4392,14 @@ function NativePlayer({ open, close, expand }) {
       onTouchStart=${e => { if (e.target.closest('button,input') || e.currentTarget.scrollTop > 0) return; start.current = e.touches[0].clientY; }}
       onTouchMove=${e => { if (start.current !== null) setDy(Math.max(0, e.touches[0].clientY - start.current)); }}
       onTouchEnd=${() => { start.current = null; if (dy > 100) { setDy(window.innerHeight); setTimeout(() => { close(); setDy(0); }, 220); } else setDy(0); }} onTouchCancel=${() => { start.current = null; setDy(0); }}>
+      <${CoListenPill} />
       <button class="mx-auto p-3 text-sand-400" onClick=${close} aria-label="收起播放器"><${ChevronDown} size=${28} /></button>
       <div class="mx-auto flex w-full max-w-md flex-1 flex-col items-center justify-center gap-7">
         <div class=${cx('vinyl grid h-64 w-64 shrink-0 place-items-center rounded-full animate-spin-slow shadow-2xl', !s.playing && 'paused-anim')}><${Cover} item=${item} size=${170} round="rounded-full" /></div>
-        <div class="w-full text-center"><h2 class="text-xl font-bold">${item?.title || '未在播放'}</h2><p class="mt-2 text-sand-400">${item?.artist || '选择喜欢的音乐'}</p></div>
+        <div class="w-full text-center"><h2 class="text-xl font-bold">${item?.title || '未在播放'}</h2><p class="mt-2 text-sand-400">${item?.artist || '选择喜欢的音乐'}</p><p class="mt-2 text-xs text-sand-400">已完整聆听 ${listeningStats?.completedCount(item?.id) || 0} 次</p></div>
         <${SeekBar} />
-        <div class="flex w-full items-center justify-around"><${PlayModeButton} /><button disabled=${!can} onClick=${() => session.act('prev')} aria-label="上一首"><${SkipBack} size=${28} /></button><button class="rounded-full bg-host p-5 text-ink-950 disabled:opacity-30" disabled=${!can} onClick=${() => session.act('toggle')} aria-label=${s.playing ? '暂停' : '播放'}><${s.playing ? Pause : Play} size=${30} /></button><button disabled=${!can || !s.canNext} onClick=${() => session.act('next')} aria-label="下一首"><${SkipForward} size=${28} /></button><button onClick=${() => set({ localLibOpen: true })} aria-label="曲库"><${ListMusic} size=${24} /></button></div>
-        <div class="flex w-full items-center gap-3 text-sand-400"><${s.volume ? Volume2 : VolumeX} size=${20} /><input type="range" class="hh flex-1" min="0" max="1" step="0.01" value=${s.volume} style=${{ '--fill': `${s.volume * 100}%` }} aria-label="??" onInput=${e => session.setVolume(Number(e.target.value))} /></div>
+        <div class="flex w-full items-center justify-around"><${PlayModeButton} /><button disabled=${!can} onClick=${() => session.act('prev')} aria-label="上一首"><${SkipBack} size=${28} /></button><button class="rounded-full bg-host p-5 text-ink-950 disabled:opacity-30" disabled=${!can} onClick=${() => session.act('toggle')} aria-label=${s.playing ? '暂停' : '播放'}><${s.playing ? Pause : Play} size=${30} /></button><button disabled=${!can || !s.canNext} onClick=${() => session.act('next')} aria-label="下一首"><${SkipForward} size=${28} /></button><button disabled=${s.role === 'guest'} onClick=${() => set({ queueSheetOpen: true })} aria-label="切换歌单" title="切换歌单"><${ListMusic} size=${24} /></button></div>
+        <div class="flex w-full items-center gap-3 text-sand-400"><${s.volume ? Volume2 : VolumeX} size=${20} /><input type="range" class="hh flex-1" min="0" max="1" step="0.01" value=${s.volume} style=${{ '--fill': `${s.volume * 100}%` }} aria-label="音量" onInput=${e => session.setVolume(Number(e.target.value))} /></div>
         <${SyncStatus} />
       </div>
     </section>`}
@@ -4541,6 +4407,23 @@ function NativePlayer({ open, close, expand }) {
 }
 
 function App() {
+  useStore(s => s.statsRevision);
+  useEffect(() => {
+    const stats = listeningStats = new ListeningStats({ userId: account.user?.id || 'local' });
+    const unsubscribe = stats.subscribe(() => set({ statsRevision: (get().statsRevision || 0) + 1 }));
+    stats.ready().then(() => set({ statsRevision: (get().statsRevision || 0) + 1 })).catch(console.warn);
+    const audio = session.out.audio;
+    const sample = () => sampleListening();
+    const ended = () => sampleListening({ ended: true });
+    const events = ['playing', 'pause', 'seeking', 'seeked', 'waiting', 'timeupdate'];
+    for (const event of events) audio.addEventListener(event, sample);
+    audio.addEventListener('ended', ended, true);
+    const timer = setInterval(sample, 1000);
+    const flush = () => { sample(); stats.flush().catch(console.warn); };
+    window.addEventListener('pagehide', flush);
+    const unstore = store.subscribe(sample);
+    return () => { sample(); stats.flush().catch(console.warn); unsubscribe(); unstore(); clearInterval(timer); for (const event of events) audio.removeEventListener(event, sample); audio.removeEventListener('ended', ended, true); window.removeEventListener('pagehide', flush); };
+  }, []);
   const [tab, setTab] = useState('discover'), [playerOpen, setPlayerOpen] = useState(false);
   const [presence, setPresence] = useState({}), [invitation, setInvitation] = useState(null);
   const historyKey = `hh.listenHistory.${account.user?.id || 'legacy'}`;
@@ -4562,8 +4445,8 @@ function App() {
         let m; try { m = JSON.parse(event.data); } catch { return; }
         if (m.type === 'FRIEND_PRESENCE') setPresence(p => ({ ...p, [m.userId]: m }));
         if (m.type === 'INVITE_LISTEN_REQUEST') setInvitation(m);
-        if (m.type === 'INVITE_LISTEN_SENT') toast('?????');
-        if (m.type === 'INVITE_LISTEN_DECLINED') toast('????????');
+        if (m.type === 'INVITE_LISTEN_SENT') toast('邀请已发送');
+        if (m.type === 'INVITE_LISTEN_DECLINED') toast('好友暂未接受邀请');
         if (m.type === 'error' || m.type === 'ERROR') toast(m.message || '邀请失败', 'warn');
         if (m.type === 'LISTEN_SESSION') {
           setInvitation(null);
@@ -4580,12 +4463,17 @@ function App() {
   const cloudLocalPlaylists = useStore(s => s.playlists);
   const cloudOpen = useStore(s => s.cloudOpen);
   const cloudStatus = useStore(s => s.cloudSync);
+  const cloudLabel = !account.required || !navigator.onLine ? '离线模式' : cloudStatus?.state === 'syncing' ? '正在同步歌单' : cloudStatus?.state === 'error' ? '同步失败' : '云端已同步';
   const screen = useStore((s) => s.screen);
   useEffect(() => { if (screen === 'deck') setTab('library'); }, [screen]);
   const keyboardOpen = useKeyboardOpen();
   useEffect(() => {
     probeNetwork();
+    const networkChanged = () => { set({ net: { ...get().net, online: navigator.onLine } }); if (navigator.onLine) cloudSync.sync().catch(() => {}); };
+    window.addEventListener('online', networkChanged);
+    window.addEventListener('offline', networkChanged);
     fetch(new URL('./lan.json', location.href)).then((r) => (r.ok ? r.json() : null)).then((d) => d?.ips && set({ lanIps: d.ips })).catch(() => {});
+    return () => { window.removeEventListener('online', networkChanged); window.removeEventListener('offline', networkChanged); };
   }, []);
 
   return html`
@@ -4593,9 +4481,9 @@ function App() {
       onSync=${() => cloudSync.sync().catch((e) => toast(`同步失败：${e.message}`, 'warn'))} onDownload=${(id) => downloadPending(id)} onOpen=${(id) => set({ cloudOpen: false, viewPlaylistId: id, screen: 'deck' })} />
     <main class="mx-auto max-w-5xl px-4 pt-5" style=${{ paddingBottom: 'calc(170px + var(--safe-bottom, 0px))' }}>
       ${tab === 'discover' && html`<${SearchDiscovery} onSearch=${homeSearch} onSelectTrack=${track => { stopPreview(); downloadWithPicker(track); }} />`}
-      ${tab === 'library' && html`<div class="mb-4 flex justify-end">${account.required && html`<button class="rounded-xl border border-ink-600 px-4 py-3 text-sm" onClick=${() => set({ cloudOpen: true })}><${Cloud} size=${18} /> ???? / ???</button>`}</div><${RoomPlaylistBanner} /><${LibraryPanel} />`}
-      ${tab === 'friends' && html`<${FriendsPanel} client=${account} presence=${presence} invite=${userId => sendSocial({ type: 'INVITE_LISTEN_REQUEST', userId })} history=${history} /><div class="mt-6 grid gap-4 md:grid-cols-2"><${HostCard} onCreateRoom=${() => session.createRoom()} /><${GuestCard} onJoinRoom=${code => session.joinRoom(code)} /></div>`}
-      ${tab === 'settings' && html`<${AccountCard} client=${account} className="space-y-4 rounded-2xl border border-ink-700 p-5" /><button class="mt-5 rounded-xl border border-ink-600 p-4" onClick=${() => set({ connSettingsOpen: true })}><${Settings} size=${18} /> 网络诊断 / 连接与播放设置</button><${ConnectionBar} />`}
+      ${tab === 'library' && html`<div class="mb-4 flex justify-end"><button class="inline-flex items-center gap-2 rounded-xl border border-ink-600 px-4 py-3 text-sm" title=${cloudStatus?.error ? `${cloudLabel}：${cloudStatus.error}` : cloudLabel} aria-label=${cloudLabel} onClick=${() => set({ cloudOpen: true })}><${Cloud} size=${18} /> ${cloudLabel}</button></div><${RoomPlaylistBanner} /><${LibraryPanel} />`}
+      ${tab === 'friends' && html`<${FriendsPanel} stats=${listeningStats} client=${account} presence=${presence} invite=${userId => sendSocial({ type: 'INVITE_LISTEN_REQUEST', userId })} history=${history} />`}
+      ${tab === 'settings' && html`<${StatsPanel} /><${AccountCard} client=${account} className="space-y-4 rounded-2xl border border-ink-700 p-5" /><button class="mt-5 rounded-xl border border-ink-600 p-4" onClick=${() => set({ connSettingsOpen: true })}><${Settings} size=${18} /> 网络诊断 / 连接与播放设置</button><${ConnectionBar} />`}
     </main>
     ${!keyboardOpen && html`<${NativePlayer} open=${playerOpen} close=${() => setPlayerOpen(false)} expand=${() => setPlayerOpen(true)} />
       <nav aria-label="主导航" class="fixed inset-x-0 bottom-0 z-40 border-t border-ink-700 bg-ink-950/95 backdrop-blur-xl" style=${{ paddingBottom: 'var(--safe-bottom, 0px)', paddingLeft: 'var(--safe-left)', paddingRight: 'var(--safe-right)' }}>
@@ -4607,6 +4495,8 @@ function App() {
     <${DropOverlay} />
     <${LocalLibraryModal} />
     <${ConnSettingsModal} />
+    <${CoListenDrawer} />
+    <${QueueSheet} />
     <${TrackMenuSheet} />
     <${PlaylistPicker} />
     <${UpdateGate} />
@@ -4631,7 +4521,6 @@ function AppShell() {
     api.init();
     // 每次打开页面：自动识别本机已保存的歌曲，然后同步账号里的昵称和歌单
     session.restoreLocal().then(() => { syncProfile(); cloudSync.sync().catch(() => {}); });
-    if (/^\d{6}$/.test(params.get('room') || '')) session.joinRoom(params.get('room')); // 角色自动识别：带房间码进入即为 Guest
     // 空格 = 播放/暂停
     const onKey = (e) => {
       if (e.code !== 'Space' || e.repeat || e.target.closest('input, textarea, button, select')) return;
