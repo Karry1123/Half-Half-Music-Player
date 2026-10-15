@@ -17,37 +17,57 @@ export function normalizeCookies(text) {
   const raw = String(text).replace(/^﻿/, '').trim();
   const out = ['# Netscape HTTP Cookie File'];
   let entries = 0, skipped = 0;
-  if (raw.startsWith('[')) {
-    for (const c of JSON.parse(raw)) {
+  const shapes = new Map(); // 只记录无法识别行的结构（字段数 / 分隔符），不记录内容
+  const add = (domain, name, value, { secure = true, httpOnly = false, path = '/', expires = 0 } = {}) => {
+    out.push([(httpOnly ? '#HttpOnly_' : '') + domain, domain.startsWith('.') ? 'TRUE' : 'FALSE', path, secure ? 'TRUE' : 'FALSE', Math.floor(expires), name, value].join('\t'));
+    entries++;
+  };
+  if (raw.startsWith('[') || raw.startsWith('{')) {
+    const data = JSON.parse(raw);
+    for (const c of Array.isArray(data) ? data : data.cookies || []) {
       if (!c?.domain || !c.name) { skipped++; continue; }
       const domain = c.hostOnly === false && !c.domain.startsWith('.') ? `.${c.domain}` : c.domain;
-      out.push([(c.httpOnly ? '#HttpOnly_' : '') + domain, domain.startsWith('.') ? 'TRUE' : 'FALSE', c.path || '/', c.secure ? 'TRUE' : 'FALSE',
-        Math.floor(c.expirationDate || 0), c.name, c.value ?? ''].join('\t'));
-      entries++;
+      add(domain, c.name, c.value ?? '', { secure: !!c.secure, httpOnly: !!c.httpOnly, path: c.path || '/', expires: c.expirationDate || c.expires || 0 });
     }
-    return { text: out.join('\n') + '\n', entries, skipped };
+    return { text: out.join('\n') + '\n', entries, skipped, shapes: '' };
   }
-  for (const line of raw.split(/\r?\n/)) {
+  const lines = raw.replace(/\\t/g, '\t').split(/\r?\n/);
+  // 请求头格式：name=value; name2=value2（整段只有键值对，没有 Tab）
+  if (!raw.includes('\t') && lines.every(l => !l.trim() || /^(cookie:\s*)?[^=\s;]+=[^;]*(;\s*[^=\s;]+=[^;]*)*;?$/i.test(l.trim()))) {
+    for (const l of lines) {
+      for (const pair of l.trim().replace(/^cookie:\s*/i, '').split(';')) {
+        const i = pair.indexOf('=');
+        if (i > 0) add('.youtube.com', pair.slice(0, i).trim(), pair.slice(i + 1).trim(), { expires: Date.now() / 1000 + 180 * 86400 });
+      }
+    }
+    return { text: out.join('\n') + '\n', entries, skipped, shapes: '' };
+  }
+  for (const line of lines) {
     const t = line.trim();
     if (!t || /^#\s*(Netscape )?HTTP Cookie File/i.test(t) || (t.startsWith('#') && !t.startsWith('#HttpOnly_'))) continue;
     let fields = t.split('\t');
     if (fields.length !== 7) fields = t.split(/\s+/);
     if (fields.length === 6) fields.push(''); // 空值 Cookie
-    if (fields.length !== 7) { skipped++; continue; }
+    if (fields.length !== 7) {
+      skipped++;
+      const shape = `${t.split('\t').length}tab/${t.split(/\s+/).length}ws${t.includes('=') ? '/eq' : ''}${t.includes(';') ? '/semi' : ''}${t.includes(':') ? '/colon' : ''}`;
+      shapes.set(shape, (shapes.get(shape) || 0) + 1);
+      continue;
+    }
     out.push(fields.join('\t'));
     entries++;
   }
-  return { text: out.join('\n') + '\n', entries, skipped };
+  return { text: out.join('\n') + '\n', entries, skipped, shapes: [...shapes].map(([k, v]) => `${k}×${v}`).join(', ') };
 }
 /** yt-dlp 每次运行后会把 Cookie 写回文件；平台挂载的密钥文件常是只读的，所以先整理格式并复制一份到临时目录 */
 const writableCopy = (p) => {
   if (!p || !existsSync(p)) return p;
   try {
     const copy = path.join(os.tmpdir(), `hh-${path.basename(p)}`);
-    const { text, entries, skipped } = normalizeCookies(readFileSync(p, 'utf8'));
+    const { text, entries, skipped, shapes } = normalizeCookies(readFileSync(p, 'utf8'));
     writeFileSync(copy, text, { mode: 0o600 });
     chmodSync(copy, 0o600);
-    console.log(`Cookie 文件 ${path.basename(p)}: ${entries} 条有效${skipped ? `，跳过 ${skipped} 行无法识别` : ''}`);
+    console.log(`Cookie 文件 ${path.basename(p)}: ${entries} 条有效${skipped ? `，跳过 ${skipped} 行无法识别（结构: ${shapes}）` : ''}`);
     return copy;
   } catch (e) { console.error('Cookie 文件整理失败，直接使用原文件:', e.message); return p; }
 };
