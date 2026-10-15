@@ -93,3 +93,17 @@ test('sslmode=require keeps encryption without verifying the private CA; verify-
   assert.deepEqual(pgConnection('postgresql://u:p@db:5432/x?sslmode=verify-full'), { connectionString: 'postgresql://u:p@db:5432/x?sslmode=verify-full' });
   assert.deepEqual(pgConnection('postgresql://u:p@db:5432/x'), { connectionString: 'postgresql://u:p@db:5432/x' });
 });
+
+test('nickname is shared by every device of the account; playlist deletion markers are kept', async () => {
+  const a = await Accounts.memory();
+  try {
+    const u = await a.register('nick-user', 'local-test-password');
+    assert.deepEqual(await a.profile(u.user.id), { nickname: '' });
+    await assert.rejects(a.saveProfile(u.user.id, '   '), { code: 'INPUT' });
+    assert.deepEqual(await a.saveProfile(u.user.id, '  海盐  汽水 '), { nickname: '海盐 汽水' });
+    assert.deepEqual(await a.saveProfile(u.user.id, '月亮邮差'), { nickname: '月亮邮差' });
+    assert.deepEqual(await a.profile(u.user.id), { nickname: '月亮邮差' });
+    const saved = await a.saveLibrary(u.user.id, 0, [{ id: 'gone', deleted: true, updatedAt: 5, tracks: [{ id: 'x' }] }, { id: 'p', name: '歌单', createdAt: 1, updatedAt: 2, tracks: [] }]);
+    assert.deepEqual(saved.playlists, [{ id: 'gone', deleted: true, updatedAt: 5 }, { id: 'p', name: '歌单', createdAt: 1, updatedAt: 2, tracks: [] }]);
+  } finally { await a.close(); }
+});

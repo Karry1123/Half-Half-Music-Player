@@ -114,14 +114,24 @@ export function removeTracks(list, playlistId, trackIds, now = Date.now()) {
   return { list: replace(list, np), changed: [np] };
 }
 
-/** 曲库里已经不存在的歌，从所有歌单里摘掉 */
-export function prune(list, existingTrackIds, now = Date.now()) {
+/**
+ * 曲库里已经不存在的歌，从所有歌单里摘掉。
+ * pendingOf(trackId) 能给出云端曲目信息时（已登录账号），改为"未下载"留在歌单里：
+ * 只是这台设备删了文件腾空间，歌单本身不变，其他设备也不受影响。
+ */
+export function prune(list, existingTrackIds, now = Date.now(), pendingOf = () => null) {
   const ok = existingTrackIds instanceof Set ? existingTrackIds : new Set(existingTrackIds);
   const changed = [];
   const next = list.map((p) => {
     const kept = p.trackIds.filter((t) => ok.has(t));
     if (kept.length === p.trackIds.length) return p;
-    const np = { ...p, trackIds: kept, updatedAt: now };
+    const pending = [...(p.pending || [])];
+    for (const t of p.trackIds) {
+      if (ok.has(t)) continue;
+      const ct = pendingOf(t);
+      if (ct?.id && !pending.some((x) => x.id === ct.id)) pending.push(ct);
+    }
+    const np = { ...p, trackIds: kept, ...(pending.length && { pending }), updatedAt: now };
     changed.push(np);
     return np;
   });
@@ -182,8 +192,9 @@ export class PlaylistStore {
     return () => this.#subs.delete(fn);
   }
 
-  #emit() {
-    for (const fn of this.#subs) fn(this.list);
+  /** source: 'local'（本机操作）| 'remote'（云端同步写入，不需要再触发同步） */
+  #emit(source = 'local') {
+    for (const fn of this.#subs) fn(this.list, source);
   }
 
   get(id) {
@@ -237,21 +248,60 @@ export class PlaylistStore {
     });
   }
 
-  prune(existingTrackIds) {
+  prune(existingTrackIds, pendingOf) {
     if (!this.ready) return Promise.resolve(0);
     return this.#mutate((list) => {
-      const { list: next, changed } = prune(list, existingTrackIds, this.now());
+      const { list: next, changed } = prune(list, existingTrackIds, this.now(), pendingOf);
       return { next, puts: changed, result: changed.length };
+    });
+  }
+
+  /** 从歌单里去掉一首还没下载的歌（按云端曲目 id） */
+  removePending(playlistId, key) {
+    return this.#mutate((list) => {
+      const p = find(list, playlistId);
+      const pending = (p.pending || []).filter((x) => x.id !== key);
+      if (pending.length === (p.pending || []).length) return { next: list };
+      const np = { ...p, pending, updatedAt: this.now() };
+      return { next: replace(list, np), puts: [np] };
+    });
+  }
+
+  /** 给一首未下载的歌换音源（原链接失效时） */
+  replacePending(playlistId, key, patch) {
+    return this.#mutate((list) => {
+      const p = find(list, playlistId);
+      const np = { ...p, pending: (p.pending || []).map((x) => (x.id === key ? { ...x, ...patch } : x)), updatedAt: this.now() };
+      return { next: replace(list, np), puts: [np] };
+    });
+  }
+
+  /**
+   * 云端同步结果写入本机：upserts [{ id, name, createdAt, trackIds, pending }]，deletes [id]。
+   * 系统歌单（默认曲库）不会被删除，也保持系统标记。
+   */
+  applyRemote({ upserts = [], deletes = [] }) {
+    return this.#mutate((list) => {
+      const drop = new Set(deletes.filter((id) => id !== INBOX_ID));
+      let next = list.filter((p) => !drop.has(p.id));
+      const puts = [];
+      for (const u of upserts) {
+        const have = next.find((p) => p.id === u.id);
+        const np = { ...(have || { coverUrl: null }), id: u.id, name: u.id === INBOX_ID ? INBOX_NAME : String(u.name || '未命名歌单'), createdAt: have?.createdAt || u.createdAt || this.now(), updatedAt: this.now(), trackIds: dedupe(u.trackIds || []), pending: u.pending || [], ...(u.id === INBOX_ID && { system: true }) };
+        next = have ? replace(next, np) : [...next, np];
+        puts.push(np);
+      }
+      return { next, puts, deletes: [...drop].filter((id) => list.some((p) => p.id === id)), source: 'remote' };
     });
   }
 
   #mutate(fn) {
     return this.#serial(async () => {
       const before = this.list;
-      const { next, puts = [], deletes = [], result } = fn(before);
+      const { next, puts = [], deletes = [], result, source } = fn(before);
       if (next === before && !puts.length && !deletes.length) return result;
       this.list = sortPlaylists(next);
-      this.#emit();
+      this.#emit(source);
       try {
         for (const p of puts) await this.backend.putPlaylist(p);
         for (const id of deletes) await this.backend.deletePlaylist(id);

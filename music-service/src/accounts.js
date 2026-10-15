@@ -15,6 +15,8 @@ const SCHEMA = [
   "CREATE TABLE IF NOT EXISTS libraries(user_id TEXT PRIMARY KEY REFERENCES users(id), revision INTEGER NOT NULL DEFAULT 0, metadata TEXT NOT NULL DEFAULT '[]', updated_at BIGINT NOT NULL)",
   'CREATE TABLE IF NOT EXISTS peer_tickets(token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), room TEXT NOT NULL, expires_at BIGINT NOT NULL)',
   'CREATE TABLE IF NOT EXISTS download_grants(user_id TEXT NOT NULL REFERENCES users(id), track_id TEXT NOT NULL, PRIMARY KEY(user_id, track_id))',
+  // Display name shared by every device signed in to the account.
+  'CREATE TABLE IF NOT EXISTS profiles(user_id TEXT PRIMARY KEY REFERENCES users(id), nickname TEXT NOT NULL, updated_at BIGINT NOT NULL)',
 ];
 
 /**
@@ -190,6 +192,16 @@ export class Accounts {
     if (!changed) fail(409, 'CONFLICT', '其他设备已修改歌单，请刷新后重试');
     return { revision: revision + 1, playlists: clean };
   }
+  async profile(userId) {
+    const row = await this.one('SELECT nickname FROM profiles WHERE user_id=$1', [userId]);
+    return { nickname: row?.nickname || '' };
+  }
+  async saveProfile(userId, nickname) {
+    const name = typeof nickname === 'string' ? nickname.replace(/\s+/g, ' ').trim() : '';
+    if (!name || [...name].length > 16) fail(400, 'INPUT', '昵称需 1–16 个字');
+    await this.db.run('INSERT INTO profiles VALUES($1,$2,$3) ON CONFLICT(user_id) DO UPDATE SET nickname=excluded.nickname, updated_at=excluded.updated_at', [userId, name, Date.now()]);
+    return { nickname: name };
+  }
   async ticket(userId, room) {
     if (!/^\d{6}$/.test(room)) fail(400, 'INPUT', '无效房间码');
     await this.db.run('DELETE FROM peer_tickets WHERE expires_at<$1', [Date.now()]);
@@ -205,14 +217,20 @@ export class Accounts {
 }
 
 export function validatePlaylists(value) {
-  if (!Array.isArray(value) || value.length > 200) fail(400, 'INPUT', '最多同步 200 个歌单');
+  if (!Array.isArray(value) || value.length > 2000) fail(400, 'INPUT', '歌单数据过多');
   const ids = new Set(); let total = 0;
   const text = (v, max) => typeof v === 'string' ? v.slice(0, max) : '';
+  const time = (v) => (Number.isSafeInteger(v) && v > 0 ? v : 0);
+  if (value.filter((p) => !p?.deleted).length > 200) fail(400, 'INPUT', '最多同步 200 个歌单');
   return value.map(p => {
-    if (!p || !p.id || ids.has(p.id) || typeof p.id !== 'string' || p.id.length > 100 || !Array.isArray(p.tracks)) fail(400, 'INPUT', '无效或重复歌单');
-    ids.add(p.id); total += p.tracks.length;
+    if (!p || !p.id || ids.has(p.id) || typeof p.id !== 'string' || p.id.length > 100) fail(400, 'INPUT', '无效或重复歌单');
+    ids.add(p.id);
+    // Deletion marker: lets other devices remove the playlist instead of re-uploading it.
+    if (p.deleted === true) return { id: p.id, deleted: true, updatedAt: time(p.updatedAt) };
+    if (!Array.isArray(p.tracks)) fail(400, 'INPUT', '无效或重复歌单');
+    total += p.tracks.length;
     if (total > 10000) fail(400, 'INPUT', '曲目总数不能超过 10000');
-    return { id: p.id, name: text(p.name, 80) || '未命名歌单', tracks: p.tracks.map(t => {
+    return { id: p.id, name: text(p.name, 80) || '未命名歌单', createdAt: time(p.createdAt), updatedAt: time(p.updatedAt), tracks: p.tracks.map(t => {
       if (!t || typeof t.id !== 'string' || !t.id || t.id.length > 200) fail(400, 'INPUT', '无效曲目');
       const pageUrl = text(t.pageUrl, 2000);
       if (pageUrl && !/^https:\/\//.test(pageUrl)) fail(400, 'INPUT', '音源页面必须使用 HTTPS');
@@ -239,6 +257,8 @@ export function mountAccounts(app, accounts, limiter) {
   app.post('/auth/logout', route(async req => { await accounts.logout(token(req)); return { ok: true }; }));
   app.get('/account/library', route(async req => accounts.library(await active(req))));
   app.put('/account/library', route(async req => accounts.saveLibrary(await active(req), req.body?.revision, req.body?.playlists)));
+  app.get('/account/profile', route(async req => accounts.profile(await active(req))));
+  app.put('/account/profile', route(async req => accounts.saveProfile(await active(req), req.body?.nickname)));
   app.post('/account/peer-ticket', limiter, route(async req => accounts.ticket(await active(req), String(req.body?.room))));
   app.post('/account/verify-peer', limiter, route(async req => { await active(req); return accounts.verifyTicket(req.body?.ticket, String(req.body?.room)); }));
   return async (req, res, next) => {

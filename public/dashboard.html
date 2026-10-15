@@ -115,7 +115,7 @@ import {
   Activity, AlertTriangle, ArrowDownUp, ArrowRight, Check, FolderDown, HardDrive, HardDriveDownload, CirclePlay, Clock as ClockIcon, Copy, Crown, Disc3, Download, FileAudio, Flame, Globe,
   ExternalLink, Gauge, Headphones, History, Home, ListOrdered, Server, Settings, Zap, Repeat, Repeat1, Shuffle, User, LayoutDashboard, Link, Link2, ListMusic, Loader2, LogOut, Music2, Pause, Play, QrCode,
   Radio, RefreshCw, Search, ShieldCheck, Signal, SkipBack, SkipForward, Sparkles, Square, Trash2, Upload, Users, Volume2, VolumeX,
-  Wifi, WifiOff, X, Plus, MoreHorizontal, ListPlus, ListMinus, Pencil, Library, Eye, EyeOff, ChevronDown, Cloud,
+  Wifi, WifiOff, X, Plus, MoreHorizontal, ListPlus, ListMinus, Pencil, Library, Eye, EyeOff, ChevronDown, Cloud, CloudDownload,
 } from 'lucide-react';
 import { Peer } from 'peerjs';
 import QRCode from 'qrcode';
@@ -129,7 +129,8 @@ function useBackLayer(open, close) {
 }
 import { MODE_LABEL, PLAY_MODES, PlayQueue } from './playQueue.js';
 import { ALL_ID, ALL_NAME, INBOX_ID, PlaylistStore, missingFromLibrary, playlistsOf, resolveScope } from './playlists.js';
-import { AccountClient } from './accountClient.js';
+import { AccountClient, SOURCE_EXPIRED, cacheCloudTrack, downloadCloudTrack } from './accountClient.js';
+import { CloudSync, toCloudTrack } from './cloudSync.js';
 import { AccountCard, AccountGate, CloudSheet, ZipExport } from './accountUI.js';
 import { checkForUpdate, DEFAULT_REPO } from './appUpdate.js';
 import * as NativeUpdate from './appUpdateNative.js';
@@ -281,13 +282,14 @@ function createStore(initial) {
   };
 }
 
+const PROFILE_COLORS = ['#f2a65a', '#ec7a96', '#71d6a4', '#8ea2ff', '#e6c56b'];
+const profileOf = (name) => ({ name: name.slice(0, 16), color: PROFILE_COLORS[hue(name) % PROFILE_COLORS.length] });
 function loadProfile() {
-  const colors = ['#f2a65a', '#ec7a96', '#71d6a4', '#8ea2ff', '#e6c56b'];
   const saved = (() => { try { return localStorage.getItem('hh.name'); } catch { return null; } })();
   const name = params.get('name') || saved || ['晚风', '橘子汽水', '海盐', '星期天', '月亮邮差'][Math.floor(Math.random() * 5)];
   // 第一次随机取的名字要记住：否则每次打开都换一个名字，对方也认不出你
   if (!saved && !params.get('name')) try { localStorage.setItem('hh.name', name); } catch {}
-  return { name: name.slice(0, 16), color: colors[hue(name) % colors.length] };
+  return profileOf(name);
 }
 
 const store = createStore({
@@ -299,6 +301,8 @@ const store = createStore({
   ice: null, // 当前 ICE 配置摘要（连接设置面板用）
   connSettingsOpen: false,
   cloudOpen: false,
+  cloudSync: { state: 'idle', at: 0, error: '' }, // 歌单云同步状态
+  pendingJobs: {}, // 未下载歌曲的下载状态 { [云端曲目 id]: { state: 'loading' | 'error', message } }
   peerAway: false, // 对方切到后台 / 暂时无响应
   ping: null,
   me: loadProfile(),
@@ -1949,7 +1953,9 @@ async function refreshOffline() {
   try {
     const tracks = await LocalLib.listTracks();
     set({ offline: { ready: true, hashes: new Set(tracks.map((t) => t.hash)), count: tracks.length } });
-    playlistStore.prune(new Set(tracks.map((t) => t.id))).catch(() => {}); // 删掉的歌从所有歌单里摘掉
+    for (const t of tracks) trackMeta.set(t.id, toCloudTrack(t));
+    // 删掉的歌从所有歌单里摘掉；登录账号时改为"未下载"留在歌单里（只是这台设备腾空间，歌单不变）
+    playlistStore.prune(new Set(tracks.map((t) => t.id)), (id) => (cloudSync.enabled ? trackMeta.get(id) : null)).catch(() => {});
   } catch (e) {
     set({ offline: { ready: true, hashes: new Set(), count: 0, error: e.message } });
   }
@@ -1971,6 +1977,74 @@ playlistStore.subscribe((list) => {
   // 正在播放的歌单内容变了（加歌 / 移除）：队列和 Guest 端跟着更新
   if (s.activePlaylistId && !session.isGuest) session.broadcastLibrary();
 });
+
+// ════════════════════════════════════════════════════════════ 账号：歌单自动同步 + 昵称（规则见 cloudSync.js）
+const trackMeta = new Map(); // 本机 tracks.id → 云端曲目信息（删除文件时用来保留"未下载"条目）
+const syncBaseKey = (uid) => `hh.sync.${uid}`;
+const cloudSync = new CloudSync({
+  client: account,
+  store: playlistStore,
+  listTracks: () => LocalLib.listTracks(),
+  loadBase: async (uid) => { try { return JSON.parse(localStorage.getItem(syncBaseKey(uid)) || 'null'); } catch { return null; } },
+  saveBase: async (uid, base) => { try { localStorage.setItem(syncBaseKey(uid), JSON.stringify(base)); } catch {} },
+  onStatus: (status) => set({ cloudSync: status }),
+});
+playlistStore.subscribe((_list, source) => { if (source !== 'remote' && playlistStore.ready) cloudSync.schedule(); });
+setInterval(() => { if (!document.hidden && playlistStore.ready) (cloudSync.sync().catch(() => {}), syncProfile()); }, 60000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden && playlistStore.ready) (cloudSync.sync().catch(() => {}), syncProfile()); });
+
+/** 下载歌单里"未下载"的歌（keys 为空 = 全部），保存到本机后自动归入歌单 */
+async function downloadPending(playlistId, keys) {
+  const todo = (playlistStore.get(playlistId)?.pending || []).filter((t) => !keys || keys.includes(t.id));
+  const job = (id, v) => set((s) => { const n = { ...s.pendingJobs }; v ? (n[id] = v) : delete n[id]; return { pendingJobs: n }; });
+  let ok = 0;
+  for (const t of todo) {
+    if (get().pendingJobs[t.id]?.state === 'loading') continue;
+    job(t.id, { state: 'loading' });
+    try {
+      await cacheCloudTrack(t, { storage: LocalLib, download: (x) => downloadCloudTrack(account, x) });
+      job(t.id, null);
+      ok++;
+    } catch (e) {
+      job(t.id, { state: 'error', message: e.message });
+    }
+  }
+  if (ok) {
+    await session.restoreLocal();
+    await cloudSync.sync().catch(() => {});
+    toast(`已下载 ${ok} 首到本机`);
+  }
+  if (todo.length > ok && todo.length > 1) toast(`${todo.length - ok} 首下载失败，原因标在歌单里`, 'warn');
+}
+
+/** 原音源失效：换成重新搜到的链接 */
+async function replacePendingSource(playlistId, key, url) {
+  const r = await account.request(`/api/resolve?url=${encodeURIComponent(url)}`);
+  if (!r.track?.id) throw new Error('无法识别这个链接');
+  await playlistStore.replacePending(playlistId, key, { id: r.track.id, sourceId: r.track.id, pageUrl: r.track.pageUrl || url, hash: '' });
+  set((s) => { const n = { ...s.pendingJobs }; delete n[key]; return { pendingJobs: n }; });
+  toast('音源已替换，可以重新下载');
+}
+
+/** 改昵称：本机立即生效、房间里的对方同步看到；登录账号时同时保存到账号，其他设备打开时跟着更新 */
+function setMyName(nick, { push = true } = {}) {
+  const name = String(nick || '').replace(/\s+/g, ' ').trim().slice(0, 16);
+  if (!name) return;
+  if (name !== get().me.name) {
+    set({ me: profileOf(name) });
+    try { localStorage.setItem('hh.name', name); } catch {}
+    session.send({ type: 'hello', ...get().me });
+  }
+  if (push && cloudSync.enabled) account.request('/account/profile', { nickname: name }, 'PUT').catch((e) => toast(`昵称没能保存到账号：${e.message}`, 'warn'));
+}
+/** 登录后：账号里有昵称就用它；还没有就把这台设备现在的昵称存进去 */
+async function syncProfile() {
+  if (!cloudSync.enabled) return;
+  try {
+    const { nickname } = await account.request('/account/profile');
+    nickname ? setMyName(nickname, { push: false }) : setMyName(get().me.name);
+  } catch (e) { console.warn('[profile]', e.message); }
+}
 
 const ASK_PLAYLIST_KEY = 'hh.askPlaylist'; // '0' = 下载 / 导入时不再询问，直接放进默认曲库
 const audioFilesOf = (fileList) => [...fileList].filter((f) => f.type.startsWith('audio/') || /\.(mp3|flac|m4a|aac|wav|ogg|opus|webm)$/i.test(f.name));
@@ -2245,13 +2319,7 @@ function ConnectionBar() {
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   };
-  const rename = () => {
-    const name = prompt('你的昵称', me.name)?.trim();
-    if (!name) return;
-    set({ me: { ...me, name: name.slice(0, 16) } });
-    try { localStorage.setItem('hh.name', name); } catch {}
-    session.send({ type: 'hello', ...get().me });
-  };
+  const rename = () => setMyName(prompt('你的昵称', me.name));
 
   return html`<header class="connection-header relative md:sticky md:top-0 z-30 border-b border-ink-700/70 bg-ink-950/80 backdrop-blur-xl">
     <div class="mx-auto flex max-w-[1500px] flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3">
@@ -2560,7 +2628,7 @@ function PlaylistHeader({ view, items }) {
             ${playlist?.system && html`<span class="shrink-0 rounded bg-white/5 px-1.5 text-[10px] text-sand-400" title="下载 / 导入时选「稍后整理」的歌放在这里">稍后整理</span>`}
             ${custom && html`<button class="grid h-7 w-7 shrink-0 place-items-center rounded-full text-sand-500 hover:text-sand-50" onClick=${() => (setName(playlist.name), setRenaming(true))} aria-label="重命名歌单" title="重命名"><${Pencil} size=${13} /></button>`}
           </div>`}
-      <div class="mt-0.5 text-xs text-sand-500 tabular">${items.length} 首${total ? ` · ${fmtTime(total)}` : ''}${isActive && items.length ? ' · 正在播放' : ''}</div>
+      <div class="mt-0.5 text-xs text-sand-500 tabular">${items.length} 首${playlist?.pending?.length ? ` · ${playlist.pending.length} 首未下载` : ''}${total ? ` · ${fmtTime(total)}` : ''}${isActive && items.length ? ' · 正在播放' : ''}</div>
     </div>
     <div class="flex w-full items-center gap-1.5 sm:w-auto sm:shrink-0">
       ${custom && !renaming && html`<button class="grid h-9 w-9 shrink-0 place-items-center rounded-full text-sand-500 hover:bg-guest/10 hover:text-guest" onClick=${remove} aria-label="删除歌单" title="删除歌单（歌曲保留）"><${Trash2} size=${15} /></button>`}
@@ -2591,6 +2659,7 @@ function LibraryPanel() {
     ? (roomPlaylist ? roomPlaylist.ids.map((id) => byId.get(id)).filter(Boolean) : library)
     : resolveScope(playlist, library).map((id) => byId.get(id)).filter(Boolean);
   const totalSize = items.reduce((a, x) => a + (x.size || 0), 0);
+  const pending = !isGuest && playlist ? playlist.pending || [] : [];
   const play = (x) => {
     if (x.id === currentId) return session.act('toggle');
     if (isGuest) return session.act('select', { itemId: x.id });
@@ -2613,7 +2682,7 @@ function LibraryPanel() {
       <span>#</span><span>标题</span><span>来源</span><span class="text-right">大小</span><span class="text-right">时长</span><span />
     </div>
     <div class="scroll-thin min-h-[200px] flex-1 overflow-y-auto p-2" role="list">
-      ${!items.length && html`<div class="m-3 grid place-items-center gap-2 rounded-2xl border-2 border-dashed border-ink-700 px-6 py-14 text-center text-sm text-sand-500">
+      ${!items.length && !pending.length && html`<div class="m-3 grid place-items-center gap-2 rounded-2xl border-2 border-dashed border-ink-700 px-6 py-14 text-center text-sm text-sand-500">
         <${FileAudio} size=${26} class="text-guest/70" />
         ${isGuest
           ? '房主还没有添加歌曲 · 你也可以拖入文件分享给房主'
@@ -2655,8 +2724,52 @@ function LibraryPanel() {
           </span>
         </div>`;
       })}
+      ${pending.length > 0 && html`<${PendingRows} playlistId=${playlist.id} pending=${pending} start=${items.length} />`}
     </div>
   <//>`;
+}
+
+/** 歌单里还没下载到这台设备的歌（其他设备加入的）：下载 / 移除 / 音源失效时替换 */
+function PendingRows({ playlistId, pending, start }) {
+  const jobs = useStore((s) => s.pendingJobs);
+  return html`<div class="mt-1 border-t border-ink-700/60 pt-1">
+    <div class="flex items-center gap-2 px-3 py-2 text-[11px] text-sand-500">
+      <${Cloud} size=${12} /> 未下载到这台设备 · ${pending.length} 首
+      <span class="flex-1" />
+      <button class="inline-flex items-center gap-1 rounded-full border border-sync/40 px-2.5 py-1 text-[11px] font-medium text-sync hover:bg-sync/10" onClick=${() => downloadPending(playlistId)}>
+        <${CloudDownload} size=${12} /> 全部下载
+      </button>
+    </div>
+    ${pending.map((t, i) => {
+      const job = jobs[t.id];
+      return html`<div key=${t.id} role="listitem" class="rounded-xl px-3 py-2 hover:bg-ink-800/60">
+        <div class="grid grid-cols-[32px_minmax(0,1fr)_auto] items-center gap-3">
+          <span class="text-center text-xs text-sand-600 tabular">${start + i + 1}</span>
+          <div class="flex min-w-0 items-center gap-3 opacity-70">
+            <span class="grid h-[38px] w-[38px] shrink-0 place-items-center rounded-lg bg-ink-800 text-sand-500"><${Cloud} size=${16} /></span>
+            <div class="min-w-0">
+              <div class="flex items-center gap-1.5"><span class="truncate text-sm font-medium">${t.title || '未命名'}</span>
+                <span class="shrink-0 rounded bg-white/5 px-1.5 text-[10px] text-sand-400">未下载</span></div>
+              <div class="truncate text-xs text-sand-400">${t.artist || '未知歌手'}</div>
+            </div>
+          </div>
+          <span class="flex justify-end gap-1">
+            <button class="grid h-8 w-8 place-items-center rounded-full text-sync hover:bg-sync/10 disabled:opacity-60" disabled=${job?.state === 'loading'} onClick=${() => downloadPending(playlistId, [t.id])} aria-label=${`下载 ${t.title}`} title="下载到这台设备">
+              ${job?.state === 'loading' ? html`<${Loader2} size=${15} class="animate-spin" />` : html`<${CloudDownload} size=${15} />`}
+            </button>
+            <button class="grid h-8 w-8 place-items-center rounded-full text-sand-500 hover:bg-white/10 hover:text-sand-50" onClick=${() => playlistStore.removePending(playlistId, t.id).catch((e) => toast(e.message, 'warn'))} aria-label=${`从歌单移除 ${t.title}`} title="从歌单移除（所有设备）"><${X} size=${15} /></button>
+          </span>
+        </div>
+        ${job?.state === 'error' && html`<div class="ml-[44px] mt-2 space-y-2">
+          <p class="flex items-start gap-1.5 text-xs text-guest"><${AlertTriangle} size=${13} class="mt-0.5 shrink-0" />${job.message}</p>
+          ${(job.message === SOURCE_EXPIRED || /失效|不可用/.test(job.message)) && html`<form class="flex gap-2" onSubmit=${(e) => { e.preventDefault(); const url = new FormData(e.currentTarget).get('url'); replacePendingSource(playlistId, t.id, url).catch((err) => toast(err.message, 'warn')); }}>
+            <input name="url" type="url" required placeholder="粘贴重新搜到的 B 站 / YouTube 链接" aria-label=${`替换 ${t.title} 的音源`} class="min-w-0 flex-1 rounded-lg border border-ink-700 bg-ink-850 px-3 py-1.5 text-xs outline-none placeholder:text-sand-500 focus:border-sync" />
+            <button class="shrink-0 rounded-lg border border-ink-600 px-3 text-xs text-sand-200 hover:border-sync hover:text-sync">替换音源</button>
+          </form>`}
+        </div>`}
+      </div>`;
+    })}
+  </div>`;
 }
 
 /** 曲目"⋯"操作面板（手机是底部抽屉）：添加到其他歌单 / 从当前歌单移除 / 从本机删除 */
@@ -3225,12 +3338,7 @@ function ConnSettingsModal() {
     try { localStorage.setItem(ICE_KEY, JSON.stringify(form)); } catch {}
     // 昵称：立即生效，房间里的对方同步看到新名字
     const nick = name.replace(/\s+/g, ' ').trim().slice(0, 16);
-    if (nick && nick !== get().me.name) {
-      const me = { ...get().me, name: nick };
-      set({ me });
-      try { localStorage.setItem('hh.name', nick); } catch {}
-      session.send({ type: 'hello', name: me.name, color: me.color });
-    }
+    if (nick && nick !== get().me.name) setMyName(nick);
     // 音乐服务地址 / 令牌变了：重新加载页面让所有请求用上新配置
     const svcChanged = svc.api.trim() !== stored('hh.api') || svc.token.trim() !== stored('hh.apiToken');
     if (svcChanged) {
@@ -4346,6 +4454,7 @@ function UpdateGate() {
 function App() {
   const cloudLocalPlaylists = useStore(s => s.playlists);
   const cloudOpen = useStore(s => s.cloudOpen);
+  const cloudStatus = useStore(s => s.cloudSync);
   const screen = useStore((s) => s.screen);
   const currentId = useStore((s) => s.currentId);
   const keyboardOpen = useKeyboardOpen();
@@ -4365,7 +4474,8 @@ function App() {
   }, [showPlayer]);
 
   return html`
-    <${CloudSheet} open=${cloudOpen} onClose=${() => set({ cloudOpen: false })} client=${account} storage=${LocalLib} playlists=${cloudLocalPlaylists} restore=${() => session.restoreLocal()} />
+    <${CloudSheet} open=${cloudOpen} onClose=${() => set({ cloudOpen: false })} client=${account} status=${cloudStatus} playlists=${cloudLocalPlaylists}
+      onSync=${() => cloudSync.sync().catch((e) => toast(`同步失败：${e.message}`, 'warn'))} onDownload=${(id) => downloadPending(id)} onOpen=${(id) => set({ cloudOpen: false, viewPlaylistId: id, screen: 'deck' })} />
     ${screen === 'home'
       ? html`<${HomeView} />`
       : html`<${ConnectionBar} />
@@ -4402,7 +4512,8 @@ function AppShell() {
   useEffect(() => {
     iceReady = applyIce();
     api.init();
-    session.restoreLocal(); // 每次打开页面：自动识别本机已保存的歌曲
+    // 每次打开页面：自动识别本机已保存的歌曲，然后同步账号里的昵称和歌单
+    session.restoreLocal().then(() => { syncProfile(); cloudSync.sync().catch(() => {}); });
     if (/^\d{6}$/.test(params.get('room') || '')) session.joinRoom(params.get('room')); // 角色自动识别：带房间码进入即为 Guest
     // 空格 = 播放/暂停
     const onKey = (e) => {

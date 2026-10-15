@@ -1,7 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import htm from 'htm';
-import { AlertTriangle, Check, CloudDownload, Cloud, FileArchive, Headphones, KeyRound, Loader2, LogOut, RefreshCw, Trash2, Upload, X } from 'lucide-react';
-import { SOURCE_EXPIRED, cacheCloudTrack, downloadCloudTrack } from './accountClient.js';
+import { AlertTriangle, Check, CloudDownload, Cloud, FileArchive, Headphones, KeyRound, Loader2, LogOut, RefreshCw, X } from 'lucide-react';
 import { createPlaylistZip, saveZip } from './playlistZip.js';
 import { pushBackLayer } from './mobileRuntime.js';
 const html = htm.bind(React.createElement);
@@ -87,135 +86,50 @@ export function AccountGate({ client, children }) {
   </main>`;
 }
 
-/** 云端歌单：只同步元数据，音频按需下载到本机 */
-export function CloudSheet({ open, onClose, client, storage, playlists, restore }) {
-  const [cloud, setCloud] = useState([]), [local, setLocal] = useState([]), [status, setStatus] = useState(null), [busy, setBusy] = useState('');
-  const [selected, setSelected] = useState(''), [failures, setFailures] = useState({}), [progress, setProgress] = useState(null);
-  useBack(open, () => { if (!busy) onClose(); });
-  const refresh = async () => { const list = await client.pull(); setCloud([...list]); setLocal(await storage.listTracks()); };
-  const run = async (key, action) => {
-    setBusy(key); setStatus(null);
-    try { await action(); } catch (e) { setStatus({ tone: 'warn', text: e.message }); } finally { setBusy(''); setProgress(null); }
-  };
-  useEffect(() => {
-    if (!open || !client.required) return;
-    run('refresh', refresh);
-    const timer = setInterval(() => { if (!document.hidden) refresh().catch(() => {}); }, 60000);
-    return () => clearInterval(timer);
-  }, [open]);
+/** 云端同步面板：歌单在登录同一账号的设备间自动同步；这里看同步状态、手动同步、下载各歌单里还没下载的歌 */
+export function CloudSheet({ open, onClose, client, status, playlists, onSync, onDownload, onOpen }) {
+  useBack(open, onClose);
   if (!open || !client.required) return null;
-  const mine = playlists.filter(p => !p.id.startsWith('cloud-') && p.id !== 'all');
-  const publish = async () => {
-    const all = await storage.listTracks(); const p = mine.find(p => p.id === selected);
-    if (!p) throw new Error('请选择本机歌单');
-    const byId = new Map(all.map(t => [t.id, t]));
-    const tracks = p.trackIds.map(id => byId.get(id)).filter(Boolean).map(t => ({ id: t.sourceId || t.hash || t.id, sourceId: t.sourceId, hash: t.hash, title: t.title, artist: t.artist, pageUrl: t.pageUrl, duration: t.duration }));
-    const id = `local-${p.id}`;
-    await client.push([...client.playlists.filter(x => x.id !== id), { id, name: p.name, tracks }]);
-    setCloud([...client.playlists]);
-    setStatus({ tone: 'ok', text: `《${p.name}》已同步到云端（${tracks.length} 首，只上传歌曲信息，不上传音频）` });
-  };
-  const removeCloud = async (p) => {
-    if (!confirm(`从云端移除歌单《${p.name}》？\n各设备上已缓存的歌曲不受影响。`)) return;
-    await client.push(client.playlists.filter(x => x.id !== p.id));
-    setCloud([...client.playlists]);
-  };
-  const cached = t => local.find(x => (t.sourceId && x.sourceId === t.sourceId) || (t.hash && x.hash === t.hash));
-  const replaceSource = async (p, index, source) => {
-    const resolved = await client.request(`/api/resolve?url=${encodeURIComponent(source)}`);
-    if (!resolved.track?.id) throw new Error('无法识别这个音源');
-    const updated = { ...p, tracks: p.tracks.map((t, i) => i === index ? { ...t, sourceId: resolved.track.id, pageUrl: resolved.track.pageUrl || source, hash: '' } : t) };
-    await client.push(client.playlists.map(x => x.id === p.id ? updated : x));
-    setCloud([...client.playlists]);
-    setFailures(f => { const n = { ...f }; delete n[`${p.id}:${index}`]; return n; });
-    setStatus({ tone: 'ok', text: '音源已替换，可以重新下载' });
-  };
-  const cache = async (p, indexes) => {
-    const failed = {}, saved = [];
-    for (const [n, i] of indexes.entries()) {
-      const t = p.tracks[i];
-      setProgress({ done: n, total: indexes.length, title: t.title });
-      try { saved.push(await cacheCloudTrack(t, { storage, download: t => downloadCloudTrack(client, t) })); }
-      catch (e) { failed[`${p.id}:${i}`] = e.message; }
-    }
-    setFailures(f => { const n = { ...f }; indexes.forEach(i => delete n[`${p.id}:${i}`]); return { ...n, ...failed }; });
-    if (saved.length) {
-      const id = `cloud-${client.user.id}-${p.id}`;
-      const existing = (await storage.listPlaylists()).find(x => x.id === id);
-      await storage.putPlaylist({ id, name: p.name, createdAt: existing?.createdAt || Date.now(), updatedAt: Date.now(), trackIds: [...new Set([...(existing?.trackIds || []), ...saved.map(t => t.id)])] });
-      await restore();
-    }
-    setLocal(await storage.listTracks());
-    const bad = Object.keys(failed).length;
-    setStatus(bad ? { tone: 'warn', text: `已缓存 ${saved.length} 首，${bad} 首失败（见下方标注）` } : { tone: 'ok', text: `已缓存 ${saved.length} 首，已加入本机歌单《${p.name}》` });
-  };
-  return html`<div class="fixed inset-0 z-[75] flex items-end justify-center bg-ink-950/70 backdrop-blur-sm sm:items-center sm:p-6" onClick=${e => e.target === e.currentTarget && !busy && onClose()}>
+  const syncing = status?.state === 'syncing';
+  const when = status?.at ? new Date(status.at).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : '';
+  const list = playlists.filter((p) => p.id !== 'all');
+  const missing = list.reduce((n, p) => n + (p.pending?.length || 0), 0);
+  return html`<div class="fixed inset-0 z-[75] flex items-end justify-center bg-ink-950/70 backdrop-blur-sm sm:items-center sm:p-6" onClick=${(e) => e.target === e.currentTarget && onClose()}>
     <section role="dialog" aria-modal="true" aria-labelledby="cloud-title" class="flex max-h-[92vh] w-full max-w-lg flex-col overflow-hidden rounded-t-3xl border border-ink-700 bg-ink-900 shadow-2xl sm:rounded-3xl">
       <header class="flex items-center gap-3 border-b border-ink-700/70 px-5 py-4">
         <span class="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-sync/15 text-sync"><${Cloud} size=${19} /></span>
         <div class="min-w-0 flex-1">
-          <h2 id="cloud-title" class="font-semibold">云端歌单</h2>
-          <p class="truncate text-xs text-sand-500">${client.user?.username} · 歌单信息云同步，音频按需缓存到本机</p>
+          <h2 id="cloud-title" class="font-semibold">云端同步</h2>
+          <p class="truncate text-xs text-sand-500">${client.user?.username} · 歌单在所有登录设备间自动同步</p>
         </div>
-        <button class="grid h-8 w-8 place-items-center rounded-full text-sand-400 hover:bg-ink-800 hover:text-sand-50 disabled:opacity-40" disabled=${!!busy} onClick=${() => run('refresh', refresh)} aria-label="刷新云端歌单" title="刷新"><${RefreshCw} size=${16} class=${busy === 'refresh' ? 'animate-spin' : ''} /></button>
-        <button class="grid h-8 w-8 place-items-center rounded-full text-sand-400 hover:bg-ink-800 hover:text-sand-50" onClick=${() => !busy && onClose()} aria-label="关闭"><${X} size=${17} /></button>
+        <button class="grid h-8 w-8 place-items-center rounded-full text-sand-400 hover:bg-ink-800 hover:text-sand-50" onClick=${onClose} aria-label="关闭"><${X} size=${17} /></button>
       </header>
       <div class="scroll-thin flex-1 space-y-3 overflow-y-auto p-4">
-        <div class="rounded-2xl border border-ink-700 bg-ink-850/60 p-3">
-          <div class="mb-2 text-xs font-medium text-sand-300">上传本机歌单到云端</div>
-          <div class="flex gap-2">
-            <select aria-label="要同步的本机歌单" class="min-w-0 flex-1 rounded-xl border border-ink-700 bg-ink-850 px-3 py-2 text-sm outline-none focus:border-sync" value=${selected} onChange=${e => setSelected(e.target.value)}>
-              <option value="">选择本机歌单…</option>
-              ${mine.map(p => html`<option key=${p.id} value=${p.id}>${p.name}（${p.trackIds.length} 首）</option>`)}
-            </select>
-            <button class=${cx(ghost, 'shrink-0 border-sync/50 text-sync hover:border-sync hover:text-sync')} disabled=${!!busy || !selected} onClick=${() => run('publish', publish)}>
-              ${busy === 'publish' ? html`<${Loader2} size=${14} class="animate-spin" />` : html`<${Upload} size=${14} />`} 上传
-            </button>
-          </div>
+        <div class="flex items-center gap-3 rounded-2xl border border-ink-700 bg-ink-850/60 px-4 py-3">
+          <span class=${cx('grid h-8 w-8 shrink-0 place-items-center rounded-full', status?.state === 'error' ? 'bg-guest/15 text-guest' : 'bg-sync/15 text-sync')}>
+            ${syncing ? html`<${Loader2} size=${15} class="animate-spin" />` : status?.state === 'error' ? html`<${AlertTriangle} size=${15} />` : html`<${Check} size=${15} />`}
+          </span>
+          <span class="min-w-0 flex-1 text-sm">
+            <span class="block font-medium">${syncing ? '正在同步…' : status?.state === 'error' ? '同步失败' : status?.at ? '已同步' : '等待同步'}</span>
+            <span class="block truncate text-xs text-sand-500">${status?.state === 'error' ? status.error : when ? `上次同步 ${when} · 修改后自动同步` : '修改歌单后会自动同步'}</span>
+          </span>
+          <button class=${cx(ghost, 'shrink-0')} disabled=${syncing} onClick=${onSync}><${RefreshCw} size=${14} class=${syncing ? 'animate-spin' : ''} /> 立即同步</button>
         </div>
-        ${status && html`<${Alert} tone=${status.tone}>${status.text}<//>`}
-        ${progress && html`<div role="status" class="space-y-1.5 rounded-xl bg-black/20 px-3 py-2.5 text-xs text-sand-300">
-          <div class="flex gap-2"><${Loader2} size=${13} class="mt-0.5 shrink-0 animate-spin" /><span class="min-w-0 flex-1 truncate">正在缓存 ${progress.done + 1}/${progress.total}：${progress.title}</span></div>
-          <div class="h-1 overflow-hidden rounded-full bg-ink-700"><div class="h-full rounded-full bg-sync transition-all" style=${{ width: `${(progress.done / progress.total) * 100}%` }} /></div>
-        </div>`}
-        ${busy === 'refresh' && !cloud.length
-          ? html`<div class="flex items-center justify-center gap-2 py-10 text-sm text-sand-400"><${Loader2} size=${16} class="animate-spin" /> 正在拉取云端歌单…</div>`
-          : !cloud.length
-          ? html`<div class="py-10 text-center text-sm text-sand-500"><${Cloud} size=${28} class="mx-auto mb-2 text-sand-600" />云端还没有歌单<div class="mt-1 text-xs">从上方选择一个本机歌单上传，其他设备登录后就能看到</div></div>`
-          : cloud.map(p => {
-            const missing = p.tracks.map((t, i) => (cached(t) ? -1 : i)).filter(i => i >= 0);
-            return html`<details key=${p.id} class="group rounded-2xl border border-ink-700 bg-ink-850/60">
-              <summary class="flex cursor-pointer list-none items-center gap-3 px-3 py-3">
-                <span class="min-w-0 flex-1"><span class="block truncate text-sm font-medium">${p.name}</span>
-                  <span class="text-xs text-sand-500 tabular">${p.tracks.length} 首 · 本机已缓存 ${p.tracks.length - missing.length}</span></span>
-                <button class=${cx(ghost, 'shrink-0')} disabled=${!!busy || !missing.length} onClick=${e => { e.preventDefault(); run(`cache:${p.id}`, () => cache(p, missing)); }}>
-                  ${busy === `cache:${p.id}` ? html`<${Loader2} size=${14} class="animate-spin" />` : missing.length ? html`<${CloudDownload} size=${14} />` : html`<${Check} size=${14} />`} ${missing.length ? '缓存全部' : '已全部缓存'}
-                </button>
-              </summary>
-              <div class="border-t border-ink-700/70 px-3 pb-2">
-                ${p.tracks.map((t, i) => {
-                  const err = failures[`${p.id}:${i}`], have = cached(t);
-                  return html`<div key=${i} class="border-b border-ink-700/50 py-2.5 last:border-0">
-                    <div class="flex items-center gap-3">
-                      <span class="min-w-0 flex-1"><span class="block truncate text-sm">${t.title || '未命名'}</span><span class="block truncate text-xs text-sand-500">${t.artist || '未知歌手'}</span></span>
-                      ${have
-                        ? html`<span class="inline-flex shrink-0 items-center gap-1 rounded-full bg-sync/10 px-2 py-1 text-[11px] text-sync"><${Check} size=${11} /> 已缓存</span>`
-                        : html`<button class=${cx(ghost, 'shrink-0')} disabled=${!!busy} onClick=${() => run(`cache:${p.id}`, () => cache(p, [i]))}><${CloudDownload} size=${14} /> 下载</button>`}
-                    </div>
-                    ${err && html`<div class="mt-2"><${Alert}>${err}<//></div>`}
-                    ${!have && html`<details class="mt-1" open=${err === SOURCE_EXPIRED || undefined}>
-                      <summary class="cursor-pointer list-none text-[11px] text-sand-500 hover:text-sand-200">替换音源…</summary>
-                      <form class="mt-2 flex gap-2" onSubmit=${e => { e.preventDefault(); const source = new FormData(e.currentTarget).get('source'); run(`cache:${p.id}`, () => replaceSource(p, i, source)); }}>
-                        <input name="source" aria-label=${`替换 ${t.title} 的音源链接`} class="min-w-0 flex-1 rounded-lg border border-ink-700 bg-ink-850 px-3 py-2 text-xs outline-none placeholder:text-sand-500 focus:border-sync" type="url" placeholder="粘贴重新搜到的 B 站 / YouTube 链接" required />
-                        <button class=${cx(ghost, 'shrink-0')} disabled=${!!busy}>验证并替换</button>
-                      </form>
-                    </details>`}
-                  </div>`;
-                })}
-                <button class="mt-1 inline-flex items-center gap-1 py-1.5 text-[11px] text-sand-500 hover:text-guest disabled:opacity-40" disabled=${!!busy} onClick=${() => run('remove', () => removeCloud(p))}><${Trash2} size=${12} /> 从云端移除</button>
-              </div>
-            </details>`;
+        <p class="px-1 text-xs leading-relaxed text-sand-500">只同步歌单和歌曲信息，不上传音频。其他设备加入的歌会显示为「未下载」，需要时下载到这台设备即可；在这台设备删除文件不会影响歌单。</p>
+        <div class="space-y-2">
+          ${list.map((p) => {
+            const n = p.pending?.length || 0;
+            return html`<div key=${p.id} class="flex items-center gap-3 rounded-2xl border border-ink-700 bg-ink-850/60 px-3 py-2.5">
+              <button class="min-w-0 flex-1 text-left" onClick=${() => onOpen(p.id)} title="打开这个歌单">
+                <span class="block truncate text-sm font-medium">${p.name}</span>
+                <span class="text-xs text-sand-500 tabular">${p.trackIds.length + n} 首${n ? ` · ${n} 首未下载` : ' · 已全部在本机'}</span>
+              </button>
+              ${n ? html`<button class=${cx(ghost, 'shrink-0 border-sync/50 text-sync hover:border-sync hover:text-sync')} onClick=${() => onDownload(p.id)}><${CloudDownload} size=${14} /> 下载 ${n} 首</button>`
+                : html`<${Check} size=${16} class="mr-1 shrink-0 text-sync" />`}
+            </div>`;
           })}
+        </div>
+        ${missing > 0 && html`<p class="px-1 text-[11px] text-sand-500">共 ${missing} 首未下载。打开歌单可以逐首下载或移除。</p>`}
       </div>
     </section>
   </div>`;
