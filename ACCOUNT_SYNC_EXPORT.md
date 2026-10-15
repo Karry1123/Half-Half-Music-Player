@@ -33,6 +33,29 @@ Web token 存 localStorage，Android 存 Capacitor Preferences，按后端地址
 | libraries | user_id PK/FK、revision、metadata、updated_at | 每账号歌单元数据 JSON 和乐观并发版本 |
 | peer_tickets | token_hash PK、user_id FK、room、expires_at | 绑定房间的两分钟 P2P 准入凭据，不向对端暴露账号 token |
 | download_grants | (user_id, track_id) PK | 下载任务、文件、事件列表的账号隔离 |
+| friendships | requester、addressee、status、时间戳 | SQLite / PostgreSQL 好友请求与已接受关系 |
+| turn_quota_state | id PK、state | 账号数据库中的月度 TURN 配额告警与停发状态 |
+
+## 好友邀请、自建信令与下载配置
+
+好友入口支持昵称 / 用户 ID 搜索、请求、接受 / 拒绝及删除。仅已接受好友可接收在线状态和一起听邀请；接受后由后端分配会话 / Peer ID 自动连接。最近一起听历史保存在设备本地，房间码继续作为备用入口。
+
+构建时 `MUSIC_API_URL` 指向后端；PeerJS 自建路径 `/peerjs` 与好友 `/ws` 都需要代理支持 WebSocket upgrade，两者均需设置 `ENABLE_SIGNALING=1`。账号模式握手复用已激活会话校验，旧部署仅在 `AUTH_MODE=legacy` 时使用 `API_TOKEN`。
+
+运行时 `HH_CONFIG.peerUrl` 可覆盖 PeerJS 基础地址，默认使用 `HH_CONFIG.apiBase` 对应的实际 API 地址；`HH_CONFIG.peerPath` 可覆盖路径，默认基础地址路径加 `/peerjs`。好友信令用 `HH_CONFIG.signalUrl`，未设置则使用 API 地址加 `/ws` 并转换为相应的 `ws:` / `wss:`。
+
+新增部署变量（详细说明也见两份 README）：
+
+- 短期凭据：`CLOUDFLARE_TURN_KEY_ID`、`CLOUDFLARE_TURN_API_TOKEN`。
+- 配额查询：`CLOUDFLARE_ACCOUNT_ID`、`CLOUDFLARE_ANALYTICS_TOKEN`；缺任一值则停用监控。每小时查询 UTC 本月出站流量；`TURN_QUOTA_GB=1000`（十进制 GB），`TURN_QUOTA_WARN_PERCENT=50`，`TURN_QUOTA_KILL_PERCENT=90`。告警及自动停发状态按 UTC 月持久化，服务重启后仍生效，次月重置；`IS_TURN_ENABLED=false` 可手动停发 Cloudflare 凭据，需自行更改后才恢复。监控器不改写环境变量或 `.env`。已发凭据不会被即时撤销。
+- 状态持久化：账号模式用 `turn_quota_state` 数据表；旧模式 `TURN_QUOTA_STATE_FILE` 默认 `music-service/data/turn-quota.json`。
+- 邮件：`SMTP_HOST`、`SMTP_PORT`（默认 `587`）、`SMTP_USER`、`SMTP_PASS`、`SMTP_FROM`、`ALERT_EMAIL_TO`；投递必需主机、发件人与收件人，用户名/密码为可选认证；`465` 端口启用 TLS。未配投递信息仅日志提示，每月各阈值一次。
+- yt-dlp 工具：`YTDLP_PATH` 可指定可执行文件路径；`YTDLP_JS_RUNTIMES` 是逗号分隔的 JS 运行时（如 `node`）；`YTDLP_SEARCH_TIMEOUT` 默认 `15000` 毫秒。YouTube 代理按 `PROXY_URL`、`YT_PROXY`、`YTDLP_PROXY`、`HTTPS_PROXY`、`HTTP_PROXY` 顺序取首个已配置值。
+- YouTube Cookie：`YTDLP_COOKIES` 优先于旧 `YT_COOKIE_PATH`，默认发现 `music-service/cookies/youtube.txt`，相对路径以 music-service 为基准，禁止提交 Cookie。
+- 防连续请求：`YTDLP_MIN_INTERVAL_MS=1500`、`YTDLP_BACKOFF_MS=4000`，均附随机延迟；`YTDLP_PLAYER_CLIENTS=default;web_safari,mweb` 为分号分隔的重试策略（最多三组）。解析 / 下载共用串行队列，成功元数据缓存 5 分钟，下载文件复用曲库。
+- 可选 `YTDLP_PO_TOKEN`（`CLIENT.CONTEXT+TOKEN` 格式）或 `YTDLP_PO_TOKEN_PROVIDER_URL`（bgutil HTTP 地址，需另装兼容插件）。参考 [yt-dlp](https://github.com/yt-dlp/yt-dlp/wiki/PO-Token-Guide) 和 [bgutil](https://github.com/Brainicism/bgutil-ytdlp-pot-provider)。
+
+YouTube 身份验证失败先换客户端重试，再尝试已有搜索结果中歌名、歌手、版本和时长匹配的 B 站音源；仍无法下载则返回 `YOUTUBE_BOT_CHECK` 及中文提示，不将错误页面当作下载成功。
 
 `libraries.metadata` 格式：`[{id,name,tracks:[{id,title,artist,sourceId,pageUrl,hash,duration}]}]`。平台源 ID 和原始页面地址用于重新解析 CDN 地址；不保存二进制、账号凭据或过期签名下载 URL。每账号最多 200 个歌单、10000 曲目，HTTP body 上限 2 MB。写入必须携带上次拉取的 revision，过期返回 409，不覆盖其他设备的改动。
 

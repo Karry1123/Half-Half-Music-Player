@@ -5,6 +5,9 @@ dist/
 .env
 music-service/.env
 music-service/cookies/
+cookies/
+**/cookies.txt
+**/*cookies*.txt
 music-service/.cache/
 music-service/downloads/
 music-service/.venv/
@@ -36,3 +39,6 @@ music-service/data/
 *.sqlite
 *.sqlite-wal
 *.sqlite-shm
+
+# Local npm cache used for dependency checks
+.npm-cache/

@@ -1,5 +1,6 @@
 import express from 'express';
 import path from 'node:path';
+import { createServer } from 'node:http';
 import { config } from './config.js';
 import { DownloadManager } from './downloads.js';
 import { cors, rateLimit, requireToken } from './lib/guard.js';
@@ -13,6 +14,8 @@ import { parseTrackId, providers, timeoutFor } from './providers/index.js';
 import { makeTrack } from './providers/track.js';
 import { aggregateSearch, trackCache } from './search.js';
 import { Accounts, mountAccounts } from './accounts.js';
+import { createAuthenticatedPeerWebSocket } from '../../server/peerAuth.js';
+import { TurnQuotaGuard, databaseQuotaStore, fileQuotaStore, setTurnQuotaGuard } from '../../server/turnQuota.js';
 
 const FORMATS = ['mp3', 'm4a', 'flac', 'best', 'original'];
 const QUALITY_RE = /^[\w-]{1,20}$/; // B 站音轨 id（30280）或 YouTube format_id（251 / 140-drc）
@@ -23,6 +26,7 @@ const downloads = new DownloadManager();
 await downloads.init();
 
 const app = express();
+const server = createServer(app);
 app.disable('x-powered-by');
 app.set('trust proxy', 1); // Render / Vercel 等前面有一层反向代理：限流按真实客户端 IP
 app.use(express.json({ limit: '2mb' }));
@@ -31,6 +35,34 @@ app.use(cors);
 const accounts = process.env.AUTH_MODE === 'legacy' ? null : await Accounts.open({ root: config.root });
 if (accounts) console.log(`账号数据库: ${accounts.db.dialect === 'postgres' ? 'PostgreSQL（DATABASE_URL）' : 'SQLite'}`);
 const accountGuard = accounts ? mountAccounts(app, accounts, rateLimit({ perMinute: 15, name: 'account' })) : null;
+let quotaGuard;
+let mailer;
+try {
+  if (process.env.SMTP_HOST && process.env.SMTP_FROM && process.env.ALERT_EMAIL_TO) {
+    const { default: nodemailer } = await import('nodemailer');
+    const port = Number(process.env.SMTP_PORT) || 587;
+    mailer = nodemailer.createTransport({ host: process.env.SMTP_HOST, port, secure: port === 465,
+      auth: process.env.SMTP_USER ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS } : undefined,
+      connectionTimeout: 10000, socketTimeout: 15000 });
+  }
+} catch (e) { console.error('[turn-quota] SMTP unavailable; alerts will be logged:', e.message); }
+try {
+  const store = accounts ? await databaseQuotaStore(accounts.db) : fileQuotaStore(process.env.TURN_QUOTA_STATE_FILE || path.join(config.root, 'data', 'turn-quota.json'));
+  quotaGuard = await new TurnQuotaGuard({ store, mailer }).init();
+  setTurnQuotaGuard(quotaGuard);
+  quotaGuard.start();
+  server.once('close', () => quotaGuard.stop());
+} catch (e) {
+  console.error('[turn-quota] Initialization failed; Cloudflare credentials paused:', e.message);
+  setTurnQuotaGuard({ enabled: () => false });
+}
+if (config.signaling) {
+  const { ExpressPeerServer } = await import('peer');
+  const peerServer = ExpressPeerServer(server, { path: '/', proxied: true, allow_discovery: false,
+    createWebSocketServer: options => createAuthenticatedPeerWebSocket(options, { accounts }) });
+  peerServer.on('error', e => console.error('[peerjs]', e.message));
+  app.use('/peerjs', peerServer);
+}
 if (accounts) setInterval(() => cleanTemporaryDownloads().catch(e => console.error('Temporary cache cleanup:', e.message)), 60000).unref();
 if (!accounts) app.get('/auth/config', (_req, res) => res.json({ required: false }));
 
@@ -220,7 +252,7 @@ if (config.host !== '127.0.0.1' && config.host !== 'localhost' && !config.apiTok
   console.warn('⚠ 正在监听公网 / 局域网地址但没有设置 API_TOKEN：任何人都能让这台机器替他下载文件。请设置 API_TOKEN');
 }
 
-const server = app.listen(config.port, config.host, async () => {
+server.listen(config.port, config.host, async () => {
   const [ytdlp, ffmpeg] = await Promise.all([detectYtdlp(), detectFfmpeg()]);
   console.log(`Half&Half music-service: http://${config.host}:${config.port}`);
   if (config.corsOrigins.length) console.log(`  CORS:     ${config.corsOrigins.join(', ')}`);
@@ -238,5 +270,5 @@ const server = app.listen(config.port, config.host, async () => {
 // Vite 主应用的 WebRTC 信令（/ws）：静态托管没有后端，信令跟音乐服务部署在一起
 if (config.signaling) {
   const { attachSignaling } = await import('../../server/signaling.js');
-  attachSignaling(server, '/ws', accounts ? (token) => accounts.user(token, true) : null);
+  attachSignaling(server, '/ws', accounts ? (token) => accounts.user(token, true) : null, accounts);
 }

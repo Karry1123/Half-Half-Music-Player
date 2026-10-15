@@ -39,3 +39,33 @@ export function proxyMusic(req, res) {
   req.on('close', () => upstream.destroy()); // 浏览器关闭 SSE 时断开上游
   req.pipe(upstream);
 }
+
+/** Forward the dashboard's backend sockets alongside its HTTP API requests. */
+export function attachMusicUpgrade(server, backend = MUSIC_SERVICE_URL) {
+  server.on('upgrade', (req, socket, head) => {
+    const pathname = new URL(req.url, 'http://localhost').pathname;
+    if (!pathname.startsWith('/music-api/')) return;
+    if (!isLoopback(req)) { socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n'); return; }
+    const target = new URL(req.url.replace(/^\/music-api/, ''), backend);
+    const upstream = http.request(target, { headers: { ...req.headers, host: target.host } });
+    const fail = () => { upstream.destroy(); socket.destroy(); };
+    socket.on('error', fail);
+    upstream.on('error', fail);
+    socket.on('close', () => upstream.destroy());
+    upstream.on('response', response => {
+      socket.end(`HTTP/1.1 ${response.statusCode} Rejected\r\nConnection: close\r\n\r\n`);
+      response.resume();
+    });
+    upstream.on('upgrade', (response, remote, remoteHead) => {
+      socket.write(`HTTP/1.1 ${response.statusCode} ${response.statusMessage}\r\n`);
+      for (let i = 0; i < response.rawHeaders.length; i += 2) socket.write(`${response.rawHeaders[i]}: ${response.rawHeaders[i + 1]}\r\n`);
+      socket.write('\r\n');
+      if (remoteHead.length) socket.write(remoteHead);
+      if (head.length) remote.write(head);
+      remote.on('error', () => socket.destroy());
+      socket.on('close', () => remote.destroy());
+      remote.pipe(socket); socket.pipe(remote);
+    });
+    upstream.end();
+  });
+}

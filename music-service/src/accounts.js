@@ -17,6 +17,7 @@ const SCHEMA = [
   'CREATE TABLE IF NOT EXISTS download_grants(user_id TEXT NOT NULL REFERENCES users(id), track_id TEXT NOT NULL, PRIMARY KEY(user_id, track_id))',
   // Display name shared by every device signed in to the account.
   'CREATE TABLE IF NOT EXISTS profiles(user_id TEXT PRIMARY KEY REFERENCES users(id), nickname TEXT NOT NULL, updated_at BIGINT NOT NULL)',
+  "CREATE TABLE IF NOT EXISTS friendships(requester TEXT NOT NULL REFERENCES users(id), addressee TEXT NOT NULL REFERENCES users(id), status TEXT NOT NULL CHECK(status IN ('pending','accepted')), created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL, pair_key TEXT UNIQUE NOT NULL, PRIMARY KEY(requester,addressee), CHECK(requester<>addressee))",
 ];
 
 /**
@@ -202,6 +203,37 @@ export class Accounts {
     await this.db.run('INSERT INTO profiles VALUES($1,$2,$3) ON CONFLICT(user_id) DO UPDATE SET nickname=excluded.nickname, updated_at=excluded.updated_at', [userId, name, Date.now()]);
     return { nickname: name };
   }
+  async searchUsers(userId, query) {
+    const q = String(query || '').trim().slice(0, 80);
+    if (!q) return [];
+    return this.db.all("SELECT u.id, COALESCE(p.nickname,u.username) AS nickname FROM users u LEFT JOIN profiles p ON p.user_id=u.id WHERE u.id<>$1 AND u.activated=1 AND (u.id=$2 OR LOWER(COALESCE(p.nickname,u.username)) LIKE $3 ESCAPE '!') ORDER BY u.id LIMIT 25", [userId, q, '%' + q.toLowerCase().replace(/[!%_]/g, c => '!' + c) + '%']);
+  }
+  async friends(userId) {
+    return this.db.all('SELECT f.requester, f.addressee, f.status, f.created_at, f.updated_at, u.id, COALESCE(p.nickname,u.username) AS nickname FROM friendships f JOIN users u ON u.id=CASE WHEN f.requester=$1 THEN f.addressee ELSE f.requester END LEFT JOIN profiles p ON p.user_id=u.id WHERE f.requester=$1 OR f.addressee=$1 ORDER BY f.updated_at DESC', [userId]);
+  }
+  async areFriends(a, b) {
+    return !!await this.one("SELECT 1 AS ok FROM friendships WHERE pair_key=$1 AND status='accepted'", [[a, b].sort().join(':')]);
+  }
+  async requestFriend(userId, otherId) {
+    if (typeof otherId !== 'string' || otherId === userId) fail(400, 'INPUT', '请选择其他用户');
+    const other = await this.one('SELECT id FROM users WHERE id=$1 AND activated=1', [otherId]);
+    if (!other) fail(404, 'NOT_FOUND', '用户不存在');
+    const now = Date.now();
+    const changed = await this.db.run("INSERT INTO friendships VALUES($1,$2,'pending',$3,$3,$4) ON CONFLICT(pair_key) DO NOTHING", [userId, otherId, now, [userId, otherId].sort().join(':')]);
+    if (!changed) fail(409, 'FRIEND_EXISTS', '已是好友或已有待处理申请');
+    return { ok: true };
+  }
+  async respondFriend(userId, requester, accept) {
+    const changed = accept
+      ? await this.db.run("UPDATE friendships SET status='accepted',updated_at=$1 WHERE requester=$2 AND addressee=$3 AND status='pending'", [Date.now(), requester, userId])
+      : await this.db.run("DELETE FROM friendships WHERE requester=$1 AND addressee=$2 AND status='pending'", [requester, userId]);
+    if (!changed) fail(404, 'NOT_FOUND', '好友申请不存在');
+    return { ok: true };
+  }
+  async removeFriend(userId, otherId) {
+    await this.db.run('DELETE FROM friendships WHERE pair_key=$1', [[userId, String(otherId)].sort().join(':')]);
+    return { ok: true };
+  }
   async ticket(userId, room) {
     if (!/^\d{6}$/.test(room)) fail(400, 'INPUT', '无效房间码');
     await this.db.run('DELETE FROM peer_tickets WHERE expires_at<$1', [Date.now()]);
@@ -259,6 +291,12 @@ export function mountAccounts(app, accounts, limiter) {
   app.put('/account/library', route(async req => accounts.saveLibrary(await active(req), req.body?.revision, req.body?.playlists)));
   app.get('/account/profile', route(async req => accounts.profile(await active(req))));
   app.put('/account/profile', route(async req => accounts.saveProfile(await active(req), req.body?.nickname)));
+  app.get('/account/users', limiter, route(async req => accounts.searchUsers(await active(req), req.query.q)));
+  app.get('/account/friends', route(async req => accounts.friends(await active(req))));
+  app.post('/account/friends', limiter, route(async req => accounts.requestFriend(await active(req), req.body?.userId)));
+  app.post('/account/friends/:id/accept', route(async req => accounts.respondFriend(await active(req), req.params.id, true)));
+  app.post('/account/friends/:id/decline', route(async req => accounts.respondFriend(await active(req), req.params.id, false)));
+  app.delete('/account/friends/:id', route(async req => accounts.removeFriend(await active(req), req.params.id)));
   app.post('/account/peer-ticket', limiter, route(async req => accounts.ticket(await active(req), String(req.body?.room))));
   app.post('/account/verify-peer', limiter, route(async req => { await active(req); return accounts.verifyTicket(req.body?.ticket, String(req.body?.room)); }));
   return async (req, res, next) => {

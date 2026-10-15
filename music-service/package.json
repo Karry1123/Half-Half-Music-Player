@@ -15,7 +15,9 @@
   },
   "dependencies": {
     "express": "^5.1.0",
+    "nodemailer": "^10.1.1",
     "opencc-js": "^1.0.5",
+    "peer": "^1.0.2",
     "pg": "^8.23.1",
     "undici": "^7.30.0"
   },

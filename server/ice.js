@@ -20,6 +20,7 @@ import { createHmac } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { cloudflareTurnEnabled } from './turnQuota.js';
 
 // 项目根目录的 .env（可选）。已有的环境变量优先
 const envFile = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '.env');
@@ -45,7 +46,8 @@ export function turnRestCredential(secret, ttl = CRED_TTL, id = 'halfhalf') {
 
 // ───────────────────────────── 需要调 API 的 TURN（Metered / Cloudflare），缓存 + 后台刷新
 
-const dynamic = { servers: [], expiresAt: 0, refreshing: null, error: null };
+const dynamic = { servers: [], cloudflare: [], expiresAt: 0, refreshing: null, error: null };
+const dynamicServers = () => [...(cloudflareTurnEnabled() ? dynamic.cloudflare : []), ...dynamic.servers];
 
 async function fetchMetered(env) {
   const r = await fetch(`https://${env.METERED_DOMAIN.replace(/^https?:\/\//, '').replace(/\/.*$/, '')}/api/v1/turn/credentials?apiKey=${encodeURIComponent(env.METERED_API_KEY)}`, {
@@ -76,21 +78,20 @@ async function fetchCloudflare(env) {
 /** 刷新 Metered / Cloudflare 凭证；失败时保留上一次的结果 */
 export function refreshDynamicTurn(env = process.env) {
   const wantMetered = env.METERED_DOMAIN && env.METERED_API_KEY;
-  const wantCf = env.CLOUDFLARE_TURN_KEY_ID && env.CLOUDFLARE_TURN_API_TOKEN;
-  if (!wantMetered && !wantCf) return Promise.resolve(dynamic.servers);
-  if (Date.now() < dynamic.expiresAt - 3600_000) return Promise.resolve(dynamic.servers); // 过期前 1 小时刷新
+  const wantCf = cloudflareTurnEnabled() && env.CLOUDFLARE_TURN_KEY_ID && env.CLOUDFLARE_TURN_API_TOKEN;
+  if (!wantMetered && !wantCf) return Promise.resolve(dynamicServers());
+  if (Date.now() < dynamic.expiresAt - 3600_000) return Promise.resolve(dynamicServers()); // 过期前 1 小时刷新
   dynamic.refreshing ??= (async () => {
-    const jobs = [wantMetered && fetchMetered(env), wantCf && fetchCloudflare(env)].filter(Boolean);
+    const jobs = [wantMetered && fetchMetered(env).then(servers => { dynamic.servers = servers; return servers; }), wantCf && fetchCloudflare(env).then(servers => { dynamic.cloudflare = servers; return servers; })].filter(Boolean);
     const results = await Promise.allSettled(jobs);
     const ok = results.filter((r) => r.status === 'fulfilled').flatMap((r) => r.value);
     const errors = results.filter((r) => r.status === 'rejected').map((r) => r.reason.message);
     if (errors.length) console.warn(`[ice] TURN 凭证获取失败：${errors.join('；')}`);
     if (ok.length) {
-      dynamic.servers = ok;
       dynamic.expiresAt = Date.now() + CRED_TTL * 1000;
     } else dynamic.expiresAt = Date.now() + 3600_000 + 60_000; // 全部失败：1 分钟后再试
     dynamic.error = errors[0] || null;
-    return dynamic.servers;
+    return dynamicServers();
   })().finally(() => (dynamic.refreshing = null));
   return dynamic.refreshing;
 }
@@ -116,7 +117,7 @@ export function iceConfig(env = process.env) {
     else turn.push({ urls, username: env.TURN_USER, credential: env.TURN_PASS });
   }
   refreshDynamicTurn(env).catch(() => {});
-  return [...base, ...turn, ...dynamic.servers];
+  return [...dynamicServers(), ...base, ...turn];
 }
 
 export async function iceConfigAsync(env = process.env) {

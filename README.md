@@ -24,7 +24,7 @@ For step-by-step testing, the debug panel (`?debug=1`), weak-network simulation 
 
 ### Single-file dashboard (`public/dashboard.html`)
 
-An all-in-one page that needs no build step (React 18 + Tailwind + Lucide + PeerJS, all loaded from CDNs). Four modules share one screen: connection status bar / aggregated search and download / local library and queue / a persistent sync player at the bottom.
+A React 18 + Tailwind + Lucide + PeerJS dashboard with four bottom tabs and a persistent mini player. Production builds bundle the dependencies locally; opening the source page directly still uses its development CDN imports.
 
 It opens on the **lobby** with three entries:
 
@@ -47,7 +47,7 @@ You can browse songs while waiting for your partner; once they join, both of you
 
 - After `npm run dev:all`, open `http://localhost:8080/dashboard.html`: it connects to music-service automatically.
 - Double-click the file or use any static server: demo mode (mock search; "download" synthesizes a playable demo clip).
-- Duo pairing uses the public PeerJS signaling server (`?room=ROOMCODE` joins as Guest automatically). Use `?peerHost=&peerPort=` to point at your own PeerServer.
+- Duo pairing uses the backend's authenticated PeerJS server (`?room=ROOMCODE` joins as Guest automatically). Optional `?peerHost=&peerPort=&peerPath=` overrides support another self-hosted server.
 - Phones and other non-Host devices cannot reach music-service (it only listens for the Host computer itself), so they enter "search via Host" mode: after joining a room, search / download requests go over P2P to the Host computer, the downloaded songs land in the Host's library and are synced to both sides.
 - **On-device offline library** ([`public/libraryStorage.js`](public/libraryStorage.js), IndexedDB, dependency-free, importable from any framework):
   - Downloaded songs (audio + cover + metadata) are stored in the browser and the playlist is restored when the page opens. Audio is loaded lazily, never all into memory at once.
@@ -194,6 +194,33 @@ On every launch the app requests `https://api.github.com/repos/<owner>/<repo>/re
 - "Export to file" may not work inside the Android WebView (limited `a[download]` support for blobs).
 - There is no in-app auto-update; download new versions from GitHub Releases.
 - The workflow and the Android project have not been fully built on the author's machine (no Android SDK installed); check the Actions log the first time you push a tag.
+
+## Dashboard, friends and service configuration
+
+The dashboard has four bottom tabs (discover/search, library/playlists, friends/activity, settings/account), a mini player and an expandable player drawer. Friends can search by nickname or user ID, accept requests and invite each other to listen without exchanging room codes; room codes remain available. Presence is shared with accepted friends, and recent listening history stays on the device. Playback progress is refreshed from the audio element when the app returns to the foreground.
+
+Set `MUSIC_API_URL` when building the frontend; set `ENABLE_SIGNALING=1` on the backend to host authenticated PeerJS at `/peerjs` and friends signaling at `/ws`. Account mode requires a valid activated session; `AUTH_MODE=legacy` retains `API_TOKEN` authentication. Reverse proxies must forward WebSocket upgrades on both paths. No public PeerJS cloud endpoint is required.
+
+Runtime `HH_CONFIG.peerUrl` optionally overrides the PeerJS backend base URL (defaults to the effective API base from `HH_CONFIG.apiBase`); `HH_CONFIG.peerPath` overrides the path (defaults to that base URL's path plus `/peerjs`). `HH_CONFIG.signalUrl` optionally supplies the friends WebSocket URL; otherwise it uses the API base plus `/ws` with `ws:` / `wss:` matching the backend protocol.
+
+| Environment variable | Purpose / default |
+|---|---|
+| `CLOUDFLARE_TURN_KEY_ID`, `CLOUDFLARE_TURN_API_TOKEN` | Server-only credentials for short-lived Cloudflare TURN credentials |
+| `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_ANALYTICS_TOKEN` | Enable hourly current-month TURN egress analytics; missing values disable quota monitoring gracefully |
+| `TURN_QUOTA_GB` | Monthly allowance in decimal GB; default `1000` |
+| `TURN_QUOTA_WARN_PERCENT`, `TURN_QUOTA_KILL_PERCENT` | Warning / stop-issuance thresholds; default `50` / `90` |
+| `IS_TURN_ENABLED` | Set `false` to stop Cloudflare credential issuance manually |
+| `TURN_QUOTA_STATE_FILE` | Legacy-mode state file; default `music-service/data/turn-quota.json`; account mode uses DB table `turn_quota_state` |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`, `ALERT_EMAIL_TO` | Nodemailer alerts require host, from and recipient; user/password are optional SMTP authentication. Port defaults to `587` (`465` enables TLS); absent delivery settings log alerts instead |
+| `YTDLP_PATH`, `YTDLP_JS_RUNTIMES`, `YTDLP_SEARCH_TIMEOUT` | Optional yt-dlp executable path, comma-separated JS runtimes (e.g. `node`) and search timeout (default `15000` ms) |
+| `PROXY_URL`, `YT_PROXY`, `YTDLP_PROXY`, `HTTPS_PROXY`, `HTTP_PROXY` | YouTube proxy aliases, in precedence order |
+| `YTDLP_COOKIES` | Optional Netscape cookie file; takes precedence over `YT_COOKIE_PATH`, then `music-service/cookies/youtube.txt` |
+| `YTDLP_MIN_INTERVAL_MS`, `YTDLP_BACKOFF_MS` | YouTube process spacing / first retry backoff; defaults `1500` / `4000` ms, with jitter |
+| `YTDLP_PLAYER_CLIENTS` | Semicolon-separated retry strategies, max three; default `default;web_safari,mweb` |
+| `YTDLP_PO_TOKEN` | Optional yt-dlp `CLIENT.CONTEXT+TOKEN` value(s) |
+| `YTDLP_PO_TOKEN_PROVIDER_URL` | Optional bgutil HTTP provider base URL; install the compatible yt-dlp provider plugin separately |
+
+Quota warnings and automatic shutdown state persist across server restarts for the current UTC month; each threshold alerts once per month. The automatic stop resets in the next UTC month, while an explicit `IS_TURN_ENABLED=false` remains in force until changed. The guard persists its state in the database/file; it does not rewrite your environment or `.env`. Disabling issuance does not revoke credentials already issued. YouTube extraction/downloads run in one queue; successful metadata is cached for five minutes and completed downloads reuse the library. Bot challenges retry another client and use a matching Bilibili recording already found by search if available; otherwise the API reports `YOUTUBE_BOT_CHECK` with Chinese guidance. Cookie files are secrets and must stay outside version control. Player client/token behavior follows the [yt-dlp PO token guide](https://github.com/yt-dlp/yt-dlp/wiki/PO-Token-Guide); provider setup follows [bgutil](https://github.com/Brainicism/bgutil-ytdlp-pot-provider).
 
 ## Architecture
 

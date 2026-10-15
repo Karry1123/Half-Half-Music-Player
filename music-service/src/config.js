@@ -36,7 +36,12 @@ export const config = {
     //   http://127.0.0.1:7890 · socks5://127.0.0.1:7890 · socks5h://user:pass@host:1080
     proxy: env.PROXY_URL || env.YT_PROXY || env.YTDLP_PROXY || env.HTTPS_PROXY || env.HTTP_PROXY || null,
     // 可选：YouTube 登录 Cookie（Netscape cookies.txt），出现 "Sign in to confirm you're not a bot" 时配置
-    cookieFile: file(env.YT_COOKIE_PATH),
+    cookieFile: file(env.YTDLP_COOKIES || env.YT_COOKIE_PATH) || (existsSync(path.join(root, 'cookies/youtube.txt')) ? path.join(root, 'cookies/youtube.txt') : null),
+    intervalMs: Math.max(0, Number(env.YTDLP_MIN_INTERVAL_MS) || 1500),
+    backoffMs: Math.max(0, Number(env.YTDLP_BACKOFF_MS) || 4000),
+    clients: (env.YTDLP_PLAYER_CLIENTS || 'default;web_safari,mweb').split(';').map(s => s.trim()).filter(Boolean).slice(0, 3),
+    poToken: env.YTDLP_PO_TOKEN || '',
+    poProvider: env.YTDLP_PO_TOKEN_PROVIDER_URL || '',
   },
 
   bilibili: {

@@ -44,6 +44,7 @@ export default defineConfig({
       '/music-api': {
         target: MUSIC_SERVICE_URL,
         changeOrigin: true,
+        ws: true,
         rewrite: (p) => p.replace(/^\/music-api/, ''),
       },
     },

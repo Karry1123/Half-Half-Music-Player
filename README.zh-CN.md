@@ -24,7 +24,7 @@ npm run nat-check      # STUN / NAT 自检
 
 ### 单文件版 Dashboard（`public/dashboard.html`）
 
-一个无需构建的 All-in-One 页面（React 18 + Tailwind + Lucide + PeerJS，全部走 CDN），四个模块同屏：连接状态条 / 聚合搜索与下载 / 本地曲库与队列 / 底部常驻同步播放器。
+React 18 + Tailwind + Lucide + PeerJS Dashboard，提供四个底部标签与常驻迷你播放器。生产构建将依赖打包到本地；直接打开源码页面仍使用开发用 CDN 导入。
 
 打开后先进入**主界面（Lobby）**，有三大入口：
 
@@ -47,7 +47,7 @@ npm run nat-check      # STUN / NAT 自检
 
 - `npm run dev:all` 后访问 `http://localhost:8080/dashboard.html`：自动对接 music-service
 - 直接双击打开或任意静态服务器：演示模式（mock 搜索，"下载"会合成一段可播放的演示音频）
-- 双人配对用 PeerJS 公共信令（`?room=房间码` 自动以 Guest 加入）；可用 `?peerHost=&peerPort=` 指向自建 PeerServer
+- 双人配对使用后端自建、带认证的 PeerJS 信令（`?room=房间码` 自动以 Guest 加入）；可用 `?peerHost=&peerPort=&peerPath=` 指向其他自建 PeerServer
 - 手机等非房主设备访问不到 music-service（只对房主电脑本机开放），会进入"经房主搜索"模式：加入房间后，搜索 / 下载请求经 P2P 交给房主电脑执行，下载的歌进入房主曲库并同步给双方
 - **本机离线曲库**（[`public/libraryStorage.js`](public/libraryStorage.js)，IndexedDB，无依赖，任何框架可直接 import）：
   - 下载的歌（音频 + 封面 + 元数据）自动存进浏览器，打开页面自动恢复歌单；音频懒加载，不会一次读进内存
@@ -263,6 +263,33 @@ Host 是唯一权威，播放状态 = 锚点 `{ trackId, playing, position, at }
 - Guest 拖动进度条 → Host 弹出"晚风 把进度拖到了 01:30"
 - 抽屉搜索"后来 刘若英" → 下载 B 站 JLRS-LeoFM 原版 → 自动以"劉若英 - 後來.m4a"加入播放列表并同步给 Guest
 - `vite build` 通过；375px 宽度无横向溢出
+
+## Dashboard 好友与新增环境变量
+
+Dashboard 底部提供「发现/检索、曲库/歌单、好友/动态、设置/账号」四个入口，迷你播放器可展开全屏并下滑收起。按昵称或用户 ID 查找好友，接受请求后可查看在线状态、发送一起听邀请；接受邀请自动连接，房间码仍可备用。最近一起听记录保存在本机。切歌、重播和回到前台时从音频元素读取进度与播放状态。
+
+构建前端设置 `MUSIC_API_URL`；后端设置 `ENABLE_SIGNALING=1` 同时启用自建 PeerJS `/peerjs` 与好友信令 `/ws`。反向代理需转发两条路径的 WebSocket upgrade。账号模式要求已激活的有效会话，`AUTH_MODE=legacy` 保留 `API_TOKEN` 规则，不再默认依赖公共 PeerJS 云服务。
+
+运行时可用 `HH_CONFIG.peerUrl` 覆盖 PeerJS 后端基础地址（默认使用 `HH_CONFIG.apiBase` 对应的实际 API 地址）；`HH_CONFIG.peerPath` 覆盖路径，默认是基础地址路径加 `/peerjs`。`HH_CONFIG.signalUrl` 可指定好友 WebSocket 地址，默认使用 API 地址加 `/ws`，并按后端协议转换为 `ws:` / `wss:`。
+
+| 环境变量 | 含义 / 默认值 |
+|---|---|
+| `CLOUDFLARE_TURN_KEY_ID`、`CLOUDFLARE_TURN_API_TOKEN` | 仅后端保存，用于签发短期 TURN 凭据 |
+| `CLOUDFLARE_ACCOUNT_ID`、`CLOUDFLARE_ANALYTICS_TOKEN` | 启用每小时本月 TURN 出站流量查询；未配置时配额监控平稳停用 |
+| `TURN_QUOTA_GB` | 每月十进制 GB 配额，默认 `1000` |
+| `TURN_QUOTA_WARN_PERCENT`、`TURN_QUOTA_KILL_PERCENT` | 警告 / 停发凭据百分比，默认 `50` / `90` |
+| `IS_TURN_ENABLED` | 设 `false` 手动停止 Cloudflare 凭据签发 |
+| `TURN_QUOTA_STATE_FILE` | 旧模式状态文件，默认 `music-service/data/turn-quota.json`；账号模式用 `turn_quota_state` 数据表 |
+| `SMTP_HOST`、`SMTP_PORT`、`SMTP_USER`、`SMTP_PASS`、`SMTP_FROM`、`ALERT_EMAIL_TO` | Nodemailer 告警需配置主机、发件人与收件人；用户名/密码为可选认证。端口默认 `587`（`465` 启用 TLS）；未配投递信息仅记录日志 |
+| `YTDLP_PATH`、`YTDLP_JS_RUNTIMES`、`YTDLP_SEARCH_TIMEOUT` | 可选 yt-dlp 可执行文件路径、逗号分隔的 JS 运行时（如 `node`）及搜索超时（默认 `15000` 毫秒） |
+| `PROXY_URL`、`YT_PROXY`、`YTDLP_PROXY`、`HTTPS_PROXY`、`HTTP_PROXY` | YouTube 代理地址，按列出顺序取首个已配置值 |
+| `YTDLP_COOKIES` | Netscape Cookie 文件路径，优先于 `YT_COOKIE_PATH`，再尝试 `music-service/cookies/youtube.txt` |
+| `YTDLP_MIN_INTERVAL_MS`、`YTDLP_BACKOFF_MS` | YouTube 串行任务间隔 / 首次重试退避，默认 `1500` / `4000` 毫秒，附随机延迟 |
+| `YTDLP_PLAYER_CLIENTS` | 分号分隔的重试策略，最多三组，默认 `default;web_safari,mweb` |
+| `YTDLP_PO_TOKEN` | 可选 `CLIENT.CONTEXT+TOKEN` 格式 PO Token |
+| `YTDLP_PO_TOKEN_PROVIDER_URL` | 可选 bgutil HTTP provider 地址，需另装兼容的 yt-dlp 插件 |
+
+告警与自动停发状态按 UTC 月持久化，服务重启后仍生效，每月各阈值告警一次。自动停发次月重置；手动设置的 `IS_TURN_ENABLED=false` 需自行更改后才恢复。监控器将状态写入数据库/文件，不改写环境变量或 `.env`。停发不会撤销已发出的凭据。YouTube 解析和下载共用串行队列，成功解析缓存 5 分钟，已下载音频复用曲库。身份验证错误会换客户端重试，再尝试搜索结果里匹配的 B 站录音；没有可用替代时返回 `YOUTUBE_BOT_CHECK` 中文提示。Cookie 不得提交。参考 [yt-dlp PO Token 指南](https://github.com/yt-dlp/yt-dlp/wiki/PO-Token-Guide)及 [bgutil 插件配置](https://github.com/Brainicism/bgutil-ytdlp-pot-provider)。
 
 ## 已知限制
 

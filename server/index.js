@@ -7,7 +7,7 @@ import { existsSync } from 'node:fs';
 import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { iceConfigAsync } from './ice.js'; // 先导入：它会加载项目根目录的 .env
-import { proxyMusic } from './musicProxy.js';
+import { proxyMusic, attachMusicUpgrade } from './musicProxy.js';
 import { attachSignaling } from './signaling.js';
 import { lanAddresses } from './turn.js';
 import { authorizeRequest } from './accountAccess.js';
@@ -58,6 +58,7 @@ const server = http.createServer(async (req, res) => {
 });
 
 attachSignaling(server);
+attachMusicUpgrade(server);
 
 server.listen(PORT, () => {
   console.log('Half&Half 已启动:');

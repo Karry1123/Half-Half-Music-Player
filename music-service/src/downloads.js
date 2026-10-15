@@ -25,6 +25,8 @@ import { classifyYtdlpError, detectFfmpeg, runFfmpeg, runYtdlp } from './lib/too
 import { downloadToFile } from './lib/transfer.js';
 import { addToLibrary, findInLibrary } from './library.js';
 import { parseTrackId } from './providers/index.js';
+import { trackCache } from './search.js';
+import { bilibiliAlternative } from './lib/youtube.js';
 
 const TMP_DIR = path.join(config.downloadDir, '.partial');
 const ACTIVE = ['queued', 'downloading', 'processing'];
@@ -146,7 +148,19 @@ export class DownloadManager extends EventEmitter {
       this._set(job, { status: 'downloading' }, true);
       const { provider, sourceId } = parseTrackId(track.id);
       const plan = await provider.resolve(sourceId, { quality: job.quality });
-      const result = plan.kind === 'direct' ? await this._directWithFallback(job, plan) : await this._ytdlp(job, plan);
+      let result;
+      try {
+        result = plan.kind === 'direct' ? await this._directWithFallback(job, plan) : await this._ytdlp(job, plan);
+      } catch (error) {
+        const fallback = error.code === 'YOUTUBE_BOT_CHECK' && bilibiliAlternative(track, trackCache.values());
+        if (!fallback) throw error;
+        const alternate = parseTrackId(fallback.id);
+        const alternatePlan = await alternate.provider.resolve(alternate.sourceId);
+        this._set(job, { note: 'YouTube 要求身份验证，已自动切换匹配的 B 站音源', bytes: 0, progress: 0 }, true);
+        result = alternatePlan.kind === 'direct' ? await this._directWithFallback(job, alternatePlan) : await this._ytdlp(job, alternatePlan);
+        result.note = 'YouTube 要求身份验证，已自动切换匹配的 B 站音源';
+        result.fallbackTrack = fallback;
+      }
       tmpPath = result.tmpPath;
 
       // 标题里已含歌手名（常见于视频标题）时不再重复拼接
@@ -177,10 +191,10 @@ export class DownloadManager extends EventEmitter {
         qualityId: result.qualityId ?? job.quality ?? null,
         format: result.ext,
         size,
-        source: track.source,
-        sourceName: track.sourceName,
+        source: result.fallbackTrack?.source || track.source,
+        sourceName: result.fallbackTrack?.sourceName || track.sourceName,
         version: track.version || null,
-        pageUrl: track.pageUrl,
+        pageUrl: result.fallbackTrack?.pageUrl || track.pageUrl,
         downloadedAt: new Date().toISOString(),
       });
       const note = result.note !== undefined ? result.note : result.ext === job.format ? null : job.note; // 原始流恰好就是目标格式时无需提示
@@ -323,7 +337,7 @@ export class DownloadManager extends EventEmitter {
         }
       },
     });
-    if (!filePath || !existsSync(filePath)) throw classifyYtdlpError(stderr || `yt-dlp 退出码 ${code}`);
+    if (code !== 0 || !filePath || !existsSync(filePath)) throw classifyYtdlpError(stderr || `yt-dlp 退出码 ${code}`);
     return { tmpPath: filePath, ext: path.extname(filePath).slice(1) };
   }
 }

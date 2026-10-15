@@ -4,6 +4,7 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { config } from '../config.js';
 import { assertProxyUp, SourceError } from './http.js';
+import { createYoutubeRunner, isYoutubeBotError } from './youtube.js';
 
 const isWin = process.platform === 'win32';
 
@@ -76,6 +77,7 @@ function killTree(child) {
 
 /** yt-dlp stderr → 错误分类 */
 export function classifyYtdlpError(stderr) {
+  if (isYoutubeBotError(stderr)) return new SourceError('YOUTUBE_BOT_CHECK', 'YouTube 要求验证身份，请稍后重试，或配置有效 Cookie / PO Token；如有匹配的 B 站音源会自动切换。');
   const line = stderr.split(/\r?\n/).filter((l) => l.startsWith('ERROR')).pop() || stderr.trim().split(/\r?\n/).pop() || 'yt-dlp 失败';
   if (/HTTP Error (403|412|429)|Sign in to confirm|captcha|rate.?limit/i.test(stderr)) {
     return new SourceError('BLOCKED', `平台风控/限流：${line.slice(0, 200)}`);
@@ -99,12 +101,20 @@ export function ytdlpNetArgs(platform) {
   ];
 }
 
-export async function runYtdlp(args, { signal, onLine } = {}) {
+const youtubeRunner = createYoutubeRunner(config.youtube);
+export function runYtdlp(args, options = {}) {
+  const youtube = args.some(arg => /^https?:\/\/(?:[\w-]+\.)?(?:youtube\.com|youtu\.be)\//i.test(arg) || /^ytsearch/.test(arg));
+  return youtube ? youtubeRunner(args, options, runYtdlpProcess, config.youtube) : runYtdlpProcess(args, options);
+}
+
+async function runYtdlpProcess(args, { signal, onLine } = {}) {
+  if (signal?.aborted) return { code: 1, stderr: '', aborted: true };
   const bin = await detectYtdlp();
   if (!bin) throw new SourceError('NOT_INSTALLED', 'yt-dlp 未安装（npm run setup:ytdlp）');
   const proxyAt = args.indexOf('--proxy');
   if (proxyAt >= 0) await assertProxyUp(args[proxyAt + 1]);
   const ffmpeg = await detectFfmpeg();
+  if (signal?.aborted) return { code: 1, stderr: '', aborted: true };
 
   const fullArgs = [
     ...bin.pre,
