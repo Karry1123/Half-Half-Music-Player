@@ -1,4 +1,5 @@
-import { existsSync } from 'node:fs';
+import { copyFileSync, chmodSync, existsSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -8,6 +9,16 @@ if (existsSync(path.join(root, '.env'))) process.loadEnvFile(path.join(root, '.e
 const env = process.env;
 /** 相对路径按 music-service 目录解析，方便在 .env 里写 COOKIE_PATH=./cookies/bilibili.txt */
 const file = (p) => (p ? path.resolve(root, p) : null);
+/** yt-dlp 每次运行后会把 Cookie 写回文件；平台挂载的密钥文件常是只读的，所以先复制一份到临时目录 */
+const writableCopy = (p) => {
+  if (!p || !existsSync(p)) return p;
+  try {
+    const copy = path.join(os.tmpdir(), `hh-${path.basename(p)}`);
+    copyFileSync(p, copy);
+    chmodSync(copy, 0o600);
+    return copy;
+  } catch (e) { console.error('Cookie 文件复制失败，直接使用原文件:', e.message); return p; }
+};
 const list = (s) => (s || '').split(',').map((x) => x.trim()).filter(Boolean);
 
 export const config = {
@@ -36,7 +47,7 @@ export const config = {
     //   http://127.0.0.1:7890 · socks5://127.0.0.1:7890 · socks5h://user:pass@host:1080
     proxy: env.PROXY_URL || env.YT_PROXY || env.YTDLP_PROXY || env.HTTPS_PROXY || env.HTTP_PROXY || null,
     // 可选：YouTube 登录 Cookie（Netscape cookies.txt），出现 "Sign in to confirm you're not a bot" 时配置
-    cookieFile: file(env.YTDLP_COOKIES || env.YT_COOKIE_PATH) || (existsSync(path.join(root, 'cookies/youtube.txt')) ? path.join(root, 'cookies/youtube.txt') : null),
+    cookieFile: writableCopy(file(env.YTDLP_COOKIES || env.YT_COOKIE_PATH) || (existsSync(path.join(root, 'cookies/youtube.txt')) ? path.join(root, 'cookies/youtube.txt') : null)),
     intervalMs: Math.max(0, Number(env.YTDLP_MIN_INTERVAL_MS) || 1500),
     backoffMs: Math.max(0, Number(env.YTDLP_BACKOFF_MS) || 4000),
     clients: (env.YTDLP_PLAYER_CLIENTS || 'default;web_safari,mweb').split(';').map(s => s.trim()).filter(Boolean).slice(0, 3),
