@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
 <meta name="color-scheme" content="dark" />
 <title>Half&amp;Half · 同步听歌</title>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><path d='M16 2a14 14 0 0 0 0 28Z' fill='%23f2a65a'/><path d='M16 2a14 14 0 0 1 0 28Z' fill='%23ec7a96'/></svg>" />
+<link rel="icon" type="image/svg+xml" href="./icon.svg" />
 <!--
   Half&Half Music Player · All-in-One Dashboard（单文件，无需构建）
 
@@ -117,7 +117,7 @@ import {
   Wifi, WifiOff, X, Plus, MoreHorizontal, ListPlus, ListMinus, Pencil, Library, Eye, EyeOff, ChevronDown, Cloud, CloudDownload,
 } from 'lucide-react';
 import { Peer } from 'peerjs';
-import { ListeningStats } from './listeningStats.js';
+import { ListeningStats, createCompletedPlayUploader } from './listeningStats.js';
 import { DiscoverSections, sortPlaylistTracks } from './discoveryUI.js';
 import { ListeningStatsCards } from './statsUI.js';
 import { DailyGreeting } from './dailyGreeting.js';
@@ -135,6 +135,7 @@ function useBackLayer(open, close) {
 import { MODE_LABEL, PLAY_MODES, PlayQueue } from './playQueue.js';
 import { ALL_ID, ALL_NAME, INBOX_ID, PlaylistStore, missingFromLibrary, playlistsOf, resolveScope } from './playlists.js';
 import { AccountClient, SOURCE_EXPIRED, cacheCloudTrack, downloadCloudTrack } from './accountClient.js';
+import { coverSrc, setCoverProxy } from './coverUrl.js';
 import { CloudSync, toCloudTrack } from './cloudSync.js';
 import { AccountCard, AccountGate, CloudSheet, ZipExport } from './accountUI.js';
 import { checkForUpdate, DEFAULT_REPO } from './appUpdate.js';
@@ -155,6 +156,7 @@ const authHeaders = (h = {}) => (accessToken() ? { ...h, Authorization: `Bearer 
 /** <audio> / EventSource 不能带请求头，令牌放在查询参数里 */
 const apiUrl = (path) => `${API_BASE}${path}${accessToken() ? `${path.includes('?') ? '&' : '?'}token=${encodeURIComponent(accessToken())}` : ''}`;
 const backendURL = new URL(HH.peerUrl || API_BASE || location.origin, location.href);
+if (API_BASE) setCoverProxy(url => apiUrl(`/api/cover?url=${encodeURIComponent(url)}`)); // 国内打不开的封面走后端代理
 const PEER_OPTIONS = {
   host: params.get('peerHost') || backendURL.hostname,
   port: Number(params.get('peerPort')) || Number(backendURL.port) || (backendURL.protocol === 'https:' ? 443 : 80),
@@ -2179,7 +2181,7 @@ async function downloadPending(playlistId, keys) {
       if (!t.sourceId && t.id.startsWith('search:')) {
         const result = await api.search(`${t.title} ${t.artist}`, []);
         const match = result.results?.[0];
-        if (!match?.id) throw new Error('???????????????');
+        if (!match?.id) throw new Error('没有找到这首歌的可播放音源');
         track = { ...t, id: match.id, sourceId: match.id, pageUrl: match.pageUrl || '', hash: '' };
       }
       await cacheCloudTrack(track, { storage: LocalLib, download: (x) => downloadCloudTrack(account, x) });
@@ -2448,17 +2450,16 @@ function Avatar({ profile, size = 28, ring }) {
 
 function Cover({ item, size = 40, round = 'rounded-lg' }) {
   return html`<span class=${cx('relative shrink-0 overflow-hidden grid place-items-center', round)} style=${{ width: size, height: size, background: gradient(item?.title || '') }}>
-    ${item?.cover ? html`<img src=${item.cover} alt="" referrerpolicy="no-referrer" loading="lazy" class="absolute inset-0 h-full w-full object-cover" />` : html`<${Music2} size=${size * 0.42} class="text-white/70" />`}
+    ${item?.cover ? html`<img src=${coverSrc(item.cover)} alt="" referrerpolicy="no-referrer" loading="lazy" class="absolute inset-0 h-full w-full object-cover" />` : html`<${Music2} size=${size * 0.42} class="text-white/70" />`}
   </span>`;
 }
 
-function Panel({ title, icon: Icon, right, children, className }) {
+function Panel({ title, icon: Icon, right, children, className, stackedHeader = false }) {
   return html`<section class=${cx('flex min-h-0 flex-col rounded-2xl border border-ink-700/80 bg-ink-850/80 backdrop-blur', className)}>
-    <header class="flex items-center gap-2 border-b border-ink-700/70 px-4 py-3">
-      <${Icon} size=${16} class="text-host" />
+    <header class=${cx('flex flex-wrap items-center gap-2 border-b border-ink-700/70 px-4 py-3', stackedHeader && 'panel-header-stacked')}>
+      <${Icon} size=${16} class="shrink-0 text-host" />
       <h2 class="text-sm font-semibold tracking-wide">${title}</h2>
-      <span class="flex-1" />
-      ${right}
+      ${right && html`<div class=${cx('ml-auto', stackedHeader && 'panel-controls')}>${right}</div>`}
     </header>
     ${children}
   </section>`;
@@ -2498,13 +2499,13 @@ function ConnectionBar() {
 
   return html`<header class="connection-header relative md:sticky md:top-0 z-30 border-b border-ink-700/70 bg-ink-950/80 backdrop-blur-xl">
     <div class="mx-auto flex max-w-[1500px] flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3">
-      <button class="flex items-center gap-2 font-extrabold tracking-tight hover:opacity-80" onClick=${() => set({ screen: 'home' })} title="回到大厅">
+      <button class="connection-brand flex shrink-0 items-center gap-2 whitespace-nowrap font-extrabold tracking-tight hover:opacity-80" onClick=${() => set({ screen: 'home' })} title="回到大厅">
         <span class="h-6 w-6 rounded-full" style=${{ background: 'conic-gradient(#f2a65a 0 50%, #ec7a96 50% 100%)' }} />
         <span>Half<span class="text-host">&</span>Half</span>
         <${Home} size=${14} class="text-sand-500" />
       </button>
 
-      <span class="text-xs text-sand-400">${role ? '好友同听' : '从好友列表邀请一起听'}</span>
+      <span class="connection-invite text-xs text-sand-400">${role ? '好友同听' : '从好友列表邀请一起听'}</span>
       <${CoListenPill} />
 
       <span class="inline-flex items-center gap-2 rounded-full border border-ink-700 bg-ink-850 px-3 py-1 text-xs font-medium" role="status">
@@ -2780,7 +2781,7 @@ function PlaylistHeader({ view, items }) {
             ${custom && html`<button class="grid h-7 w-7 shrink-0 place-items-center rounded-full text-sand-500 hover:text-sand-50" onClick=${() => (setName(playlist.name), setRenaming(true))} aria-label="重命名歌单" title="重命名"><${Pencil} size=${13} /></button>`}
           </div>`}
       <div class="mt-0.5 text-xs text-sand-500 tabular">${items.length} 首${playlist?.pending?.length ? ` · ${playlist.pending.length} 首未下载` : ''}${total ? ` · ${fmtTime(total)}` : ''}${isActive && items.length ? ' · 正在播放' : ''}</div>
-      ${custom && html`<label class="mt-2 flex items-center gap-2 text-xs text-sand-400"><input type="checkbox" checked=${!!playlist.isPublic} onChange=${e => playlistStore.setPublic(view, e.target.checked).catch(e => toast(e.message, 'warn'))} />????????????????</label>`}
+      ${custom && html`<label class="playlist-public mt-2 flex cursor-pointer items-center gap-2 text-xs text-sand-400"><input type="checkbox" role="switch" aria-label="公开此歌单" checked=${!!playlist.isPublic} onChange=${e => playlistStore.setPublic(view, e.target.checked).catch(e => toast(e.message, 'warn'))} /><span><span class="block text-sand-200">公开此歌单</span><span class="block mt-0.5">好友可查看与试听</span></span></label>`}
     </div>
     <div class="flex w-full items-center gap-1.5 sm:w-auto sm:shrink-0">
       ${custom && !renaming && html`<button class="grid h-9 w-9 shrink-0 place-items-center rounded-full text-sand-500 hover:bg-guest/10 hover:text-guest" onClick=${remove} aria-label="删除歌单" title="删除歌单（歌曲保留）"><${Trash2} size=${15} /></button>`}
@@ -2821,11 +2822,11 @@ function LibraryPanel() {
     session.playPlaylist(view, { startItemId: x.id, orderedIds: items.map(t => t.id) }); // 歌单里点任意一首：队列换成整个歌单，从这首开始
   };
 
-  return html`<${Panel} title=${isGuest ? '房间曲库 · 播放队列' : '我的歌单 · 播放队列'} icon=${Disc3} className="lg:max-h-[calc(100vh-190px)]"
-    right=${html`<span class="flex items-center gap-2">
-      ${!isGuest && html`<select aria-label="????" class="max-w-32 rounded-lg bg-ink-800 p-1 text-xs" value=${sort} onChange=${e => setSort(e.target.value)}>${[['default', '??(????)'], ['count', '????'], ['name', '?? A-Z'], ['duration', '??']].map(([id, label]) => html`<option key=${id} value=${id}>${label}</option>`)}</select>`}
+  return html`<${Panel} title=${isGuest ? '房间曲库 · 播放队列' : '我的歌单 · 播放队列'} icon=${Disc3} stackedHeader=${true} className="lg:max-h-[calc(100vh-190px)]"
+    right=${html`<span class="flex flex-wrap items-center gap-2">
+      ${!isGuest && html`<select aria-label="排序方式" class="rounded-lg bg-ink-800 px-2 py-2 text-xs" value=${sort} onChange=${e => setSort(e.target.value)}>${[['default', '添加时间'], ['count', '收听次数'], ['name', '歌名 A-Z'], ['duration', '时长']].map(([id, label]) => html`<option key=${id} value=${id}>${label}</option>`)}</select>`}
       <span class="hidden text-xs text-sand-500 tabular sm:inline">${items.length} 首 · ${fmtSize(totalSize)}</span>
-      <button class="inline-flex items-center gap-1.5 rounded-lg border border-ink-600 px-2.5 py-1 text-xs text-sand-200 hover:border-sync hover:text-sync" onClick=${() => set({ localLibOpen: true })} title="管理保存在这台设备上的歌曲">
+      <button class="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border border-ink-600 px-2.5 py-1 text-xs text-sand-200 hover:border-sync hover:text-sync" onClick=${() => set({ localLibOpen: true })} title="管理保存在这台设备上的歌曲">
         <${HardDrive} size=${13} /> 本机曲库${offline.count ? ` · ${offline.count}` : ''}
       </button>
     </span>`}>
@@ -4069,7 +4070,15 @@ async function startPreview(r) {
   session.out.unlock();
   const vid = r.id.split(':')[1];
   if (!r.mock && (r.source === 'youtube' || r.source === 'ytmusic')) {
-    return set({ preview: { ...r, kind: 'embed', src: `https://www.youtube-nocookie.com/embed/${vid}?autoplay=1&rel=0` } });
+    // YouTube 的嵌入播放器在国内打不开：改由后端代取音频流（/api/stream），手机只连我们的服务器
+    set({ preview: { ...r, kind: 'stream', loading: true } });
+    previewAudio.src = apiUrl(`/api/stream?id=${encodeURIComponent(r.id)}`);
+    previewAudio.play().catch(e => {
+      if (get().preview?.id !== r.id || e.name === 'AbortError') return;
+      toast('试听加载失败，请稍后重试或直接下载', 'warn');
+      stopPreview();
+    });
+    return;
   }
   if (!r.mock && r.source === 'bilibili') {
     return set({ preview: { ...r, kind: 'embed', src: `https://player.bilibili.com/player.html?bvid=${vid}&autoplay=1&high_quality=1&danmaku=0` } });
@@ -4085,15 +4094,16 @@ async function previewPublicTrack(track) {
   try {
     if (track.sourceId && /^(youtube|ytmusic|bilibili):/.test(track.sourceId)) return startPreview({ ...track, id: track.sourceId, source: track.sourceId.split(':')[0] });
     const result = await api.search(`${track.title} ${track.artist}`, []);
-    if (!result.results?.length) return toast('?????????', 'warn');
+    if (!result.results?.length) return toast('没有找到可试听的音源', 'warn');
     return startPreview(result.results[0]);
-  } catch (e) { toast(`?????${e.message}`, 'warn'); }
+  } catch (e) { toast(`试听失败：${e.message}`, 'warn'); }
 }
 const previewAudio = new Audio();
 previewAudio.onended = () => set({ preview: null });
+previewAudio.onplaying = () => { const p = get().preview; if (p?.loading) set({ preview: { ...p, loading: false } }); };
 function stopPreview() {
   previewAudio.pause();
-  if (previewAudio.src) URL.revokeObjectURL(previewAudio.src);
+  if (previewAudio.src.startsWith('blob:')) URL.revokeObjectURL(previewAudio.src);
   previewAudio.removeAttribute('src');
   set({ preview: null });
 }
@@ -4113,7 +4123,7 @@ function PreviewDock() {
     ${p.kind === 'embed'
       ? html`<iframe src=${p.src} class="aspect-video w-full" allow="autoplay; encrypted-media" referrerpolicy="no-referrer-when-downgrade" title="试听播放器" />`
       : html`<div class="flex h-10 items-end gap-[3px] px-3 pb-3">
-          ${p.loading ? html`<span class="text-xs text-sand-500">生成试听片段…</span>` : Array.from({ length: 40 }, (_, i) => html`<i key=${i} class="eq block w-1 rounded-sm bg-gradient-to-t from-host to-guest" style=${{ animationDelay: `${-i * 0.07}s`, height: '100%' }} />`)}
+          ${p.loading ? html`<span class="text-xs text-sand-500">${p.kind === 'stream' ? '正在加载试听…' : '生成试听片段…'}</span>` : Array.from({ length: 40 }, (_, i) => html`<i key=${i} class="eq block w-1 rounded-sm bg-gradient-to-t from-host to-guest" style=${{ animationDelay: `${-i * 0.07}s`, height: '100%' }} />`)}
         </div>`}
   </div>`;
 }
@@ -4187,13 +4197,13 @@ function SearchDiscovery({ onSearch, onSelectTrack }) {
   const linkInfo = detectLink(keyword);
   const run = (q = keyword, p = platform) => q.trim() && onSearch(q, p);
 
-  return html`<section class="relative z-10 mx-auto mt-10 max-w-7xl px-5 sm:mt-12" aria-labelledby="search-title">
+  return html`<section class="relative z-10 mx-auto mt-4 max-w-7xl px-4 sm:mt-6" aria-labelledby="search-title">
     <div class="text-center">
-      <h2 id="search-title" class="text-2xl font-bold sm:text-3xl">全网搜歌，<span class="text-gradient">或贴个链接</span></h2>
-      <p class="mt-2 text-sm text-sand-400">关键词搜索原唱版本；也可以直接粘贴 B 站视频链接 / BV 号 / b23 短链 / YouTube 链接，一键提取音频</p>
+      <h2 id="search-title" class="text-xl font-bold">想听什么？</h2>
+      <p class="mt-1 text-xs leading-relaxed text-sand-400">搜歌名、歌手，或粘贴 B 站 / YouTube 链接</p>
     </div>
 
-    <form class="glass mx-auto mt-6 flex max-w-3xl items-center gap-2 rounded-2xl p-2 focus-within:ring-2 focus-within:ring-host/40" onSubmit=${(e) => { e.preventDefault(); run(); }}>
+    <form class="glass mx-auto mt-3 flex max-w-3xl items-center gap-2 rounded-2xl p-2 focus-within:ring-2 focus-within:ring-host/40" onSubmit=${(e) => { e.preventDefault(); run(); }}>
       <span class="pl-3 text-sand-500">${isLink ? html`<${Link2} size=${18} class="text-host" />` : html`<${Search} size=${18} />`}</span>
       <input value=${keyword} onInput=${(e) => setKeyword(e.target.value)} enterkeyhint="search" aria-label="搜索歌曲、歌手或粘贴链接"
         onPaste=${(e) => {
@@ -4201,7 +4211,7 @@ function SearchDiscovery({ onSearch, onSelectTrack }) {
           const text = e.clipboardData.getData('text');
           if (detectLink(text)) { e.preventDefault(); setKeyword(text.trim()); run(text.trim()); }
         }}
-        placeholder="歌名 / 歌手 / 音源链接，例如：晴天 周杰伦"
+        placeholder="歌名、歌手或音源链接"
         class="min-w-0 flex-1 bg-transparent py-3 text-base outline-none placeholder:text-sand-500" />
       ${keyword && html`<button type="button" class="grid h-8 w-8 place-items-center rounded-full text-sand-500 hover:bg-white/10 hover:text-sand-50" onClick=${() => setKeyword('')} aria-label="清空"><${X} size=${15} /></button>`}
       <button class="inline-flex items-center gap-1.5 rounded-xl bg-sand-50 px-5 py-3 text-sm font-semibold text-ink-950 transition hover:bg-white disabled:opacity-50" disabled=${searching || !keyword.trim()}>
@@ -4420,7 +4430,7 @@ function StatsPanel() {
 function CoListenPill() {
   const s = useStore(s => s);
   if (!s.role || !['open', 'reconnecting'].includes(s.conn)) return null;
-  return html`<button class="shrink-0 rounded-full bg-sync/15 px-3 py-2 text-xs text-sync" onClick=${() => set({ coListenOpen: true })}>当前同听中</button>`;
+  return html`<button class="co-listen-pill shrink-0 rounded-full bg-sync/15 px-3 py-2 text-xs text-sync" onClick=${() => set({ coListenOpen: true })}>当前同听中</button>`;
 }
 function CoListenDrawer() {
   const s = useStore(s => s);
@@ -4490,26 +4500,17 @@ function App() {
     for (const event of events) audio.addEventListener(event, sample);
     audio.addEventListener('ended', ended, true);
     const timer = setInterval(sample, 1000);
-    let uploading = false;
-    const upload = async () => {
-      if (uploading || !account.user?.isActivated) return;
-      uploading = true;
-      try {
-        await stats.ready();
-        const tracks = await LocalLib.listTracks().catch(() => []);
-        for (const t of tracks) stats.rememberTrack({ trackId: t.id, title: t.title, artist: t.artist, cover: t.coverUrl });
-        await stats.flush();
-        const plays = stats.completedUploads();
-        for (let i = 0; i < plays.length; i += 100) await account.request('/account/plays', { deviceId: stats.stats.deviceId, plays: plays.slice(i, i + 100) });
-      } catch {} finally { uploading = false; }
-    };
+    const syncPlays = createCompletedPlayUploader({ stats, client: account, listTracks: () => LocalLib.listTracks(),
+      onUploaded: () => window.dispatchEvent(new Event('hh:plays-synced')) });
+    const upload = () => syncPlays().catch(() => {});
+    const unsubscribeCompleted = stats.subscribeCompleted(upload);
     upload();
     const uploadTimer = setInterval(upload, 60000);
     window.addEventListener('online', upload);
     const flush = () => { sample(); stats.flush().catch(console.warn); };
     window.addEventListener('pagehide', flush);
     const unstore = store.subscribe(sample);
-    return () => { sample(); stats.flush().catch(console.warn); unsubscribe(); unstore(); clearInterval(timer); clearInterval(uploadTimer); window.removeEventListener('online', upload); for (const event of events) audio.removeEventListener(event, sample); audio.removeEventListener('ended', ended, true); window.removeEventListener('pagehide', flush); };
+    return () => { sample(); stats.flush().catch(console.warn); unsubscribe(); unsubscribeCompleted(); unstore(); clearInterval(timer); clearInterval(uploadTimer); window.removeEventListener('online', upload); for (const event of events) audio.removeEventListener(event, sample); audio.removeEventListener('ended', ended, true); window.removeEventListener('pagehide', flush); };
   }, []);
   const [tab, setTab] = useState('discover'), [playerOpen, setPlayerOpen] = useState(false);
   const [presence, setPresence] = useState({}), [invitation, setInvitation] = useState(null);
@@ -4569,8 +4570,8 @@ function App() {
     <main class="mx-auto max-w-5xl px-4 pt-5" style=${{ paddingBottom: 'calc(170px + var(--safe-bottom, 0px))' }}>
       ${tab === 'discover' && html`<${SearchDiscovery} onSearch=${homeSearch} onSelectTrack=${track => { stopPreview(); downloadWithPicker(track); }} />`}
       ${tab === 'library' && html`<div class="mb-4 flex justify-end"><button class="inline-flex items-center gap-2 rounded-xl border border-ink-600 px-4 py-3 text-sm" title=${cloudStatus?.error ? `${cloudLabel}：${cloudStatus.error}` : cloudLabel} aria-label=${cloudLabel} onClick=${() => set({ cloudOpen: true })}><${Cloud} size=${18} /> ${cloudLabel}</button></div><${RoomPlaylistBanner} /><${LibraryPanel} />`}
-      ${tab === 'friends' && html`<${FriendsPanel} onPreview=${previewPublicTrack} onCollect=${async p => { await playlistStore.copyPublic(p); toast('????????'); }} stats=${listeningStats} client=${account} presence=${presence} invite=${userId => sendSocial({ type: 'INVITE_LISTEN_REQUEST', userId })} history=${history} />`}
-      ${tab === 'settings' && html`<${StatsPanel} /><${AccountCard} client=${account} className="space-y-4 rounded-2xl border border-ink-700 p-5" /><button class="mt-5 rounded-xl border border-ink-600 p-4" onClick=${() => set({ connSettingsOpen: true })}><${Settings} size=${18} /> 网络诊断 / 连接与播放设置</button><${ConnectionBar} />`}
+      ${tab === 'friends' && html`<${FriendsPanel} onPreview=${previewPublicTrack} onCollect=${async p => { await playlistStore.copyPublic(p); toast('已收藏到我的歌单'); }} stats=${listeningStats} client=${account} presence=${presence} invite=${userId => sendSocial({ type: 'INVITE_LISTEN_REQUEST', userId })} history=${history} />`}
+      ${tab === 'settings' && html`<${StatsPanel} /><${AccountCard} client=${account} className="space-y-4 rounded-2xl border border-ink-700 p-5" /><button class="mt-5 flex w-full items-center gap-3 rounded-xl border border-ink-600 p-4 text-left" onClick=${() => set({ connSettingsOpen: true })}><${Settings} size=${18} class="shrink-0" /> 网络诊断 / 连接与播放设置</button><${ConnectionBar} />`}
     </main>
     ${!keyboardOpen && html`<${NativePlayer} open=${playerOpen} close=${() => setPlayerOpen(false)} expand=${() => setPlayerOpen(true)} />
       <nav aria-label="主导航" class="fixed inset-x-0 bottom-0 z-40 border-t border-ink-700 bg-ink-950/95 backdrop-blur-xl" style=${{ paddingBottom: 'var(--safe-bottom, 0px)', paddingLeft: 'var(--safe-left)', paddingRight: 'var(--safe-right)' }}>

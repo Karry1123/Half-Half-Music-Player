@@ -1,7 +1,12 @@
 ﻿import test from 'node:test';
 import assert from 'node:assert/strict';
-import { sortPlaylistTracks } from '../public/discoveryUI.js';
+import { sortPlaylistTracks, trendingBadge } from '../public/discoveryUI.js';
 import { ListeningStats } from '../public/listeningStats.js';
+
+test('trending badges distinguish actual completed counts from recommendations', () => {
+  assert.equal(trendingBadge({ completed: 3 }), '3 次');
+  for (const completed of [undefined, 0, -1, NaN]) assert.equal(trendingBadge({ completed }), '推荐');
+});
 test('playlist sorting leaves original order and uses requested count, name and duration', () => {
   const a = { id: 'a', title: 'B', duration: 20 }, b = { id: 'b', title: 'A', duration: 10 };
   const original = [a, b];

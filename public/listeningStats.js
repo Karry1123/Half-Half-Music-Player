@@ -47,6 +47,7 @@ export class ListeningStats {
     this.records = [];
     this.stats = emptyStats();
     this.listeners = new Set();
+    this.completionListeners = new Set();
     this.dirty = new Set();
     this.pendingSamples = [];
     this.write = Promise.resolve();
@@ -63,8 +64,12 @@ export class ListeningStats {
       // Private browsing/storage failures must not stop playback or lose this session's accounting.
       this.storageError = error;
     }
-    this.stats.deviceId ||= globalThis.crypto?.randomUUID?.() || `device-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    if (!this.stats.deviceId) {
+      this.stats.deviceId = globalThis.crypto?.randomUUID?.() || `device-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      this.changed = true;
+    }
     this.loaded = true;
+    this.scheduleSave();
     for (const sample of this.pendingSamples.splice(0)) this.sample(sample);
     this.notify();
     return this;
@@ -72,6 +77,7 @@ export class ListeningStats {
 
   ready() { return this.loading; }
   subscribe(listener) { this.listeners.add(listener); return () => this.listeners.delete(listener); }
+  subscribeCompleted(listener) { this.completionListeners.add(listener); return () => this.completionListeners.delete(listener); }
   notify() { for (const listener of this.listeners) listener(this); }
 
   start(sample) {
@@ -141,6 +147,7 @@ export class ListeningStats {
       this.stats.completedPlayCount[sample.trackId] = this.completedCount(sample.trackId) + 1;
       session.completed = true;
       this.changed = true;
+      for (const listener of this.completionListeners) listener(this);
     }
     if (sample.ended) session.ended = true;
     this.previous = sample;
@@ -192,7 +199,8 @@ export class ListeningStats {
   completedUploads() {
     const songs = new Map();
     for (const [id, completed] of Object.entries(this.stats.completedPlayCount)) {
-      const meta = this.stats.trackMetadata[id];
+      const saved = this.stats.trackMetadata[id];
+      const meta = saved && { ...saved, artist: saved.artist || '' };
       if (!meta?.title || !completed || meta.title.length > 200 || meta.artist.length > 200) continue;
       const key = [meta.title, meta.artist].map(x => x.trim().normalize('NFKC').toLowerCase().replace(/\s+/g, ' ')).join('\n');
       const item = songs.get(key) || { ...meta, cover: /^https:\/\//i.test(meta.cover || '') && meta.cover.length <= 2000 ? meta.cover : '', completed: 0 };
@@ -214,4 +222,33 @@ export class ListeningStats {
     return this.records.reduce((total, record) => total +
       (record.timestamp >= start.getTime() && record.timestamp <= now ? record.durationPlayed : 0), 0);
   }
+}
+
+// Upload absolute device totals: retrying/backfilling cannot double count on the server.
+// A completion during an in-flight request queues another snapshot instead of being lost.
+export function createCompletedPlayUploader({ stats, client, listTracks, onUploaded = () => {} }) {
+  let running, queued = false;
+  return function upload() {
+    if (!client.user?.isActivated) return Promise.resolve();
+    queued = true;
+    if (running) return running;
+    running = (async () => {
+      try {
+        while (queued) {
+          queued = false;
+          await stats.ready();
+          for (const t of await listTracks().catch(() => [])) {
+            stats.rememberTrack({ trackId: t.id, title: t.title, artist: t.artist, cover: t.coverUrl || t.cover });
+          }
+          await stats.flush();
+          const plays = stats.completedUploads();
+          for (let i = 0; i < plays.length; i += 100) {
+            await client.request('/account/plays', { deviceId: stats.stats.deviceId, plays: plays.slice(i, i + 100) });
+          }
+          if (plays.length) onUploaded();
+        }
+      } finally { running = null; }
+    })();
+    return running;
+  };
 }

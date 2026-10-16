@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <!-- Two earbuds leaning toward a small heart; everything stays inside the 66dp safe zone. -->
+    <group android:pivotX="54" android:pivotY="54" android:scaleX="1.265" android:scaleY="1.265">
+        <path android:fillColor="#00000000" android:strokeColor="#FFFFFF"
+            android:strokeWidth="7" android:strokeLineCap="round"
+            android:pathData="M43,51L37,71M65,51L71,71" />
+        <path android:fillColor="#FFFFFF"
+            android:pathData="M30,45A10,10 0,1 0,50,45A10,10 0,1 0,30,45ZM58,45A10,10 0,1 0,78,45A10,10 0,1 0,58,45Z" />
+        <path android:fillColor="#FFFFFF"
+            android:pathData="M54,66C46,60 47,54 51,54.5C52.8,54.7 54,56 54,57C54,56 55.2,54.7 57,54.5C61,54 62,60 54,66Z" />
+        <path android:fillColor="#EFB3C1"
+            android:pathData="M44.5,46A2,3 0,1 0,48.5,46A2,3 0,1 0,44.5,46ZM59.5,46A2,3 0,1 0,63.5,46A2,3 0,1 0,59.5,46Z" />
+    </group>
+</vector>

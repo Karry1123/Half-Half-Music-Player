@@ -3,9 +3,9 @@ import path from 'node:path';
 
 const DAY = 86400000;
 export const CHARTS = [
-  { id: 'apple-us', title: '美国流行榜（Apple Music）', url: 'https://rss.applemarketingtools.com/api/v2/us/music/most-played/50/songs.json', parser: 'apple' },
-  { id: 'apple-gb', title: '英国流行榜（Apple Music）', url: 'https://rss.applemarketingtools.com/api/v2/gb/music/most-played/50/songs.json', parser: 'apple' },
-  { id: 'billboard', title: 'Billboard Hot 100', url: 'https://raw.githubusercontent.com/mhollingshead/billboard-hot-100/main/recent.json', parser: 'billboard' },
+  { id: 'apple-us', title: '美国流行榜', source: 'Apple Music', url: 'https://rss.applemarketingtools.com/api/v2/us/music/most-played/50/songs.json', parser: 'apple' },
+  { id: 'apple-gb', title: '英国流行榜', source: 'Apple Music', url: 'https://rss.applemarketingtools.com/api/v2/gb/music/most-played/50/songs.json', parser: 'apple' },
+  { id: 'billboard', title: 'Billboard Hot 100', source: 'Billboard', url: 'https://raw.githubusercontent.com/mhollingshead/billboard-hot-100/main/recent.json', parser: 'billboard' },
 ];
 const clean = value => typeof value === 'string' ? value.trim().slice(0, 300) : '';
 const cover = value => /^https:\/\//i.test(value || '') ? value.slice(0, 2000) : '';
@@ -50,7 +50,7 @@ export class ChartsCache {
     if (!def) return null;
     const cached = this.cache[id];
     const tracks = cached?.tracks || FALLBACK;
-    return { id, title: def.title, cover: tracks.find(t => t.cover)?.cover || '', updatedAt: cached?.updatedAt || 0, stale: !cached || this.now() - cached.updatedAt >= DAY, tracks };
+    return { id, title: def.title, source: def.source, cover: tracks.find(t => t.cover)?.cover || '', updatedAt: cached?.updatedAt || 0, stale: !cached || this.now() - cached.updatedAt >= DAY, tracks };
   }
   list() { return { charts: CHARTS.map(def => { const { tracks, ...chart } = this.chart(def.id); return { ...chart, count: tracks.length }; }) }; }
   async refresh() {

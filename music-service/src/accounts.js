@@ -235,6 +235,7 @@ export class Accounts {
   }
   async recordPlays(userId, body) {
     const rows = validatePlays(body);
+    let changed = false;
     await this.db.tx(async db => {
       for (const row of rows) {
         // Lock the device row before computing the delta, including concurrent PostgreSQL uploads.
@@ -244,23 +245,30 @@ export class Accounts {
         if (!delta) continue;
         await db.run('UPDATE play_devices SET completed=$1 WHERE user_id=$2 AND device_id=$3 AND song_key=$4', [row.completed, userId, body.deviceId, row.key]);
         await db.run('INSERT INTO play_counts(user_id,song_key,title,artist,cover,completed,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(user_id,song_key) DO UPDATE SET completed=play_counts.completed+excluded.completed,title=excluded.title,artist=excluded.artist,cover=excluded.cover,updated_at=excluded.updated_at', [userId, row.key, row.title, row.artist, row.cover, delta, Date.now()]);
+        changed = true;
       }
     });
+    if (changed) {
+      this.trendingRevision = (this.trendingRevision || 0) + 1;
+      this.trendingCache = null;
+    }
     return { ok: true };
   }
   async trending(now = Date.now()) {
     if (this.trendingCache && now - this.trendingCache.at < 600000) return this.trendingCache.value;
+    const revision = this.trendingRevision || 0;
     const rows = await this.db.all('SELECT song_key, title, artist, cover, completed, updated_at FROM play_counts WHERE completed>0 ORDER BY updated_at DESC');
     const songs = new Map();
     for (const row of rows) {
       if (!isTrendingSong(row)) continue;
       const item = songs.get(row.song_key);
-      const plays = Math.min(Number(row.completed), 50); // cap each listener so one account cannot dominate the chart
-      if (item) item.completed += plays;
-      else songs.set(row.song_key, { key: row.song_key, title: row.title, artist: row.artist, cover: row.cover, completed: plays });
+      const plays = Number(row.completed), score = Math.min(plays, 50); // rank by capped plays so one account cannot dominate; show real totals
+      if (item) { item.completed += plays; item.score += score; }
+      else songs.set(row.song_key, { key: row.song_key, title: row.title, artist: row.artist, cover: row.cover, completed: plays, score });
     }
-    const value = { tracks: [...songs.values()].sort((a, b) => b.completed - a.completed || a.key.localeCompare(b.key)).slice(0, 10), stale: false };
-    this.trendingCache = { at: now, value };
+    const value = { tracks: [...songs.values()].sort((a, b) => b.score - a.score || b.completed - a.completed || a.key.localeCompare(b.key)).slice(0, 10).map(({ score, ...track }) => track), stale: false };
+    // An upload may commit while the SELECT is in flight; do not cache that old snapshot.
+    if (revision === (this.trendingRevision || 0)) this.trendingCache = { at: now, value };
     return value;
   }
   async publicPlaylists(userId, friendId) {

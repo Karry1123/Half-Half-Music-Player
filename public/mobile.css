@@ -66,6 +66,26 @@ body::before {
 }
 /* Bottom sheets (rounded top corners) never reach the status bar: no top inset, only the gesture-bar inset */
 [role="dialog"].rounded-t-3xl { padding-top: 0; padding-bottom: var(--safe-bottom); }
+.trending-card { flex-basis: clamp(100px, calc((100% - 18px) / 2.5), 160px); }
+.trending-badge {
+  position: absolute; bottom: 4px; right: 4px;
+  max-width: calc(100% - 8px); padding: 2px 5px; border-radius: 999px;
+  background: rgb(0 0 0 / 75%); color: #f2a65a;
+  font-size: 10px; line-height: 1.4; overflow-wrap: anywhere;
+}
+.playlist-public input {
+  appearance: none; position: relative; width: 36px; height: 22px;
+  flex: 0 0 36px; border: 1px solid #86745f; border-radius: 999px;
+  background: #2e2721; transition: background .15s;
+}
+.playlist-public input::after {
+  content: ''; position: absolute; width: 16px; height: 16px;
+  top: 2px; left: 2px; border-radius: 50%; background: #dccdbe;
+  transition: transform .15s;
+}
+.playlist-public input:checked { background: #f2a65a; border-color: #f2a65a; }
+.playlist-public input:checked::after { transform: translateX(14px); background: #151210; }
+.playlist-public input:focus-visible { outline: 2px solid #ec7a96; outline-offset: 3px; }
 @media (max-width: 767px) {
   .search-result-row { padding-top: 12px; padding-bottom: 12px; gap: 10px; }
   .search-result-card { display: grid; grid-template-columns: 56px minmax(0, 1fr); align-items: start; }
@@ -82,7 +102,9 @@ body::before {
   .player-bar > div > div:first-child > div:nth-child(2) { flex: 1; }
   .player-bar > div > div:first-child .mt-1 { display: none; }
   .connection-header > div { gap: 6px 10px; padding: 8px 16px; }
-  .connection-header > div > button:first-child { order: 0; flex: 1; }
+  .connection-header > div > button:first-child { order: 0; flex: 1 0 auto; }
+  .connection-header > div > .connection-invite { flex-basis: 100%; }
+  .connection-header svg, .connection-header button { flex-shrink: 0; }
   .connection-header button[aria-label="连接设置"],
   .connection-header button[aria-label="离开房间"] { order: 0; }
   .connection-header > div > form { order: 2; flex-basis: 100%; flex-wrap: nowrap; gap: 8px; }
@@ -94,5 +116,27 @@ body::before {
   .connection-header > div > div.flex.items-center { display: none; }
   .connection-header > div > div.flex.flex-wrap { order: 2; flex-basis: 100%; }
   .connection-header > div > span[role="status"] { padding: 3px 8px; }
+  .connection-header > div > span[role="status"],
+  .connection-header > div > span[title="P2P 往返延迟"] { flex-shrink: 0; white-space: nowrap; }
+  .panel-header-stacked .panel-controls { flex-basis: 100%; margin-left: 0; padding-top: 4px; }
+  .panel-controls > span { justify-content: space-between; }
+  .panel-controls select { flex: 1 1 110px; min-height: 44px; }
+  .playlist-public { min-height: 44px; }
+  [role="dialog"], [role="alertdialog"] { max-height: calc(100dvh - var(--safe-top)); overflow-wrap: anywhere; }
+  [role="dialog"] header { flex-shrink: 0; }
+  [role="dialog"] button { flex-shrink: 0; }
+  [role="dialog"] button.w-full { flex-shrink: 1; }
+  [role="dialog"] button.w-full > span:last-child { flex-shrink: 0; }
+  [aria-label="正在播放"] h2, [aria-label="正在播放"] p { overflow-wrap: anywhere; }
+  [aria-label="正在播放"] .vinyl { width: min(256px, 65vw); height: min(256px, 65vw); }
+  .mini-player > div { flex-wrap: wrap; gap: 4px 8px; }
+  .mini-player > div > button:first-child { flex-basis: calc(100% - 112px); }
+  .mini-player > div > button:first-child > span:last-child > span:last-child { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mini-player .co-listen-pill { order: 2; }
+  .friends-panel { overflow-wrap: anywhere; }
+  .friends-panel .justify-between { flex-wrap: wrap; }
+  [aria-label="切换歌单"] button.w-full { gap: 12px; }
+  [aria-label="切换歌单"] button.w-full > span:first-child { flex: 1; overflow-wrap: anywhere; }
+  [aria-label="切换歌单"] button.w-full > span:last-child { white-space: nowrap; }
   main, section, header, .grid > *, .flex > * { min-width: 0; }
 }

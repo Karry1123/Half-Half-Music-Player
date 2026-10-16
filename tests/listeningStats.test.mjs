@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ListeningStats } from '../public/listeningStats.js';
+import { ListeningStats, createCompletedPlayUploader } from '../public/listeningStats.js';
 
 const base = new Date(2026, 9, 15, 12).getTime();
 async function tracker(options = {}) {
@@ -131,4 +131,56 @@ test('playback speed measures wall time and natural completion without treating 
   sample(50, 100, { playbackRate: 2, ended: true, playing: false });
   assert.equal(stats.summary('week', base + 50000), 50);
   assert.equal(stats.completedCount('song'), 1);
+});
+
+test('startup backfills saved completed totals and preserves device identity across reloads', async () => {
+  let saved = { stats: { completedPlayCount: { song: 3 }, trackMetadata: {} } };
+  const persistence = { load: async () => structuredClone(saved), save: async value => { saved = structuredClone(value); } };
+  const stats = new ListeningStats({ userId: 'alice', persistence });
+  const requests = [];
+  const client = { user: { isActivated: true }, request: async (path, body) => requests.push({ path, ...structuredClone(body) }) };
+  const upload = createCompletedPlayUploader({ stats, client, listTracks: async () => [{ id: 'song', title: '光年之外' }] });
+  await upload();
+  assert.equal(requests[0].path, '/account/plays');
+  assert.deepEqual(requests[0].plays, [{ title: '光年之外', artist: '', cover: '', completed: 3 }]);
+  const restored = new ListeningStats({ userId: 'alice', persistence });
+  await restored.ready();
+  assert.equal(restored.stats.deviceId, requests[0].deviceId);
+  await restored.flush();
+  await upload();
+  assert.deepEqual(requests[1], requests[0], 'retries send absolute totals, never increments');
+});
+
+test('each completion uploads immediately and queues totals completed during an upload', async () => {
+  const { stats, sample } = await tracker();
+  const requests = [];
+  let release;
+  const blocked = new Promise(resolve => { release = resolve; });
+  const upload = createCompletedPlayUploader({ stats,
+    client: { user: { isActivated: true }, request: async (_, body) => { requests.push(structuredClone(body)); if (requests.length === 1) await blocked; } },
+    listTracks: async () => [{ id: 'song', title: '成都', artist: '赵雷' }],
+  });
+  const unsubscribe = stats.subscribeCompleted(upload);
+  sample(0); sample(95);
+  // Wait for the first snapshot to reach the simulated network.
+  while (!requests.length) await new Promise(resolve => setImmediate(resolve));
+  sample(100, 100, { ended: true, playing: false });
+  sample(101, 0); sample(196, 95);
+  release();
+  await upload();
+  assert.deepEqual(requests.map(body => body.plays[0].completed), [1, 2]);
+  assert.equal(requests[0].deviceId, requests[1].deviceId);
+  unsubscribe();
+});
+
+test('failed play upload can retry the same cumulative totals', async () => {
+  const { stats, sample } = await tracker();
+  sample(0); sample(95);
+  let fails = true, body;
+  const upload = createCompletedPlayUploader({ stats, listTracks: async () => [{ id: 'song', title: '再見', artist: '鄧紫棋' }],
+    client: { user: { isActivated: true }, request: async (_, value) => { if (fails) throw new Error('offline'); body = value; } } });
+  await assert.rejects(upload(), /offline/);
+  fails = false;
+  await upload();
+  assert.equal(body.plays[0].completed, 1);
 });

@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" role="img" aria-label="Half&amp;Half: two earbuds sharing one song">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#F6B46A"/>
+      <stop offset="1" stop-color="#E8708F"/>
+    </linearGradient>
+  </defs>
+  <rect width="108" height="108" rx="24" fill="url(#bg)"/>
+  <g transform="translate(54 54) scale(1.265) translate(-54 -54)">
+    <g stroke="#FFFFFF" stroke-width="7" stroke-linecap="round">
+      <path d="M43 51 37 71"/>
+      <path d="M65 51 71 71"/>
+    </g>
+    <g fill="#FFFFFF">
+      <circle cx="40" cy="45" r="10"/>
+      <circle cx="68" cy="45" r="10"/>
+      <path d="M54 66C46 60 47 54 51 54.5 52.8 54.7 54 56 54 57 54 56 55.2 54.7 57 54.5 61 54 62 60 54 66Z"/>
+    </g>
+    <g fill="#EFB3C1">
+      <ellipse cx="46.5" cy="46" rx="2" ry="3"/>
+      <ellipse cx="61.5" cy="46" rx="2" ry="3"/>
+    </g>
+  </g>
+</svg>
