@@ -16,6 +16,7 @@ import { makeTrack } from './providers/track.js';
 import { aggregateSearch, trackCache } from './search.js';
 import { Accounts, mountAccounts } from './accounts.js';
 import { ChartsCache, mountCharts } from './lib/charts.js';
+import { mountCoverProxy } from './lib/coverProxy.js';
 import { createAuthenticatedPeerWebSocket } from '../../server/peerAuth.js';
 import { TurnQuotaGuard, databaseQuotaStore, fileQuotaStore, setTurnQuotaGuard } from '../../server/turnQuota.js';
 
@@ -51,6 +52,8 @@ try {
     mailer = nodemailer.createTransport({ host: process.env.SMTP_HOST, port, secure: port === 465,
       auth: process.env.SMTP_USER ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS } : undefined,
       connectionTimeout: 10000, socketTimeout: 15000 });
+    // 启动时验证一次邮箱登录（不发信），方便在日志里确认告警邮件可用
+    mailer.verify().then(() => console.log('[turn-quota] 告警邮箱: SMTP 登录成功')).catch(e => console.error('[turn-quota] 告警邮箱: SMTP 登录失败:', e.message));
   }
 } catch (e) { console.error('[turn-quota] SMTP unavailable; alerts will be logged:', e.message); }
 try {
@@ -94,6 +97,7 @@ if (config.signaling) {
 // 以下全部需要访问令牌（配置了 API_TOKEN 时）
 app.use(['/api', '/files'], accountGuard || requireToken);
 app.use(['/api/search', '/api/resolve', '/api/download'], rateLimit());
+mountCoverProxy(app);
 
 // ---------------------------------------------------------------- 状态
 app.get('/api/health', async (_req, res) => {

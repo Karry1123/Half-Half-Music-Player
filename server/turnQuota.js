@@ -95,6 +95,7 @@ export class TurnQuotaGuard {
       const bytes = await fetchMonthlyTurnBytes(this.env, this.fetcher, this.now());
       this.state.bytes = bytes;
       const percent = bytes / (positive(this.env.TURN_QUOTA_GB, 1000) * 1e9) * 100;
+      this.logger.info(`[turn-quota] ${month} TURN 用量 ${(bytes / 1e9).toFixed(2)} GB（${percent.toFixed(1)}%）`);
       const kill = Math.min(100, positive(this.env.TURN_QUOTA_KILL_PERCENT, 90));
       const warn = Math.min(kill, positive(this.env.TURN_QUOTA_WARN_PERCENT, 50));
       if (percent >= kill) this.state.disabled = true;
