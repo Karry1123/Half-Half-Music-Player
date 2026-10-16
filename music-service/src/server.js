@@ -83,7 +83,11 @@ app.head(['/ping', '/health'], (_req, res) => res.sendStatus(200)); // UptimeRob
 // ---------------------------------------------------------------- ICE 配置（公网部署且启用信令时）
 // 不需要令牌：好友那一端没有令牌，也要拿到 TURN 才能跨境连上。凭证本身是短期的，并且有限流
 if (config.signaling) {
-  const { iceConfigAsync } = await import('../../server/ice.js');
+  const { iceConfigAsync, describeTurn } = await import('../../server/ice.js');
+  // 启动时报告 TURN 状态（不打印凭证）：配置了就先取一次，确认密钥可用
+  const turn = describeTurn();
+  console.log(`TURN 中继: ${turn.length ? turn.join('、') : '未配置（仅 STUN，跨网络可能连不上）'}`);
+  if (turn.length) iceConfigAsync().then(servers => console.log(`TURN 凭证: ${servers.some(s => s.credential) ? '获取成功' : '获取失败，请检查密钥'}`)).catch(e => console.error('TURN 凭证获取失败:', e.message));
   app.get('/ice.json', accountGuard || ((_req, _res, next) => next()), rateLimit({ perMinute: 30, name: 'ice' }), async (_req, res) => res.set('Cache-Control', 'no-store').json(await iceConfigAsync()));
 }
 
