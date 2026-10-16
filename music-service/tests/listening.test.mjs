@@ -1,11 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { Accounts, mountAccounts, wrapPostgres } from '../music-service/src/accounts.js';
-const express = createRequire(new URL('../music-service/package.json', import.meta.url))('express');
+import { Accounts, mountAccounts, wrapPostgres } from '../src/accounts.js';
+const express = createRequire(new URL('../package.json', import.meta.url))('express');
 
 test('PostgreSQL listening schema and absolute upserts match SQLite semantics', async () => {
-  const { PGlite } = createRequire(new URL('../music-service/package.json', import.meta.url))('@electric-sql/pglite');
+  const { PGlite } = createRequire(new URL('../package.json', import.meta.url))('@electric-sql/pglite');
   const pg = new PGlite();
   const accounts = new Accounts(wrapPostgres(pg, fn => pg.transaction(tx => fn(wrapPostgres(tx)))));
   try {
