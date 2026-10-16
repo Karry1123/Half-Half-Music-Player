@@ -27,6 +27,17 @@ body::before {
   pointer-events: none;
 }
 .player-bar { padding: 0 var(--safe-right) var(--safe-bottom) var(--safe-left); }
+/* Override the generic mobile dialog height cap, including the gesture area. */
+[role="dialog"].fullscreen-player {
+  position: fixed;
+  inset: 0;
+  height: 100vh;
+  height: 100dvh;
+  max-height: none;
+  z-index: 65;
+  background: #0e0c0b;
+  padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+}
 .player-transport {
   display: grid;
   grid-template-columns: 44px 44px 52px 44px 44px;

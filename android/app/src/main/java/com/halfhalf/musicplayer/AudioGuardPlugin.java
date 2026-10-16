@@ -5,7 +5,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.media.AudioAttributes;
-import android.media.AudioFocusRequest;
+import android.media.AudioPlaybackConfiguration;
 import android.media.AudioManager;
 import android.os.Build;
 import android.os.Handler;
@@ -19,37 +19,37 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 @CapacitorPlugin(name = "AudioGuard")
 public class AudioGuardPlugin extends Plugin {
     private AudioManager manager;
-    private AudioFocusRequest request;
-    private boolean registered;
+    private boolean registered, inCall;
+    private final Handler handler = new Handler(Looper.getMainLooper());
     private final BroadcastReceiver noisy = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
             if (AudioManager.ACTION_AUDIO_BECOMING_NOISY.equals(intent.getAction()))
                 notifyListeners("becomingNoisy", new JSObject());
         }
     };
-    private final AudioManager.OnAudioFocusChangeListener listener = change -> {
-        String state;
-        switch (change) {
-            case AudioManager.AUDIOFOCUS_LOSS: state = "loss"; break;
-            case AudioManager.AUDIOFOCUS_LOSS_TRANSIENT: state = "lossTransient"; break;
-            case AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK: state = "lossTransientCanDuck"; break;
-            case AudioManager.AUDIOFOCUS_GAIN: state = "gain"; break;
-            default: return;
-        }
+    private boolean callActive() {
+        if (manager == null) return false;
+        int mode = manager.getMode();
+        return mode == AudioManager.MODE_IN_CALL || mode == AudioManager.MODE_IN_COMMUNICATION
+            || mode == AudioManager.MODE_RINGTONE;
+    }
+    private void emit(String state) {
         JSObject data = new JSObject();
         data.put("state", state);
-        notifyListeners("focusChange", data);
+        notifyListeners("interruption", data);
+    }
+    private final Runnable pollCall = new Runnable() {
+        @Override public void run() {
+            if (!registered) return;
+            boolean active = callActive();
+            if (active != inCall) { inCall = active; emit(active ? "lossTransient" : "gain"); }
+            handler.postDelayed(this, 500);
+        }
     };
     @Override public void load() {
         manager = (AudioManager) getContext().getSystemService(Context.AUDIO_SERVICE);
-        if (Build.VERSION.SDK_INT >= 26) {
-            request = new AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
-                .setAudioAttributes(new AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC).build())
-                .setOnAudioFocusChangeListener(listener, new Handler(Looper.getMainLooper()))
-                .setWillPauseWhenDucked(false).setAcceptsDelayedFocusGain(false).build();
-        }
     }
+    // Bridge compatibility: WebView is the sole audio-focus owner.
     @PluginMethod public void requestFocus(PluginCall call) {
         getActivity().runOnUiThread(() -> {
             try {
@@ -58,21 +58,37 @@ public class AudioGuardPlugin extends Plugin {
                     if (Build.VERSION.SDK_INT >= 33) getContext().registerReceiver(noisy, filter, Context.RECEIVER_EXPORTED);
                     else getContext().registerReceiver(noisy, filter);
                     registered = true;
+                    handler.post(pollCall);
                 }
-                int result = Build.VERSION.SDK_INT >= 26 ? manager.requestAudioFocus(request)
-                    : manager.requestAudioFocus(listener, AudioManager.STREAM_MUSIC, AudioManager.AUDIOFOCUS_GAIN);
-                if (result != AudioManager.AUDIOFOCUS_REQUEST_GRANTED) abandon();
                 JSObject data = new JSObject();
-                data.put("granted", result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED);
+                data.put("granted", true);
                 call.resolve(data);
-            } catch (RuntimeException e) { abandon(); call.reject("无法获取音频焦点", e); }
+            } catch (RuntimeException e) { abandon(); call.reject("Unable to monitor audio", e); }
+        });
+    }
+    // Called only after the main element stays paused, with preview stopped.
+    // Public configurations are anonymized; getClientUid is not a public API.
+    @PluginMethod public void getInterruption(PluginCall call) {
+        getActivity().runOnUiThread(() -> {
+            JSObject data = new JSObject();
+            try {
+                if (callActive()) { inCall = true; data.put("state", "lossTransient"); }
+                else if (manager != null && Build.VERSION.SDK_INT >= 26) {
+                    for (AudioPlaybackConfiguration config : manager.getActivePlaybackConfigurations()) {
+                        int usage = config.getAudioAttributes().getUsage();
+                        if (usage == AudioAttributes.USAGE_MEDIA || usage == AudioAttributes.USAGE_GAME) {
+                            data.put("state", "loss");
+                            break;
+                        }
+                    }
+                }
+                call.resolve(data);
+            } catch (RuntimeException e) { call.resolve(data); }
         });
     }
     private void abandon() {
-        if (manager != null) {
-            if (Build.VERSION.SDK_INT >= 26 && request != null) manager.abandonAudioFocusRequest(request);
-            else manager.abandonAudioFocus(listener);
-        }
+        handler.removeCallbacks(pollCall);
+        inCall = false;
         if (registered) {
             try { getContext().unregisterReceiver(noisy); } catch (IllegalArgumentException ignored) { }
             registered = false;

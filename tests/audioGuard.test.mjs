@@ -60,6 +60,36 @@ test('only identifiable audio outputs count; disappearance versus addition', () 
 });
 
 const flush = () => new Promise(resolve => setImmediate(resolve));
+test('native WebView focus losses during own starts and track changes never pause', async () => {
+  const listeners = {};
+  const h = harness({ capacitor: { isNativePlatform: () => true }, nativePlugin: () => ({
+    addListener: async (name, fn) => { listeners[name] = fn; return { remove() {} }; },
+    requestFocus: async () => ({ granted: true }), abandonFocus: async () => {},
+  }) });
+  await flush();
+  for (let track = 0; track < 5; track++) {
+    h.audio.dispatchEvent(new Event('play'));
+    listeners.focusChange?.({ state: 'loss' });
+    listeners.focusChange?.({ state: 'lossTransient' });
+  }
+  assert.deepEqual(h.pauses, []);
+  h.guard.dispose();
+});
+
+test('web ignores speaker disappearance and output changes for three seconds after play', async () => {
+  let now = 0, list = [{ kind: 'audiooutput', deviceId: 'speaker', label: 'Speakers' }];
+  const devices = Object.assign(new EventTarget(), { enumerateDevices: async () => list });
+  const h = harness({ navigator: { mediaDevices: devices }, clock: () => now });
+  await flush();
+  list = []; devices.dispatchEvent(new Event('devicechange')); await flush();
+  assert.deepEqual(h.pauses, []);
+  list = [{ kind: 'audiooutput', deviceId: 'bt', label: 'Bluetooth headphones' }];
+  devices.dispatchEvent(new Event('devicechange')); await flush();
+  h.audio.dispatchEvent(new Event('play'));
+  now = 2999; list = []; devices.dispatchEvent(new Event('devicechange')); await flush();
+  assert.deepEqual(h.pauses, []);
+  h.guard.dispose();
+});
 function harness(extra = {}) {
   const audio = Object.assign(new EventTarget(), { paused: false, ended: false });
   let playing = true, pauses = [], resumes = 0, volume;
@@ -70,16 +100,18 @@ function harness(extra = {}) {
   return { audio, guard, pauses, get resumes() { return resumes; }, get volume() { return volume; } };
 }
 
-test('bridge handles absent APIs and browser OS pauses without recursive pauses', () => {
-  const h = harness();
+const settlePause = () => new Promise(resolve => setTimeout(resolve, 15));
+test('bridge handles absent APIs and browser OS pauses without recursive pauses', async () => {
+  const h = harness({ pauseDelay: 0 });
   h.audio.paused = true; h.audio.dispatchEvent(new Event('pause'));
+  await settlePause();
   assert.deepEqual(h.pauses, ['browserPause']);
   assert.equal(h.guard.blocked, true);
   h.guard.event('gain'); assert.equal(h.resumes, 0);
   h.guard.dispose();
 });
 
-test('native listeners precede focus; transient retains focus; user pause abandons', async () => {
+test('native listeners precede monitoring; transient retains monitoring; user pause abandons', async () => {
   const listeners = {}, calls = [];
   const h = harness({ capacitor: { isNativePlatform: () => true }, nativePlugin: name => {
     assert.equal(name, 'AudioGuard');
@@ -88,17 +120,54 @@ test('native listeners precede focus; transient retains focus; user pause abando
       abandonFocus: async () => { calls.push('abandon'); } };
   } });
   h.audio.dispatchEvent(new Event('play')); await flush();
-  assert.deepEqual(calls, ['becomingNoisy', 'focusChange', 'request']);
-  listeners.focusChange({ state: 'lossTransientCanDuck' }); assert.equal(h.volume, 0.3);
-  listeners.focusChange({ state: 'gain' }); assert.equal(h.volume, 1);
-  listeners.focusChange({ state: 'lossTransient' }); await flush();
+  assert.deepEqual(calls, ['becomingNoisy', 'interruption', 'request']);
+  listeners.interruption({ state: 'lossTransientCanDuck' }); assert.equal(h.volume, 0.3);
+  listeners.interruption({ state: 'gain' }); assert.equal(h.volume, 1);
+  listeners.interruption({ state: 'lossTransient' }); await flush();
   assert.deepEqual(h.pauses, ['lossTransient']); assert.equal(h.guard.waiting, true);
   assert.equal(calls.includes('abandon'), false);
-  listeners.focusChange({ state: 'gain' }); await flush();
+  listeners.interruption({ state: 'gain' }); await flush();
   assert.equal(h.resumes, 1);
-  listeners.focusChange({ state: 'lossTransient' }); h.guard.interact(); await flush();
+  listeners.interruption({ state: 'lossTransient' }); h.guard.interact(); await flush();
   assert.equal(calls.includes('abandon'), true);
-  listeners.focusChange({ state: 'gain' }); assert.equal(h.resumes, 1);
+  listeners.interruption({ state: 'gain' }); assert.equal(h.resumes, 1);
+  h.guard.dispose();
+});
+
+test('native external pause requires corroboration; real media and calls pause', async () => {
+  for (const state of [undefined, 'loss', 'lossTransient']) {
+    const h = harness({ pauseDelay: 0, capacitor: { isNativePlatform: () => true }, nativePlugin: () => ({
+      addListener: async () => ({ remove() {} }), requestFocus: async () => ({ granted: true }),
+      abandonFocus: async () => {}, getInterruption: async () => ({ state }),
+    }) });
+    h.audio.paused = true; h.audio.dispatchEvent(new Event('pause'));
+    await settlePause();
+    assert.deepEqual(h.pauses, state ? [state] : []);
+    assert.equal(h.guard.waiting, state === 'lossTransient');
+    h.guard.dispose();
+  }
+});
+
+test('external pause ignores app pauses, seek, ended, buffering, preview and changed sources', async () => {
+  for (const reason of ['app', 'seek', 'ended', 'buffer', 'preview', 'source', 'restart']) {
+    const h = harness({ pauseDelay: 0, consumeAppPause: () => reason === 'app', ignorePause: () => reason === 'preview' });
+    h.audio.src = 'first'; h.audio.readyState = reason === 'buffer' ? 2 : 4;
+    h.audio.seeking = reason === 'seek'; h.audio.ended = reason === 'ended';
+    h.audio.paused = true; h.audio.dispatchEvent(new Event('pause'));
+    if (reason === 'source') h.audio.src = 'second';
+    if (reason === 'restart') { h.audio.paused = false; h.audio.dispatchEvent(new Event('play')); }
+    await settlePause();
+    assert.deepEqual(h.pauses, [], reason);
+    h.guard.dispose();
+  }
+});
+
+test('native never enumerates web devices even without a plugin', async () => {
+  let enumerated = 0;
+  const devices = Object.assign(new EventTarget(), { enumerateDevices: async () => { enumerated++; return []; } });
+  const h = harness({ capacitor: { isNativePlatform: () => true }, navigator: { mediaDevices: devices } });
+  devices.dispatchEvent(new Event('devicechange')); await flush();
+  assert.equal(enumerated, 0);
   h.guard.dispose();
 });
 

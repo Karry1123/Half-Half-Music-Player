@@ -1900,6 +1900,7 @@ audioGuard = installAudioGuard({
   autoResume: () => stored('hh.audioGuard.autoResume') !== 'false',
   isPlaying: () => session.out.intent,
   consumeAppPause: () => { if (!session.out.appPauses) return false; session.out.appPauses--; return true; },
+  ignorePause: () => !!get().preview,
   setDucking: factor => { audioDuck = factor; session.out.setVolume(get().volume); },
   publish: () => set({ audioFocusTransient: !!audioGuard?.waiting }),
   pause: reason => {
@@ -4461,7 +4462,7 @@ function NativePlayer({ open, close, expand }) {
   }, [open]);
   const can = s.loaded && (s.role !== 'guest' || s.conn === 'open');
   return html`<div>
-    <div class="mini-player fixed inset-x-0 z-40 border-t border-ink-700 bg-ink-950/95 px-4 py-2 backdrop-blur-xl" style=${{ paddingLeft: 'max(16px, var(--safe-left))', paddingRight: 'max(16px, var(--safe-right))', bottom: 'calc(64px + var(--safe-bottom, 0px))' }}>
+    <div hidden=${open} class="mini-player fixed inset-x-0 z-40 border-t border-ink-700 bg-ink-950/95 px-4 py-2 backdrop-blur-xl" style=${{ paddingLeft: 'max(16px, var(--safe-left))', paddingRight: 'max(16px, var(--safe-right))', bottom: 'calc(64px + var(--safe-bottom, 0px))' }}>
       <div class="mx-auto flex max-w-5xl items-center gap-3">
         <button class="flex min-w-0 flex-1 items-center gap-3 text-left" onClick=${expand} aria-label="展开播放器"><${Cover} item=${item} size=${44} /><span class="min-w-0"><span class="block truncate text-sm font-semibold">${item?.title || '从曲库选择一首歌'}</span><span class="text-xs text-sand-400">${s.conn === 'open' ? '♫ 正在一起听' : item?.artist || 'Half&Half'}</span></span></button>
         <${CoListenPill} />
@@ -4469,7 +4470,7 @@ function NativePlayer({ open, close, expand }) {
         <button class="p-3 disabled:opacity-30" disabled=${!can || !s.canNext} onClick=${() => session.act('next')} aria-label="下一首"><${SkipForward} size=${23} /></button>
       </div>
     </div>
-    ${open && html`<section role="dialog" aria-modal="true" aria-label="正在播放" class="fixed inset-0 z-[65] flex flex-col overflow-y-auto bg-ink-950 p-6" style=${{ paddingTop: 'calc(var(--safe-top, 0px) + 20px)', paddingBottom: 'calc(var(--safe-bottom, 0px) + 24px)', transform: `translateY(${dy}px)`, transition: start.current === null ? 'transform 220ms ease' : 'none' }}
+    ${open && html`<section role="dialog" aria-modal="true" aria-label="正在播放" class="fullscreen-player fixed inset-0 z-[65] flex flex-col overflow-y-auto bg-ink-950 p-6" style=${{ paddingTop: 'calc(var(--safe-top, 0px) + 20px)', paddingBottom: 'calc(var(--safe-bottom, 0px) + 24px)', transform: `translateY(${dy}px)`, transition: start.current === null ? 'transform 220ms ease' : 'none' }}
       onTouchStart=${e => { if (e.target.closest('button,input') || e.currentTarget.scrollTop > 0) return; start.current = e.touches[0].clientY; }}
       onTouchMove=${e => { if (start.current !== null) setDy(Math.max(0, e.touches[0].clientY - start.current)); }}
       onTouchEnd=${() => { start.current = null; if (dy > 100) { setDy(window.innerHeight); setTimeout(() => { close(); setDy(0); }, 220); } else setDy(0); }} onTouchCancel=${() => { start.current = null; setDy(0); }}>
@@ -4574,7 +4575,7 @@ function App() {
       ${tab === 'settings' && html`<${StatsPanel} /><${AccountCard} client=${account} className="space-y-4 rounded-2xl border border-ink-700 p-5" /><button class="mt-5 flex w-full items-center gap-3 rounded-xl border border-ink-600 p-4 text-left" onClick=${() => set({ connSettingsOpen: true })}><${Settings} size=${18} class="shrink-0" /> 网络诊断 / 连接与播放设置</button><${ConnectionBar} />`}
     </main>
     ${!keyboardOpen && html`<${NativePlayer} open=${playerOpen} close=${() => setPlayerOpen(false)} expand=${() => setPlayerOpen(true)} />
-      <nav aria-label="主导航" class="fixed inset-x-0 bottom-0 z-40 border-t border-ink-700 bg-ink-950/95 backdrop-blur-xl" style=${{ paddingBottom: 'var(--safe-bottom, 0px)', paddingLeft: 'var(--safe-left)', paddingRight: 'var(--safe-right)' }}>
+      <nav hidden=${playerOpen} aria-label="主导航" class="fixed inset-x-0 bottom-0 z-40 border-t border-ink-700 bg-ink-950/95 backdrop-blur-xl" style=${{ paddingBottom: 'var(--safe-bottom, 0px)', paddingLeft: 'var(--safe-left)', paddingRight: 'var(--safe-right)' }}>
         <div class="mx-auto grid h-16 max-w-5xl grid-cols-4">${[['discover', '发现/检索', Search], ['library', '曲库/歌单', Library], ['friends', '好友/动态', Users], ['settings', '设置/账号', Settings]].map(([id, label, Icon]) => html`<button key=${id} aria-current=${tab === id ? 'page' : undefined} class=${cx('flex flex-col items-center justify-center gap-1 text-xs', tab === id ? 'text-host' : 'text-sand-400')} onClick=${() => setTab(id)}><${Icon} size=${21} />${label}</button>`)}</div>
       </nav>`}
     ${invitation && html`<div class="fixed inset-0 z-[90] grid place-items-center bg-black/70 p-5"><section role="dialog" aria-modal="true" aria-label="一起听邀请" class="w-full max-w-sm space-y-5 rounded-3xl bg-ink-900 p-6"><p>${invitation.nickname} 邀请你一起听歌，是否加入？</p><div class="flex justify-end gap-4">${[false, true].map(accept => html`<button class="rounded-xl border border-ink-600 px-5 py-3" onClick=${() => { session.out.unlock(); sendSocial({ type: 'INVITE_LISTEN_RESPONSE', inviteId: invitation.inviteId, accept }); setInvitation(null); }}>${accept ? '加入' : '暂不'}</button>`)}</div></section></div>`}
