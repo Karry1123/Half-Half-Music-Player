@@ -97,6 +97,24 @@ body::before {
 .playlist-public input:checked { background: #f2a65a; border-color: #f2a65a; }
 .playlist-public input:checked::after { transform: translateX(14px); background: #151210; }
 .playlist-public input:focus-visible { outline: 2px solid #ec7a96; outline-offset: 3px; }
+[role="dialog"].queue-sheet {
+  height: 85vh;
+  height: 85dvh;
+  max-height: min(85dvh, calc(100dvh - var(--safe-top)));
+  overflow: hidden;
+  padding: 0 0 calc(12px + var(--safe-bottom));
+}
+.queue-sheet-page { overflow: hidden; }
+.queue-sheet-forward { animation: queue-sheet-forward .22s ease-out; }
+.queue-sheet-back { animation: queue-sheet-back .22s ease-out; }
+.queue-sheet .queue-sheet-text { white-space: normal; overflow-wrap: anywhere; }
+[role="dialog"].queue-sheet button.queue-sheet-row > span { flex-shrink: 1; white-space: normal; }
+.queue-sheet header button { min-width: 44px; min-height: 44px; }
+@keyframes queue-sheet-forward { from { transform: translateX(100%); opacity: .4; } to { transform: translateX(0); opacity: 1; } }
+@keyframes queue-sheet-back { from { transform: translateX(-25%); opacity: .4; } to { transform: translateX(0); opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .queue-sheet-forward, .queue-sheet-back { animation: none; }
+}
 @media (max-width: 767px) {
   .search-result-row { padding-top: 12px; padding-bottom: 12px; gap: 10px; }
   .search-result-card { display: grid; grid-template-columns: 56px minmax(0, 1fr); align-items: start; }

@@ -14,7 +14,7 @@ async function javascriptFiles(directory, recursive = false) {
 }
 
 // Delimiters distinguish damaged UI strings/markup from optional chaining and ternaries.
-const damagedText = /['"`>]\s*\?{3,}/;
+const damagedText = /['"`>]\s*\?{3,}|>\s*\?{2,}\s*\$\{|\}\s*\?+\s*<|['"`]\?{2,}['"`(]/;
 test('UI and service sources retain UTF-8 text instead of question-mark replacements', async () => {
   const root = new URL('../', import.meta.url);
   const files = [
@@ -31,5 +31,5 @@ test('UI and service sources retain UTF-8 text instead of question-mark replacem
 
 test('encoding guard permits JavaScript operators and rejects damaged labels', () => {
   for (const source of ['value?.title ?? ""', 'ok ? "yes" : "no"']) assert.equal(damagedText.test(source), false);
-  for (const source of ['"???"', "'????label'", '`???`', '<span>????</span>']) assert.equal(damagedText.test(source), true);
+  for (const source of ['"???"', "'????label'", '`???`', '<span>????</span>', '<span>?? ${n} ?</span>', "'??(????)'"]) assert.equal(damagedText.test(source), true);
 });

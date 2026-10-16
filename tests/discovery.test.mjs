@@ -4,7 +4,10 @@ import { sortPlaylistTracks, trendingBadge } from '../public/discoveryUI.js';
 import { ListeningStats } from '../public/listeningStats.js';
 
 test('trending badges distinguish actual completed counts from recommendations', () => {
-  assert.equal(trendingBadge({ completed: 3 }), '3 次');
+  assert.equal(trendingBadge({ completed: 1420 }, 0), '最热');
+  assert.equal(trendingBadge({ completed: 3 }, 2), '热门');
+  assert.equal(trendingBadge({ completed: 3 }, 7), '热听');
+  assert.doesNotMatch(trendingBadge({ completed: 1420 }, 0), /\d/);
   for (const completed of [undefined, 0, -1, NaN]) assert.equal(trendingBadge({ completed }), '推荐');
 });
 test('playlist sorting leaves original order and uses requested count, name and duration', () => {

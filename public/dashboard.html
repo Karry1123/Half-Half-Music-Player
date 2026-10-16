@@ -114,7 +114,7 @@ import {
   Activity, AlertTriangle, ArrowDownUp, ArrowRight, Check, FolderDown, HardDrive, HardDriveDownload, CirclePlay, Clock as ClockIcon, Copy, Crown, Disc3, Download, FileAudio, Flame, Globe,
   ExternalLink, Gauge, Headphones, History, Home, ListOrdered, Server, Settings, Zap, Repeat, Repeat1, Shuffle, User, LayoutDashboard, Link, Link2, ListMusic, Loader2, LogOut, Music2, Pause, Play, QrCode,
   Radio, RefreshCw, Search, ShieldCheck, Signal, SkipBack, SkipForward, Sparkles, Square, Trash2, Upload, Users, Volume2, VolumeX,
-  Wifi, WifiOff, X, Plus, MoreHorizontal, ListPlus, ListMinus, Pencil, Library, Eye, EyeOff, ChevronDown, Cloud, CloudDownload,
+  Wifi, WifiOff, X, Plus, MoreHorizontal, ListPlus, ListMinus, Pencil, Library, Eye, EyeOff, ChevronDown, ChevronRight, Cloud, CloudDownload,
 } from 'lucide-react';
 import { Peer } from 'peerjs';
 import { ListeningStats, createCompletedPlayUploader } from './listeningStats.js';
@@ -902,19 +902,25 @@ class Session {
   }
 
   /**
-   * 播放一个歌单：队列立即换成这个歌单的全部曲目（随机模式重新洗牌），从 startItemId 或第一首开始。
+   * 播放一个歌单：队列立即换成这个歌单的全部曲目；可显式指定模式，否则保留当前模式。
+   * 从 startItemId 开始；未指定时顺序模式从第一首开始，随机模式重新洗牌后选第一首。
    * 单人：直接播；房主在房间里：同时向 Guest 广播 set_playlist，对方横幅显示"正在一起收听歌单"。
    */
-  async playPlaylist(playlistId, { startItemId = null, orderedIds = null } = {}) {
+  async playPlaylist(playlistId, { startItemId = null, orderedIds = null, mode = null } = {}) {
     this.audioGuard?.interact();
     if (this.isGuest) return toast('房间里的歌单由房主决定：双击歌曲可以请房主切过去', 'warn');
     const pl = playlistId && playlistId !== ALL_ID ? playlistStore.get(playlistId) : null;
     if (playlistId && playlistId !== ALL_ID && !pl) return toast('这个歌单已经不存在了', 'warn');
     if (pl) await ensureInLibrary(missingFromLibrary(pl, get().library));
+    if (this.isGuest) return;
     this.viewOrder = orderedIds ? { playlistId: pl?.id || ALL_ID, ids: [...orderedIds] } : null;
     set({ activePlaylistId: pl ? pl.id : null });
     const scope = this.scopeIds();
     if (!scope.length) return toast(pl ? `歌单《${pl.name}》里还没有歌` : '曲库里还没有歌', 'warn');
+    if (mode && PLAY_MODES.includes(mode)) {
+      set({ playMode: mode });
+      try { localStorage.setItem('hh.playMode', mode); } catch {}
+    }
     const q = this.queue = new PlayQueue({ mode: get().playMode });
     q.setTracks(scope, null);
     if (q.mode === 'shuffle') q.newRound();
@@ -2865,7 +2871,7 @@ function LibraryPanel() {
                 <span class=${cx('truncate text-sm font-medium', cur && 'text-host')}>${x.title}</span>
                 ${saved ? html`<${HardDrive} size=${12} class="shrink-0 text-sync" aria-label="已存本机" title="已保存在这台设备上，离线也能播放" />` : ''}
               </div>
-              <div class="truncate text-xs text-sand-400">${x.artist}${trackCompletedCount(x) > 0 && html`<span class="ml-2 text-host/80">?? ${trackCompletedCount(x)} ?</span>`}${x.addedBy && x.addedBy !== get().me.name ? html` · <span class="text-guest/80">${x.addedBy} 添加</span>` : ''}</div>
+              <div class="truncate text-xs text-sand-400">${x.artist}${trackCompletedCount(x) > 0 && html`<span class="ml-1 text-host/80">· 已听 ${trackCompletedCount(x)} 次</span>`}${x.addedBy && x.addedBy !== get().me.name ? html` · <span class="text-guest/80">${x.addedBy} 添加</span>` : ''}</div>
             </div>
           </div>
           <span class="hidden truncate text-xs text-sand-400 md:block">${x.sourceLabel} <${QualityBadge} q=${x.quality} /></span>
@@ -4442,10 +4448,67 @@ function CoListenDrawer() {
 }
 function QueueSheet() {
   const s = useStore(s => s), close = () => set({ queueSheetOpen: false });
-  useBackLayer(s.queueSheetOpen, close);
-  if (!s.queueSheetOpen) return null;
+  const [selectedId, select] = useState(null), [loading, setLoading] = useState(false), [error, setError] = useState('');
+  useBackLayer(s.queueSheetOpen && s.role !== 'guest', () => selectedId ? select(null) : close());
+  useEffect(() => { if (!s.queueSheetOpen) select(null); }, [s.queueSheetOpen]);
+  useEffect(() => {
+    if (!s.queueSheetOpen || s.role === 'guest') return;
+    let cancelled = false;
+    const playlist = selectedId && playlistStore.get(selectedId);
+    setError('');
+    setLoading(!!playlist);
+    if (playlist) ensureInLibrary(missingFromLibrary(playlist, get().library))
+      .catch(e => { if (!cancelled) setError(e.message); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [s.queueSheetOpen, selectedId, s.role]);
+  if (!s.queueSheetOpen || s.role === 'guest') return null;
   const choices = [{ id: ALL_ID, name: ALL_NAME, trackIds: s.library.map(t => t.id) }, ...s.playlists];
-  return html`<div class="fixed inset-0 z-[90] flex items-end bg-black/60" onClick=${e => e.target === e.currentTarget && close()}><section role="dialog" aria-modal="true" aria-label="切换歌单" class="flex h-[50dvh] w-full flex-col rounded-t-3xl border border-ink-700 bg-ink-900 p-5" style=${{ paddingBottom: 'calc(20px + var(--safe-bottom, 0px))' }}><header class="mb-4 flex justify-between"><h2>切换歌单</h2><button onClick=${close} aria-label="关闭"><${X} size=${20} /></button></header><div class="scroll-thin flex-1 space-y-2 overflow-y-auto">${choices.map(p => html`<button key=${p.id} disabled=${s.role === 'guest'} class="flex w-full justify-between rounded-xl border border-ink-700 p-4 text-left disabled:opacity-40" onClick=${async () => { close(); await session.playPlaylist(p.id); }}><span>${p.name}</span><span class="text-sand-400">${p.trackIds.length + (p.pending?.length || 0)} 首</span></button>`)}</div></section></div>`;
+  const playlist = choices.find(p => p.id === selectedId);
+  const items = playlist ? resolveScope(playlist, s.library).map(id => s.library.find(t => t.id === id)).filter(Boolean) : [];
+  const pending = playlist?.pending || [];
+  const play = async (options = {}) => {
+    try { await session.playPlaylist(playlist.id, options); close(); }
+    catch (e) { toast(e.message, 'warn'); }
+  };
+  return html`<div class="fixed inset-0 z-[90] flex items-end bg-black/60" onClick=${e => e.target === e.currentTarget && close()}>
+    <section role="dialog" aria-modal="true" aria-label="切换歌单" class="queue-sheet flex w-full flex-col rounded-t-3xl border border-ink-700 bg-ink-900">
+      <header class="flex shrink-0 items-center gap-2 px-4 py-3">
+        ${playlist && html`<button onClick=${() => select(null)} aria-label="返回歌单列表" class="grid place-items-center"><${ArrowRight} class="rotate-180" size=${20} /></button>`}
+        <h2 class="min-w-0 flex-1">切换歌单</h2><button onClick=${close} aria-label="关闭" class="grid place-items-center"><${X} size=${20} /></button>
+      </header>
+      <div key=${playlist?.id || 'playlists'} class=${cx('queue-sheet-page flex min-h-0 flex-1 flex-col', playlist ? 'queue-sheet-forward' : 'queue-sheet-back')}>
+        ${playlist ? html`
+          <div class="shrink-0 border-b border-ink-700 px-4 pb-3">
+            <h3 class="queue-sheet-text font-semibold">${playlist.name}</h3>
+            <p class="mt-1 text-xs text-sand-400">${items.length + pending.length} 首${pending.length ? ` · ${pending.length} 首未下载` : ''}</p>
+            <div class="mt-3 grid grid-cols-2 gap-2">
+              <button disabled=${loading || !items.length} onClick=${() => play({ mode: 'shuffle' })} class="flex items-center justify-center gap-2 rounded-xl bg-host px-2 py-3 text-sm text-ink-950 disabled:opacity-40"><${Shuffle} size=${16} />随机播放</button>
+              <button disabled=${loading || !items.length} onClick=${() => play({ mode: 'order', startItemId: items[0]?.id })} class="flex items-center justify-center gap-2 rounded-xl border border-ink-700 px-2 py-3 text-sm disabled:opacity-40"><${ListOrdered} size=${16} />顺序播放</button>
+            </div>
+          </div>
+          <div class="scroll-thin min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 py-2" aria-busy=${loading}>
+            ${loading && html`<p class="p-3 text-sm text-sand-400">正在读取歌单…</p>`}
+            ${error && html`<p role="alert" class="queue-sheet-text p-3 text-sm text-guest">${error}</p>`}
+            ${!loading && !items.length && !pending.length && html`<p class="p-3 text-sm text-sand-400">歌单里还没有歌</p>`}
+            ${items.map(t => html`<button key=${t.id} aria-current=${s.currentId === t.id ? 'true' : undefined} disabled=${loading} onClick=${() => play({ startItemId: t.id })} class=${cx('queue-sheet-row flex w-full items-center gap-3 rounded-xl p-3 text-left', s.currentId === t.id ? 'bg-host/10 text-host' : 'hover:bg-ink-800')}>
+              <${Cover} item=${t} size=${40} /><span class="min-w-0 flex-1"><span class="queue-sheet-text block text-sm font-medium">${t.title}</span><span class="queue-sheet-text mt-1 block text-xs text-sand-400">${t.artist || '未知歌手'}${trackCompletedCount(t) > 0 && html`<span class="ml-1 text-host/80">· 已听 ${trackCompletedCount(t)} 次</span>`}</span></span>
+              ${s.currentId === t.id && html`<${Music2} size=${16} class="shrink-0" />`}
+            </button>`)}
+            ${pending.map(t => {
+              const job = s.pendingJobs[t.id];
+              return html`<button key=${t.id} disabled=${job?.state === 'loading'} onClick=${() => downloadPending(playlist.id, [t.id]).catch(e => toast(e.message, 'warn'))} class="queue-sheet-row flex w-full items-center gap-3 rounded-xl p-3 text-left opacity-60 hover:bg-ink-800">
+                <${Cover} item=${t} size=${40} /><span class="min-w-0 flex-1"><span class="queue-sheet-text block text-sm font-medium">${t.title || '未命名'}</span><span class="queue-sheet-text mt-1 block text-xs text-sand-400">${t.artist || '未知歌手'}${trackCompletedCount(t) > 0 && html`<span class="ml-1">· 已听 ${trackCompletedCount(t)} 次</span>`}</span><span class="queue-sheet-text mt-1 block text-xs text-sand-400">${job?.state === 'loading' ? '正在下载…' : job?.state === 'error' ? `${job.message} · 点击重试下载` : '未下载到这台设备 · 点击下载'}</span></span><${CloudDownload} size=${16} class="shrink-0" />
+              </button>`;
+            })}
+          </div>` : html`<div class="scroll-thin min-h-0 flex-1 space-y-2 overflow-y-auto overscroll-contain px-4 pb-3">
+            ${choices.map(p => html`<button key=${p.id} class="queue-sheet-row flex w-full items-center gap-3 rounded-xl border border-ink-700 p-3 text-left" onClick=${() => select(p.id)}>
+              ${p.coverUrl || p.pending?.[0]?.cover ? html`<${Cover} item=${{ title: p.name, cover: p.coverUrl || p.pending[0].cover }} size=${40} />` : html`<${PlaylistCover} playlist=${p} size=${40} />`}<span class="min-w-0 flex-1"><span class="queue-sheet-text block text-sm">${p.name}</span><span class="mt-1 block text-xs text-sand-400">${p.trackIds.length + (p.pending?.length || 0)} 首</span></span><${ChevronRight} size=${16} class="shrink-0" />
+            </button>`)}
+          </div>`}
+      </div>
+    </section>
+  </div>`;
 }
 
 function NativePlayer({ open, close, expand }) {
