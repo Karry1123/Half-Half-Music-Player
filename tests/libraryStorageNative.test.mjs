@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { setCoverProxy } from '../public/coverUrl.js';
 // In-memory Capacitor bridge verifies write ordering, chunk boundaries and rollback.
 const files = new Map();
 let failCommit = false;
@@ -41,4 +42,22 @@ test('failed metadata commit leaves no visible track or partial media', async ()
   await assert.rejects(storage.saveTrack(new Blob(['song']), { title: 'failed' }), /disk full/);
   failCommit = false;
   assert.equal(files.size, 0);
+});
+
+test('older missing covers are backfilled through the proxy and survive storage reload', async () => {
+  const originalFetch = globalThis.fetch;
+  const requests = [];
+  setCoverProxy(url => '/api/cover?url=' + encodeURIComponent(url));
+  globalThis.fetch = async url => { requests.push(url); return new Response(new Blob(['cover'], { type: 'image/jpeg' })); };
+  try {
+    const { track } = await storage.saveTrack(new Blob(['old audio']), { title: 'old', sourceId: 'youtube:old' });
+    assert.equal(track.hasCover, false);
+    await storage.setCover(track.id, 'https://i.ytimg.com/vi/old/hqdefault.jpg');
+    const restored = await storage.getTrack(track.id);
+    assert.equal(restored.hasCover, true);
+    assert.equal(restored.coverUrl, 'https://i.ytimg.com/vi/old/hqdefault.jpg');
+    assert.match(requests[0], /^\/api\/cover\?url=/);
+    assert.equal(files.get(`library-v1/${track.id}.cover`).toString(), 'cover');
+    await storage.deleteTrack(track.id);
+  } finally { globalThis.fetch = originalFetch; setCoverProxy(null); }
 });

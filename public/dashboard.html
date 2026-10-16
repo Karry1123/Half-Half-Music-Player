@@ -117,7 +117,7 @@ import {
   Wifi, WifiOff, X, Plus, MoreHorizontal, ListPlus, ListMinus, Pencil, Library, Eye, EyeOff, ChevronDown, ChevronRight, Cloud, CloudDownload,
 } from 'lucide-react';
 import { Peer } from 'peerjs';
-import { ListeningStats, createCompletedPlayUploader } from './listeningStats.js';
+import { ListeningStats, createCompletedPlayUploader, createListeningSync } from './listeningStats.js';
 import { DiscoverSections, sortPlaylistTracks } from './discoveryUI.js';
 import { ListeningStatsCards } from './statsUI.js';
 import { DailyGreeting } from './dailyGreeting.js';
@@ -136,6 +136,7 @@ import { MODE_LABEL, PLAY_MODES, PlayQueue } from './playQueue.js';
 import { ALL_ID, ALL_NAME, INBOX_ID, PlaylistStore, missingFromLibrary, playlistsOf, resolveScope } from './playlists.js';
 import { AccountClient, SOURCE_EXPIRED, cacheCloudTrack, downloadCloudTrack } from './accountClient.js';
 import { coverSrc, setCoverProxy } from './coverUrl.js';
+import { createCoverBackfill } from './libraryCoverBackfill.js';
 import { CloudSync, toCloudTrack } from './cloudSync.js';
 import { AccountCard, AccountGate, CloudSheet, ZipExport } from './accountUI.js';
 import { checkForUpdate, DEFAULT_REPO } from './appUpdate.js';
@@ -486,6 +487,7 @@ const api = {
       if (!r.ok) throw new Error();
       const h = await r.json();
       set({ apiMode: 'live', sources: h.providers.map((p) => ({ name: p.name, label: p.label })) });
+      LocalLib.listTracks().then(repairLibraryCovers).catch(() => {});
       // 下载进度通过 SSE 推送
       eventSource = new EventSource(apiUrl('/api/events'));
       eventSource.addEventListener('job', (e) => {
@@ -531,12 +533,12 @@ const api = {
   },
 
   /** GET /api/resolve?url= → 链接对应的真实曲目（标题 / 时长 / 最高音质 / 体积）；演示模式返回 null */
-  async resolve(url) {
+  async resolve(url, { signal } = {}) {
     await account.assertActive();
     if (viaHost()) return rpc('resolve', { url });
     if (get().apiMode === 'auth') throw new Error(AUTH_HINT);
     if (get().apiMode !== 'live') return null;
-    const r = await fetch(`${API_BASE}/api/resolve?${new URLSearchParams({ url })}`, { headers: authHeaders() });
+    const r = await fetch(`${API_BASE}/api/resolve?${new URLSearchParams({ url })}`, { headers: authHeaders(), signal });
     const body = await r.json();
     if (!r.ok) throw new Error(body.error || `HTTP ${r.status}`);
     const t = body.track;
@@ -1191,7 +1193,8 @@ class Session {
     // 歌单：第一次启动时把已有的歌全部并入「默认曲库」，并清掉指向已删除歌曲的引用
     await playlistStore.load(tracks.map((t) => t.id)).catch((e) => console.warn('[playlists]', e));
     if (this.isGuest) return; // 恢复期间已经加入了别人的房间：曲库以房主为准
-    const items = await Promise.all(tracks.map(async (t) => fromLocal(t, await LocalLib.coverUrl(t))));
+    const items = await Promise.all(tracks.map(async (t) => fromLocal(t, await LocalLib.coverUrl(t).catch(() => t.coverUrl || null))));
+    if (this.isGuest) return;
     const known = new Set(get().library.map((x) => x.hash).filter(Boolean));
     const add = items.filter((x) => !known.has(x.hash));
     if (add.length) {
@@ -1200,6 +1203,7 @@ class Session {
       if (!get().currentId) this.loadTrack(get().library[0].id);
     }
     await refreshOffline();
+    repairLibraryCovers(tracks);
   }
 
   leave() {
@@ -1265,6 +1269,7 @@ class Session {
       clearTimeout(this.joinTimer);
       this.lastRx = now();
       this.peerBg = false;
+      this.pendingTrackId = null;
       // 连上后自动进入播放台（重连时不打断用户正在看的页面）
       set({ conn: 'open', joinError: null, peerAway: false, ...(!wasReconnect && { screen: 'deck' }) });
       if (wasReconnect) note(this.isGuest ? '已重新连接，正在校准同步…' : `${get().peer?.name || '对方'} 已重新连接`, 'sync');
@@ -1283,12 +1288,7 @@ class Session {
         if (viaHost()) rpc('health').then((h) => set({ sources: h.sources })).catch((e) => note(e.message, 'warn'));
       }
       else {
-        this.broadcastLibrary();
-        const cur = get().library.find((x) => x.id === get().currentId);
-        if (cur) {
-          this.send({ type: 'track', meta: cur, by: 'host', quiet: true });
-          this.send({ type: 'state', ...this.anchor });
-        }
+        this.sendSnapshot();
       }
     };
     c.on('open', onOpen);
@@ -1343,6 +1343,15 @@ class Session {
     if (this.conn?.open) this.conn.send(msg);
   }
 
+  sendSnapshot() {
+    this.broadcastLibrary();
+    const cur = get().library.find(x => x.id === get().currentId);
+    if (cur) {
+      this.send({ type: 'track', meta: cur, by: 'host', quiet: true });
+      this.send({ type: 'state', ...this.anchor });
+    }
+  }
+
   notifySynced() {
     if (this.isGuest || !this.conn?.open) return;
     const id = this.pendingNotice = crypto.randomUUID();
@@ -1376,6 +1385,9 @@ class Session {
         this.byeReceived = true;
         return;
       case 'hello':
+        // The guest's hello confirms its channel is open and can send `need`.
+        // Replay the snapshot if our open event ran before the guest was ready.
+        if (host) this.sendSnapshot();
         if (!host) rememberRoom(get().roomCode, String(m.name)); // "快速重新连接"记忆
         return set({ peer: { name: String(m.name || this.invitation?.nickname || '好友').slice(0, 16), color: m.color } });
       case 'full':
@@ -1391,14 +1403,17 @@ class Session {
       case 'library':
         if (!host) {
           const prevMode = get().playMode;
-          set({ library: m.items, currentId: m.currentId, upNext: m.upNext ?? null, canNext: m.canNext ?? true, roomPlaylist: m.playlist ?? null, ...(m.playMode && { playMode: m.playMode }) });
+          const items = m.items.map(t => ({ ...t, cover: t.coverUrl || t.cover }));
+          set({ library: items, currentId: m.currentId, upNext: m.upNext ?? null, canNext: m.canNext ?? true, roomPlaylist: m.playlist ?? null, ...(m.playMode && { playMode: m.playMode }) });
+          const current = items.find(t => t.id === m.currentId);
+          if (current && (this.anchor.trackId !== current.id || (!this.loadedId && !this.pendingTrackId))) this.guestTrack({ meta: current, quiet: true });
           if (m.playMode && m.playMode !== prevMode && get().conn === 'open') note(`${get().peer?.name || '房主'} 切换为${MODE_LABEL[m.playMode]}`);
           this.prefetchNext();
         }
         return;
       case 'set_playlist': // 房主开始播放一个歌单
         if (!host) {
-          set({ roomPlaylist: m.playlist || null, ...(Array.isArray(m.items) && { library: m.items }) });
+          set({ roomPlaylist: m.playlist || null, ...(Array.isArray(m.items) && { library: m.items.map(t => ({ ...t, cover: t.coverUrl || t.cover })) }) });
           if (m.playlist) note(`${get().peer?.name || '房主'} 开始和你一起听歌单《${m.playlist.name}》`, 'sync');
         }
         return;
@@ -1672,7 +1687,14 @@ class Session {
   }
 
   guestTrack(m) {
+    // Render metadata independently of the library snapshot and audio transfer.
+    const meta = { ...m.meta, cover: m.meta.coverUrl || m.meta.cover };
+    set(s => ({ library: s.library.some(t => t.id === m.meta.id)
+      ? s.library.map(t => t.id === m.meta.id ? { ...t, ...meta } : t)
+      : [...s.library, meta], currentId: m.meta.id }));
     if (m.meta.id === this.loadedId && m.quiet) return set({ currentId: m.meta.id });
+    if (m.quiet && this.pendingTrackId === m.meta.id && !get().loaded) return;
+    this.pendingTrackId = m.meta.id;
     const token = ++this.token;
     this.loadedId = null;
     this.drift.reset();
@@ -1710,6 +1732,7 @@ class Session {
     if (token !== this.token) return;
     this.loadedId = id;
     set({ loaded: true, duration, transfer: null });
+    this.pendingTrackId = null;
     this.send({ type: 'ready', id });
     if (this.anchor.trackId === id) this.applyAnchor(this.anchor); // 中途就绪：追到当前位置
     this.prefetchNext();
@@ -2103,12 +2126,24 @@ if (NativeFG) {
 /** IndexedDB 记录 → 歌单条目 */
 function fromLocal(t, cover) {
   return {
-    id: t.id, localId: t.id, hash: t.hash, sourceId: t.sourceId,
+    id: t.id, localId: t.id, hash: t.hash, sourceId: t.sourceId, pageUrl: t.pageUrl,
     title: t.title, artist: t.artist, duration: t.duration, size: t.size,
     source: t.source, sourceLabel: t.sourceLabel, quality: t.quality || (t.ext || '').toUpperCase(),
-    cover, coverUrl: t.coverUrl, addedBy: get().me.name, addedAt: t.addedAt,
+    cover: cover || t.coverUrl || null, coverUrl: t.coverUrl, addedBy: get().me.name, addedAt: t.addedAt,
   };
 }
+
+const repairLibraryCovers = createCoverBackfill({
+  available: () => get().apiMode === 'live' && !session.isGuest && globalThis.navigator?.onLine !== false,
+  resolve: url => api.resolve(url, { signal: AbortSignal.timeout(10000) }),
+  save: (id, url) => LocalLib.setCover(id, url),
+  onCover: async track => {
+    const cover = await LocalLib.coverUrl(track).catch(() => track.coverUrl);
+    if (session.isGuest) return;
+    set(s => ({ library: s.library.map(t => t.localId === track.id ? { ...t, cover, coverUrl: track.coverUrl } : t) }));
+    session.broadcastLibrary();
+  },
+});
 
 /** 写入本机曲库；失败（空间不足等）只提示，不影响播放 */
 async function persistLocal(blob, item) {
@@ -2456,7 +2491,7 @@ function Avatar({ profile, size = 28, ring }) {
 }
 
 function Cover({ item, size = 40, round = 'rounded-lg' }) {
-  return html`<span class=${cx('relative shrink-0 overflow-hidden grid place-items-center', round)} style=${{ width: size, height: size, background: gradient(item?.title || '') }}>
+  return html`<span class=${cx('relative shrink-0 overflow-hidden grid place-items-center', round)} style=${{ width: size, height: size, flex: '0 0 auto', background: gradient(item?.title || '') }}>
     ${item?.cover ? html`<img src=${coverSrc(item.cover)} alt="" referrerpolicy="no-referrer" loading="lazy" class="absolute inset-0 h-full w-full object-cover" />` : html`<${Music2} size=${size * 0.42} class="text-white/70" />`}
   </span>`;
 }
@@ -2671,13 +2706,13 @@ function PlaylistCover({ playlist, size = 44, round = 'rounded-xl' }) {
     ? library.slice(-4).reverse()
     : playlist.trackIds.map((t) => library.find((x) => x.localId === t)).filter(Boolean).slice(0, 4);
   if (!items.length) {
-    return html`<span class=${cx('grid shrink-0 place-items-center bg-white/5 text-sand-500', round)} style=${{ width: size, height: size }}>
+    return html`<span class=${cx('grid shrink-0 place-items-center bg-white/5 text-sand-500', round)} style=${{ width: size, height: size, flex: '0 0 auto' }}>
       <${playlist.id === ALL_ID ? Library : ListMusic} size=${size * 0.42} />
     </span>`;
   }
   if (items.length < 4) return html`<${Cover} item=${items[0]} size=${size} round=${round} />`;
   const half = size / 2;
-  return html`<span class=${cx('grid shrink-0 grid-cols-2 overflow-hidden', round)} style=${{ width: size, height: size }}>
+  return html`<span class=${cx('grid shrink-0 grid-cols-2 overflow-hidden', round)} style=${{ width: size, height: size, flex: '0 0 auto' }}>
     ${items.map((x) => html`<${Cover} key=${x.id} item=${x} size=${half} round="rounded-none" />`)}
   </span>`;
 }
@@ -4420,7 +4455,7 @@ function sampleListening(extra = {}) {
   samplingListening = true;
   const s = get(), audio = session.out.audio;
   const track = s.library.find(x => x.id === (session.loadedId || s.currentId));
-  try { listeningStats.sample({ trackId: track?.localId || session.loadedId || s.currentId, title: track?.title, artist: track?.artist, cover: track?.coverUrl || track?.cover, duration: audio.duration || s.duration,
+  try { listeningStats.sample({ trackId: track?.localId || session.loadedId || s.currentId, title: track?.title, artist: track?.artist, cover: track?.coverUrl || track?.cover, sourceId: track?.sourceId, hash: track?.hash, duration: audio.duration || s.duration,
     currentTime: audio.currentTime, playing: !audio.paused && !audio.ended && audio.readyState >= 2,
     connected: s.conn === 'open' && !!session.conn?.open, friendId: session.invitation?.userId,
     seeking: audio.seeking, playbackRate: audio.playbackRate, ...extra }); } finally { samplingListening = false; }
@@ -4524,10 +4559,11 @@ function NativePlayer({ open, close, expand }) {
     return () => { document.body.style.overflow = overflow; document.removeEventListener('keydown', onKey); };
   }, [open]);
   const can = s.loaded && (s.role !== 'guest' || s.conn === 'open');
+  const receiving = item && s.role === 'guest' && !s.loaded;
   return html`<div>
     <div hidden=${open} class="mini-player fixed inset-x-0 z-40 border-t border-ink-700 bg-ink-950/95 px-4 py-2 backdrop-blur-xl" style=${{ paddingLeft: 'max(16px, var(--safe-left))', paddingRight: 'max(16px, var(--safe-right))', bottom: 'calc(64px + var(--safe-bottom, 0px))' }}>
       <div class="mx-auto flex max-w-5xl items-center gap-3">
-        <button class="flex min-w-0 flex-1 items-center gap-3 text-left" onClick=${expand} aria-label="展开播放器"><${Cover} item=${item} size=${44} /><span class="min-w-0"><span class="block truncate text-sm font-semibold">${item?.title || '从曲库选择一首歌'}</span><span class="text-xs text-sand-400">${s.conn === 'open' ? '♫ 正在一起听' : item?.artist || 'Half&Half'}</span></span></button>
+        <button class="flex min-w-0 flex-1 items-center gap-3 text-left" onClick=${expand} aria-label="展开播放器"><${Cover} item=${item} size=${44} /><span class="min-w-0"><span class="block truncate text-sm font-semibold">${item?.title || '从曲库选择一首歌'}</span><span class="text-xs text-sand-400">${receiving ? `${item.artist || '好友'} · 正在从好友获取音频…` : s.conn === 'open' ? `${item?.artist || ''} · ♫ 正在一起听` : item?.artist || 'Half&Half'}</span></span></button>
         <${CoListenPill} />
         <button class="p-3 disabled:opacity-30" disabled=${!can} onClick=${() => session.act('toggle')} aria-label=${s.playing ? '暂停' : '播放'}><${s.playing ? Pause : Play} size=${23} /></button>
         <button class="p-3 disabled:opacity-30" disabled=${!can || !s.canNext} onClick=${() => session.act('next')} aria-label="下一首"><${SkipForward} size=${23} /></button>
@@ -4541,7 +4577,7 @@ function NativePlayer({ open, close, expand }) {
       <button class="mx-auto p-3 text-sand-400" onClick=${close} aria-label="收起播放器"><${ChevronDown} size=${28} /></button>
       <div class="mx-auto flex w-full max-w-md flex-1 flex-col items-center justify-center gap-7">
         <div class=${cx('vinyl grid h-64 w-64 shrink-0 place-items-center rounded-full animate-spin-slow shadow-2xl', !s.playing && 'paused-anim')}><${Cover} item=${item} size=${170} round="rounded-full" /></div>
-        <div class="w-full text-center"><h2 class="text-xl font-bold">${item?.title || '未在播放'}</h2><p class="mt-2 text-sand-400">${item?.artist || '选择喜欢的音乐'}</p><p class="mt-2 text-xs text-sand-400">已完整聆听 ${trackCompletedCount(item)} 次</p></div>
+        <div class="w-full text-center"><h2 class="text-xl font-bold">${item?.title || '未在播放'}</h2><p class="mt-2 text-sand-400">${item?.artist || '选择喜欢的音乐'}</p>${receiving && html`<p role="status" class="mt-2 text-sm text-sand-400">正在从好友获取音频…</p>`}<p class="mt-2 text-xs text-sand-400">已完整聆听 ${trackCompletedCount(item)} 次</p></div>
         <${SeekBar} />
         <div class="flex w-full items-center justify-around"><${PlayModeButton} /><button disabled=${!can} onClick=${() => session.act('prev')} aria-label="上一首"><${SkipBack} size=${28} /></button><button class="rounded-full bg-host p-5 text-ink-950 disabled:opacity-30" disabled=${!can} onClick=${() => session.act('toggle')} aria-label=${s.playing ? '暂停' : '播放'}><${s.playing ? Pause : Play} size=${30} /></button><button disabled=${!can || !s.canNext} onClick=${() => session.act('next')} aria-label="下一首"><${SkipForward} size=${28} /></button><button disabled=${s.role === 'guest'} onClick=${() => set({ queueSheetOpen: true })} aria-label="切换歌单" title="切换歌单"><${ListMusic} size=${24} /></button></div>
         <div class="flex w-full items-center gap-3 text-sand-400"><${s.volume ? Volume2 : VolumeX} size=${20} /><input type="range" class="hh flex-1" min="0" max="1" step="0.01" value=${s.volume} style=${{ '--fill': `${s.volume * 100}%` }} aria-label="音量" onInput=${e => session.setVolume(Number(e.target.value))} /></div>
@@ -4566,15 +4602,20 @@ function App() {
     const timer = setInterval(sample, 1000);
     const syncPlays = createCompletedPlayUploader({ stats, client: account, listTracks: () => LocalLib.listTracks(),
       onUploaded: () => window.dispatchEvent(new Event('hh:plays-synced')) });
-    const upload = () => syncPlays().catch(() => {});
+    const listeningSync = createListeningSync({ stats, client: account, listTracks: () => LocalLib.listTracks(), uploadPlays: syncPlays });
+    const upload = () => listeningSync.sync().catch(() => {});
     const unsubscribeCompleted = stats.subscribeCompleted(upload);
     upload();
     const uploadTimer = setInterval(upload, 60000);
     window.addEventListener('online', upload);
+    const foreground = () => { if (!document.hidden) upload(); };
+    document.addEventListener('visibilitychange', foreground);
+    const nativeResume = window.Capacitor?.isNativePlatform?.()
+      ? nativePlugin('App').addListener('appStateChange', ({ isActive }) => { if (isActive) upload(); }).catch(console.warn) : null;
     const flush = () => { sample(); stats.flush().catch(console.warn); };
     window.addEventListener('pagehide', flush);
     const unstore = store.subscribe(sample);
-    return () => { sample(); stats.flush().catch(console.warn); unsubscribe(); unsubscribeCompleted(); unstore(); clearInterval(timer); clearInterval(uploadTimer); window.removeEventListener('online', upload); for (const event of events) audio.removeEventListener(event, sample); audio.removeEventListener('ended', ended, true); window.removeEventListener('pagehide', flush); };
+    return () => { sample(); stats.flush().catch(console.warn); listeningSync.stop(); if (listeningStats === stats) listeningStats = null; document.removeEventListener('visibilitychange', foreground); nativeResume?.then(handle => handle?.remove()); unsubscribe(); unsubscribeCompleted(); unstore(); clearInterval(timer); clearInterval(uploadTimer); window.removeEventListener('online', upload); for (const event of events) audio.removeEventListener(event, sample); audio.removeEventListener('ended', ended, true); window.removeEventListener('pagehide', flush); };
   }, []);
   const [tab, setTab] = useState('discover'), [playerOpen, setPlayerOpen] = useState(false);
   const [presence, setPresence] = useState({}), [invitation, setInvitation] = useState(null);

@@ -108,7 +108,7 @@ body::before {
 .queue-sheet-forward { animation: queue-sheet-forward .22s ease-out; }
 .queue-sheet-back { animation: queue-sheet-back .22s ease-out; }
 .queue-sheet .queue-sheet-text { white-space: normal; overflow-wrap: anywhere; }
-[role="dialog"].queue-sheet button.queue-sheet-row > span { flex-shrink: 1; white-space: normal; }
+[role="dialog"].queue-sheet button.queue-sheet-row > span.min-w-0 { flex-shrink: 1; white-space: normal; }
 .queue-sheet header button { min-width: 44px; min-height: 44px; }
 @keyframes queue-sheet-forward { from { transform: translateX(100%); opacity: .4; } to { transform: translateX(0); opacity: 1; } }
 @keyframes queue-sheet-back { from { transform: translateX(-25%); opacity: .4; } to { transform: translateX(0); opacity: 1; } }
@@ -165,7 +165,7 @@ body::before {
   .friends-panel { overflow-wrap: anywhere; }
   .friends-panel .justify-between { flex-wrap: wrap; }
   [aria-label="切换歌单"] button.w-full { gap: 12px; }
-  [aria-label="切换歌单"] button.w-full > span:first-child { flex: 1; overflow-wrap: anywhere; }
+  [aria-label="切换歌单"] button.w-full > span.min-w-0 { flex: 1; overflow-wrap: anywhere; }
   [aria-label="切换歌单"] button.w-full > span:last-child { white-space: nowrap; }
   main, section, header, .grid > *, .flex > * { min-width: 0; }
 }

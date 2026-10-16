@@ -2,6 +2,11 @@
 const DATABASE = 'half-half-listening-stats';
 const finite = (value, fallback = 0) => Number.isFinite(Number(value)) ? Number(value) : fallback;
 const emptyStats = () => ({ completedPlayCount: {}, coListeningTime: {}, trackMetadata: {} });
+const songKey = meta => JSON.stringify([meta?.title, meta?.artist].map(value => String(value || '').normalize('NFKC').trim().toLowerCase().replace(/\s+/gu, ' ')));
+const calendarDay = timestamp => {
+  const date = new Date(timestamp);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+};
 
 export function createListeningStatsPersistence(indexedDB) {
   let database;
@@ -144,7 +149,7 @@ export class ListeningStats {
     const reachedThreshold = sample.duration > 0 && session.played >= sample.duration * 0.95;
     const naturalEnd = sample.ended && !session.skipped && session.played > 0;
     if (!session.completed && (reachedThreshold || naturalEnd)) {
-      this.stats.completedPlayCount[sample.trackId] = this.completedCount(sample.trackId) + 1;
+      this.stats.completedPlayCount[sample.trackId] = (this.stats.completedPlayCount[sample.trackId] || 0) + 1;
       session.completed = true;
       this.changed = true;
       for (const listener of this.completionListeners) listener(this);
@@ -186,10 +191,11 @@ export class ListeningStats {
     return this.write;
   }
 
-  rememberTrack({ trackId, title, artist = '', cover = '' }) {
+  rememberTrack({ trackId, title, artist = '', cover = '', sourceId, hash }) {
     if (!trackId || !title) return;
     const old = this.stats.trackMetadata[trackId];
-    const meta = { title, artist, cover: /^https:\/\//i.test(cover) ? cover : old?.cover || '' };
+    const meta = { title, artist, cover: /^https:\/\//i.test(cover) ? cover : old?.cover || '',
+      sourceId: sourceId || old?.sourceId || '', hash: hash || old?.hash || '' };
     if (JSON.stringify(old) !== JSON.stringify(meta)) {
       this.stats.trackMetadata[trackId] = meta;
       this.changed = true;
@@ -200,7 +206,7 @@ export class ListeningStats {
     const songs = new Map();
     for (const [id, completed] of Object.entries(this.stats.completedPlayCount)) {
       const saved = this.stats.trackMetadata[id];
-      const meta = saved && { ...saved, artist: saved.artist || '' };
+      const meta = saved && { title: saved.title, artist: saved.artist || '', cover: saved.cover || '' };
       if (!meta?.title || !completed || meta.title.length > 200 || meta.artist.length > 200) continue;
       const key = [meta.title, meta.artist].map(x => x.trim().normalize('NFKC').toLowerCase().replace(/\s+/g, ' ')).join('\n');
       const item = songs.get(key) || { ...meta, cover: /^https:\/\//i.test(meta.cover || '') && meta.cover.length <= 2000 ? meta.cover : '', completed: 0 };
@@ -210,8 +216,28 @@ export class ListeningStats {
     return [...songs.values()];
   }
 
-  completedCount(trackId) { return this.stats.completedPlayCount[trackId] || 0; }
-  coListeningSeconds(friendId) { return this.stats.coListeningTime[friendId] || 0; }
+  trackKey(trackId) {
+    const meta = this.stats.trackMetadata[trackId];
+    return meta && (meta.sourceId || (meta.hash && `hash:${meta.hash}`) || songKey(meta));
+  }
+  mergeCloud(data) { this.cloud = data; this.notify(); }
+  completedCount(trackId) {
+    const meta = this.stats.trackMetadata[trackId];
+    if (!this.cloud || !meta) return this.stats.completedPlayCount[trackId] || 0;
+    const key = songKey(meta);
+    const local = Object.entries(this.stats.completedPlayCount).reduce((sum, [id, count]) =>
+      sum + (songKey(this.stats.trackMetadata[id]) === key ? count : 0), 0);
+    const remote = this.cloud.completed?.find(row => row.key === this.trackKey(trackId)) ||
+      this.cloud.completed?.find(row => (row.completionKey || row.key) === key);
+    return local + Number(remote?.completed || 0);
+  }
+  coListeningSeconds(friendId) {
+    return (this.stats.coListeningTime[friendId] || 0) + Number(this.cloud?.coListening?.find(row => row.friendId === friendId)?.seconds || 0);
+  }
+  coListeningTotals() {
+    const ids = new Set([...Object.keys(this.stats.coListeningTime), ...(this.cloud?.coListening || []).map(row => row.friendId)]);
+    return Object.fromEntries([...ids].map(id => [id, this.coListeningSeconds(id)]));
+  }
   summary(period = 'week', now = Date.now()) {
     const start = new Date(now);
     start.setHours(0, 0, 0, 0);
@@ -219,8 +245,10 @@ export class ListeningStats {
     else if (period === 'month') start.setDate(1);
     else if (period === 'year') start.setMonth(0, 1);
     else throw new RangeError('Unknown listening statistics period');
+    const remote = (this.cloud?.daily || []).reduce((total, row) => total +
+      (row.day >= calendarDay(+start) && row.day <= calendarDay(now) ? Number(row.seconds) : 0), 0);
     return this.records.reduce((total, record) => total +
-      (record.timestamp >= start.getTime() && record.timestamp <= now ? record.durationPlayed : 0), 0);
+      (record.timestamp >= start.getTime() && record.timestamp <= now ? record.durationPlayed : 0), remote);
   }
 }
 
@@ -228,8 +256,9 @@ export class ListeningStats {
 // A completion during an in-flight request queues another snapshot instead of being lost.
 export function createCompletedPlayUploader({ stats, client, listTracks, onUploaded = () => {} }) {
   let running, queued = false;
+  const active = () => client.user?.isActivated && (!client.user.id || client.user.id === stats.userId);
   return function upload() {
-    if (!client.user?.isActivated) return Promise.resolve();
+    if (!active()) return Promise.resolve();
     queued = true;
     if (running) return running;
     running = (async () => {
@@ -238,11 +267,12 @@ export function createCompletedPlayUploader({ stats, client, listTracks, onUploa
           queued = false;
           await stats.ready();
           for (const t of await listTracks().catch(() => [])) {
-            stats.rememberTrack({ trackId: t.id, title: t.title, artist: t.artist, cover: t.coverUrl || t.cover });
+            stats.rememberTrack({ trackId: t.id, title: t.title, artist: t.artist, cover: t.coverUrl || t.cover, sourceId: t.sourceId, hash: t.hash });
           }
           await stats.flush();
           const plays = stats.completedUploads();
           for (let i = 0; i < plays.length; i += 100) {
+            if (!active()) return;
             await client.request('/account/plays', { deviceId: stats.stats.deviceId, plays: plays.slice(i, i + 100) });
           }
           if (plays.length) onUploaded();
@@ -251,4 +281,65 @@ export function createCompletedPlayUploader({ stats, client, listTracks, onUploa
     })();
     return running;
   };
+}
+
+// Cloud responses exclude this device for time AND completions. Local counters remain
+// authoritative and are never replaced by cloud totals (including during playback).
+// Signatures only acknowledge successful snapshots; restarting safely backfills all records.
+export function createListeningSync({ stats, client, listTracks, uploadPlays = async () => {} }) {
+  let running, timer, stopped = false, queued = false;
+  const sent = new Map();
+  const active = () => !stopped && client.user?.isActivated && client.user.id === stats.userId;
+  const sync = () => {
+    if (!active()) return Promise.resolve();
+    clearTimeout(timer);
+    timer = null;
+    queued = true;
+    if (running) return running;
+    running = (async () => {
+      try {
+        while (queued && active()) {
+          queued = false;
+          await stats.ready();
+          for (const t of await listTracks()) stats.rememberTrack({ ...t, trackId: t.id, cover: t.coverUrl || t.cover });
+          await stats.flush();
+          if (!active()) return;
+          const records = stats.records.flatMap(record => {
+            const meta = stats.stats.trackMetadata[record.trackId];
+            if (!meta?.title || meta.title.length > 200 || (meta.artist || '').length > 200) return [];
+            return [{ id: String(record.id), key: stats.trackKey(record.trackId), day: calendarDay(record.timestamp),
+              seconds: record.durationPlayed, title: meta.title, artist: meta.artist || '', cover: meta.cover || '' }];
+          }).filter(row => sent.get(`r:${row.id}`) !== JSON.stringify(row));
+          const co = Object.entries(stats.stats.coListeningTime).map(([friendId, seconds]) => ({ friendId, seconds }))
+            .filter(row => sent.get(`f:${row.friendId}`) !== JSON.stringify(row));
+          for (let i = 0; i < Math.max(records.length, co.length); i += 200) {
+            if (!active()) return;
+            const batch = records.slice(i, i + 200), friends = co.slice(i, i + 200);
+            await client.request('/account/listening', { deviceId: stats.stats.deviceId, records: batch, coListening: friends }, 'PUT');
+            batch.forEach(row => sent.set(`r:${row.id}`, JSON.stringify(row)));
+            friends.forEach(row => sent.set(`f:${row.friendId}`, JSON.stringify(row)));
+          }
+          if (!active()) return;
+          await uploadPlays();
+          if (!active()) return;
+          const data = await client.request(`/account/listening?deviceId=${encodeURIComponent(stats.stats.deviceId)}`);
+          if (active()) stats.mergeCloud(data);
+        }
+      } catch (error) {
+        if (active()) stats.mergeCloud(null); // Unreachable API retains today's local-only behavior.
+        throw error;
+      } finally { running = null; }
+    })();
+    return running;
+  };
+  // Bounded debounce also works during continuous playback. Failed snapshots retry
+  // on the next change, online/foreground event or the dashboard's minute timer.
+  const schedule = () => {
+    if (!active() || timer || running) return;
+    // Share the account service's 15 requests/minute budget with play uploads.
+    timer = setTimeout(() => { timer = null; sync().catch(() => {}); }, 30000);
+    timer.unref?.();
+  };
+  const unsubscribe = stats.subscribe(schedule);
+  return { sync, stop() { stopped = true; clearTimeout(timer); unsubscribe(); } };
 }

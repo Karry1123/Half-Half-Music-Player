@@ -2,7 +2,7 @@ import { randomBytes, randomUUID, createHash, scrypt as scryptCallback, timingSa
 import { promisify } from 'node:util';
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
-import { isTrendingSong, validatePlays } from './lib/discover.js';
+import { isTrendingSong, validatePlays, songKey } from './lib/discover.js';
 const scrypt = promisify(scryptCallback);
 const hash = value => createHash('sha256').update(value).digest('hex');
 const fail = (status, code, message) => { throw Object.assign(new Error(message), { status, code }); };
@@ -15,6 +15,9 @@ const uniqueViolation = e => e.code === '23505' || /UNIQUE/i.test(e.message);
 // One schema for both engines. Millisecond timestamps need BIGINT on PostgreSQL.
 const SCHEMA = [
   'CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY, username TEXT UNIQUE NOT NULL, password TEXT NOT NULL, salt TEXT NOT NULL, activated INTEGER NOT NULL DEFAULT 0, created_at BIGINT NOT NULL)',
+  'CREATE TABLE IF NOT EXISTS listening_sessions(user_id TEXT NOT NULL REFERENCES users(id), device_id TEXT NOT NULL, record_id TEXT NOT NULL, song_key TEXT NOT NULL, day TEXT NOT NULL, seconds DOUBLE PRECISION NOT NULL, updated_at BIGINT NOT NULL, PRIMARY KEY(user_id,device_id,record_id))',
+  'CREATE TABLE IF NOT EXISTS co_listening(user_id TEXT NOT NULL REFERENCES users(id), device_id TEXT NOT NULL, friend_id TEXT NOT NULL, seconds DOUBLE PRECISION NOT NULL, updated_at BIGINT NOT NULL, PRIMARY KEY(user_id,device_id,friend_id))',
+  'CREATE TABLE IF NOT EXISTS listening_tracks(user_id TEXT NOT NULL REFERENCES users(id), song_key TEXT NOT NULL, completion_key TEXT NOT NULL, title TEXT NOT NULL, artist TEXT NOT NULL, cover TEXT NOT NULL, PRIMARY KEY(user_id,song_key))',
   'CREATE TABLE IF NOT EXISTS play_counts(user_id TEXT NOT NULL REFERENCES users(id), song_key TEXT NOT NULL, title TEXT NOT NULL, artist TEXT NOT NULL, cover TEXT NOT NULL, completed INTEGER NOT NULL DEFAULT 0, updated_at BIGINT NOT NULL, PRIMARY KEY(user_id,song_key))',
   'CREATE TABLE IF NOT EXISTS play_devices(user_id TEXT NOT NULL REFERENCES users(id), device_id TEXT NOT NULL, song_key TEXT NOT NULL, completed INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(user_id,device_id,song_key))',
   'CREATE TABLE IF NOT EXISTS sessions(token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), expires_at BIGINT NOT NULL)',
@@ -254,6 +257,50 @@ export class Accounts {
     }
     return { ok: true };
   }
+  async recordListening(userId, body) {
+    const invalid = () => fail(400, 'INPUT', 'Invalid listening data');
+    const text = (v, max) => typeof v === 'string' && v.length > 0 && v.length <= max;
+    const seconds = v => typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 1e12;
+    if (!body || !/^[\w-]{8,100}$/.test(body.deviceId || '') || typeof body.deviceId !== 'string' ||
+      !Array.isArray(body.records) || body.records.length > 200 || !Array.isArray(body.coListening) || body.coListening.length > 200) invalid();
+    const ids = new Set(), friends = new Set();
+    for (const r of body.records) {
+      if (!r || !text(r.id, 200) || ids.has(r.id) || !text(r.key, 2000) || !text(r.title, 200) ||
+        typeof r.artist !== 'string' || r.artist.length > 200 || typeof r.cover !== 'string' || r.cover.length > 2000 ||
+        !/^\d{4}-\d{2}-\d{2}$/.test(r.day) || !Number.isFinite(Date.parse(r.day)) || new Date(r.day).toISOString().slice(0, 10) !== r.day || !seconds(r.seconds)) invalid();
+      ids.add(r.id);
+    }
+    for (const r of body.coListening) {
+      if (!r || !text(r.friendId, 100) || friends.has(r.friendId) || !seconds(r.seconds)) invalid();
+      friends.add(r.friendId);
+    }
+    await this.db.tx(async db => {
+      for (const r of body.records) {
+        // Absolute, monotonically increasing device counters tolerate retries and stale requests.
+        await db.run('INSERT INTO listening_sessions VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(user_id,device_id,record_id) DO UPDATE SET seconds=excluded.seconds,updated_at=excluded.updated_at WHERE excluded.seconds>listening_sessions.seconds', [userId, body.deviceId, r.id, r.key, r.day, r.seconds, Date.now()]);
+        await db.run('INSERT INTO listening_tracks VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(user_id,song_key) DO UPDATE SET completion_key=excluded.completion_key,title=excluded.title,artist=excluded.artist,cover=excluded.cover', [userId, r.key, songKey(r.title, r.artist), r.title, r.artist, /^https:\/\//i.test(r.cover) ? r.cover : '']);
+      }
+      for (const r of body.coListening) await db.run('INSERT INTO co_listening VALUES($1,$2,$3,$4,$5) ON CONFLICT(user_id,device_id,friend_id) DO UPDATE SET seconds=excluded.seconds,updated_at=excluded.updated_at WHERE excluded.seconds>co_listening.seconds', [userId, body.deviceId, r.friendId, r.seconds, Date.now()]);
+    });
+    return { ok: true };
+  }
+  async listening(userId, deviceId = '') {
+    if (typeof deviceId !== 'string' || (deviceId && !/^[\w-]{8,100}$/.test(deviceId))) fail(400, 'INPUT', 'Invalid device ID');
+    // Every total excludes the caller's device. Clients add their live local counters.
+    // Session days retain the device's local calendar date, independent of server timezone.
+    const since = new Date(Date.now() - 400 * 86400000).toISOString().slice(0, 10);
+    return this.db.tx(async db => {
+      const daily = await db.all('SELECT day,SUM(seconds) AS seconds FROM listening_sessions WHERE user_id=$1 AND device_id<>$2 AND day>=$3 GROUP BY day', [userId, deviceId, since]);
+      const tracks = await db.all('SELECT song_key AS key,SUM(seconds) AS seconds FROM listening_sessions WHERE user_id=$1 AND device_id<>$2 GROUP BY song_key', [userId, deviceId]);
+      const coListening = await db.all('SELECT friend_id AS "friendId",SUM(seconds) AS seconds FROM co_listening WHERE user_id=$1 AND device_id<>$2 GROUP BY friend_id', [userId, deviceId]);
+      const completed = await db.all('SELECT p.song_key AS key,p.completed-COALESCE(d.completed,0) AS completed FROM play_counts p LEFT JOIN play_devices d ON d.user_id=p.user_id AND d.song_key=p.song_key AND d.device_id=$2 WHERE p.user_id=$1', [userId, deviceId]);
+      const metadata = await db.all('SELECT song_key AS key,completion_key AS "completionKey",title,artist,cover FROM listening_tracks WHERE user_id=$1', [userId]);
+      const counts = new Map(completed.map(row => [row.key, Number(row.completed)]));
+      const mapped = metadata.map(row => ({ key: row.key, completionKey: row.completionKey, completed: counts.get(row.completionKey) || 0 }));
+      const known = new Set(metadata.map(row => row.completionKey));
+      return { daily, tracks, completed: [...mapped, ...completed.filter(row => !known.has(row.key))], coListening, metadata };
+    });
+  }
   async trending(now = Date.now()) {
     if (this.trendingCache && now - this.trendingCache.at < 600000) return this.trendingCache.value;
     const revision = this.trendingRevision || 0;
@@ -388,6 +435,9 @@ export function mountAccounts(app, accounts, limiter) {
   app.post('/auth/logout', route(async req => { await accounts.logout(token(req)); return { ok: true }; }));
   app.get('/account/library', route(async req => accounts.library(await active(req))));
   app.post('/account/plays', limiter, route(async req => accounts.recordPlays(await active(req), req.body)));
+  app.post('/account/listening', limiter, route(async req => accounts.recordListening(await active(req), req.body)));
+  app.put('/account/listening', limiter, route(async req => accounts.recordListening(await active(req), req.body)));
+  app.get('/account/listening', limiter, route(async req => accounts.listening(await active(req), req.query.deviceId)));
   app.get('/discover/trending', route(async req => { await active(req); return accounts.trending(); }));
   app.put('/account/library', route(async req => accounts.saveLibrary(await active(req), req.body?.revision, req.body?.playlists)));
   app.get('/account/profile', route(async req => accounts.profile(await active(req))));

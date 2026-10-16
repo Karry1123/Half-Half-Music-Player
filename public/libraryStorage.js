@@ -39,6 +39,7 @@ export const findByHash = call('findByHash');
 export const findBySource = call('findBySource');
 export const getBlob = call('getBlob');
 export const coverUrl = call('coverUrl');
+export const setCover = call('setCover');
 export const updateTrack = call('updateTrack');
 export const markPlayed = call('markPlayed');
 export const deleteTrack = call('deleteTrack');

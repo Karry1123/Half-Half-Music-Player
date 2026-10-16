@@ -2,6 +2,7 @@
 // Chunked bridge writes avoid making one huge base64 string for long recordings.
 import { fingerprint, extOf, fileNameOf } from './libraryStorageWeb.js';
 import { nativePlugin } from './nativeBridge.js';
+import { fetchCover } from './coverUrl.js';
 const cap = () => globalThis.Capacitor;
 const fs = () => nativePlugin('Filesystem');
 const directory = 'DATA';
@@ -55,21 +56,14 @@ export function saveTrack(blob, meta) {
     // Never overwrite an existing record, even if an imported id collides.
     const id = crypto.randomUUID();
     const path = pathFor(id);
-    let cover = meta.cover instanceof Blob ? meta.cover : null;
-    if (!cover && /^https?:/.test(meta.cover || '')) {
-      try {
-        const r = await fetch(meta.cover, { signal: AbortSignal.timeout(6000) });
-        if (r.ok) cover = await r.blob();
-      } catch {}
-    }
-    if (cover && (!cover.type.startsWith('image/') || cover.size > 5 * 1024 * 1024)) cover = null;
+    const cover = await fetchCover(meta.cover || meta.coverUrl);
     const track = {
       id, hash, title: String(meta.title || meta.fileName || '未命名').slice(0, 300),
       artist: meta.artist || '', album: meta.album || null, duration: meta.duration || null,
       size: blob.size, mime: blob.type || 'audio/mpeg', ext: extOf(blob.type, meta.fileName),
       quality: meta.quality || null, source: meta.source || 'local', sourceLabel: meta.sourceLabel || '本地',
       sourceId: meta.sourceId || null, pageUrl: meta.pageUrl || null,
-      coverUrl: typeof meta.cover === 'string' ? meta.cover : null, hasCover: !!cover,
+      coverUrl: typeof meta.cover === 'string' ? meta.cover : meta.coverUrl || null, hasCover: !!cover,
       addedAt: meta.addedAt || Date.now(), playCount: meta.playCount || 0, lastPlayedAt: meta.lastPlayedAt || null,
     };
     try {
@@ -96,6 +90,18 @@ export async function coverUrl(track) {
   if (!track?.hasCover) return track?.coverUrl || null;
   const { uri } = await fs().getUri({ path: `${pathFor(track.id)}.cover`, directory });
   return cap().convertFileSrc(uri);
+}
+export async function setCover(id, url) {
+  const blob = await fetchCover(url);
+  return serial(async () => {
+    const current = await getTrack(id);
+    if (!current) return null;
+    if (blob) await writeBlob(`${pathFor(id)}.cover`, blob);
+    const track = { ...current, coverUrl: url, hasCover: !!blob || current.hasCover };
+    await commit(track);
+    notify({ type: 'updated', id });
+    return track;
+  });
 }
 export function updateTrack(id, patch) {
   return serial(async () => {

@@ -20,6 +20,7 @@
 //     并建议 iOS 用户"添加到主屏幕"（主屏幕 Web App 不受 7 天限制）
 //   - 导出：桌面 Chromium 用 File System Access（可选保存位置 / 整个文件夹），其余浏览器用 <a download>
 
+import { fetchCover } from './coverUrl.js';
 const DB_NAME = 'halfhalf-library';
 // v2: + playlists { id, name, coverUrl, createdAt, updatedAt, trackIds[], system? }（歌单只引用 tracks.id，删歌单不删音频）
 const DB_VERSION = 2;
@@ -185,23 +186,6 @@ export function subscribe(fn) {
 
 const coverUrls = new Map(); // id → objectURL（同一张封面只创建一次）
 
-/** 远程封面尽量存成 Blob（离线可用）；跨域不允许时只保留 URL */
-async function fetchCover(cover) {
-  if (!cover) return null;
-  if (cover instanceof Blob) return cover;
-  if (typeof cover !== 'string') return null;
-  if (cover.startsWith('data:') || cover.startsWith('blob:') || /^https?:/.test(cover)) {
-    try {
-      const r = await fetch(cover, { mode: 'cors', credentials: 'omit', referrerPolicy: 'no-referrer', signal: AbortSignal.timeout?.(6000) });
-      const b = r.ok ? await r.blob() : null;
-      return b?.type.startsWith('image/') && b.size < 5 * 1024 * 1024 ? b : null;
-    } catch {
-      return null;
-    }
-  }
-  return null;
-}
-
 /** 曲目封面的可显示地址：本地存了就用 objectURL，否则用原始 URL */
 export async function coverUrl(track) {
   if (!track?.hasCover) return track?.coverUrl || null;
@@ -211,6 +195,17 @@ export async function coverUrl(track) {
   const url = URL.createObjectURL(b);
   coverUrls.set(track.id, url);
   return url;
+}
+
+export async function setCover(id, url) {
+  if (!await getTrack(id)) return null;
+  const blob = await fetchCover(url);
+  if (blob) await putBinary('covers', id, blob);
+  const current = await getTrack(id);
+  if (!current) return null;
+  if (coverUrls.has(id)) URL.revokeObjectURL(coverUrls.get(id));
+  coverUrls.delete(id);
+  return updateTrack(id, { coverUrl: url, hasCover: !!blob || current.hasCover });
 }
 
 // ───────────────────────────── 公共 API
@@ -238,7 +233,7 @@ export async function saveTrack(blob, meta) {
   if (existing) return { track: existing, existed: true };
 
   const id = meta.id || newId();
-  const coverBlob = await fetchCover(meta.cover);
+  const coverBlob = await fetchCover(meta.cover || meta.coverUrl);
   const track = {
     id,
     hash,
@@ -254,7 +249,7 @@ export async function saveTrack(blob, meta) {
     sourceLabel: meta.sourceLabel || '本地',
     sourceId: meta.sourceId || null,
     pageUrl: meta.pageUrl || null,
-    coverUrl: typeof meta.cover === 'string' && /^https?:/.test(meta.cover) ? meta.cover : null,
+    coverUrl: typeof meta.cover === 'string' && /^https?:/.test(meta.cover) ? meta.cover : meta.coverUrl || null,
     hasCover: !!coverBlob,
     addedAt: Date.now(),
     lastPlayedAt: null,

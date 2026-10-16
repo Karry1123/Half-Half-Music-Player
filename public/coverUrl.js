@@ -8,3 +8,15 @@ export function coverSrc(url) {
   if (typeof url !== 'string' || !url) return url;
   return proxy && PROXIED_COVER.test(url) ? proxy(url) : url;
 }
+
+// Use the same proxy for durable downloads as for displayed artwork.
+export async function fetchCover(cover) {
+  let blob = cover instanceof Blob ? cover : null;
+  if (!blob && typeof cover === 'string' && /^(https?:|data:|blob:|\/)/.test(cover)) {
+    try {
+      const r = await fetch(coverSrc(cover), { credentials: 'omit', referrerPolicy: 'no-referrer', signal: AbortSignal.timeout(6000) });
+      if (r.ok) blob = await r.blob();
+    } catch {}
+  }
+  return blob?.size > 0 && blob.type.startsWith('image/') && blob.size <= 5 * 1024 * 1024 ? blob : null;
+}
