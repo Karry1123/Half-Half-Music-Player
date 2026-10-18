@@ -18,6 +18,7 @@ const SCHEMA = [
   'CREATE TABLE IF NOT EXISTS listening_sessions(user_id TEXT NOT NULL REFERENCES users(id), device_id TEXT NOT NULL, record_id TEXT NOT NULL, song_key TEXT NOT NULL, day TEXT NOT NULL, seconds DOUBLE PRECISION NOT NULL, updated_at BIGINT NOT NULL, PRIMARY KEY(user_id,device_id,record_id))',
   'CREATE TABLE IF NOT EXISTS co_listening(user_id TEXT NOT NULL REFERENCES users(id), device_id TEXT NOT NULL, friend_id TEXT NOT NULL, seconds DOUBLE PRECISION NOT NULL, updated_at BIGINT NOT NULL, PRIMARY KEY(user_id,device_id,friend_id))',
   'CREATE TABLE IF NOT EXISTS listening_tracks(user_id TEXT NOT NULL REFERENCES users(id), song_key TEXT NOT NULL, completion_key TEXT NOT NULL, title TEXT NOT NULL, artist TEXT NOT NULL, cover TEXT NOT NULL, PRIMARY KEY(user_id,song_key))',
+  'CREATE TABLE IF NOT EXISTS listening_track_aliases(user_id TEXT NOT NULL REFERENCES users(id), song_key TEXT NOT NULL, completion_key TEXT NOT NULL, PRIMARY KEY(user_id,song_key,completion_key))',
   'CREATE TABLE IF NOT EXISTS play_counts(user_id TEXT NOT NULL REFERENCES users(id), song_key TEXT NOT NULL, title TEXT NOT NULL, artist TEXT NOT NULL, cover TEXT NOT NULL, completed INTEGER NOT NULL DEFAULT 0, updated_at BIGINT NOT NULL, PRIMARY KEY(user_id,song_key))',
   'CREATE TABLE IF NOT EXISTS play_devices(user_id TEXT NOT NULL REFERENCES users(id), device_id TEXT NOT NULL, song_key TEXT NOT NULL, completed INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(user_id,device_id,song_key))',
   'CREATE TABLE IF NOT EXISTS sessions(token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), expires_at BIGINT NOT NULL)',
@@ -276,6 +277,10 @@ export class Accounts {
     }
     await this.db.tx(async db => {
       for (const r of body.records) {
+        // Preserve every title/artist completion bucket associated with a source/hash,
+        // including the existing v0.5.5 tag before a different device updates it.
+        await db.run('INSERT INTO listening_track_aliases SELECT user_id,song_key,completion_key FROM listening_tracks WHERE user_id=$1 AND song_key=$2 ON CONFLICT DO NOTHING', [userId, r.key]);
+        await db.run('INSERT INTO listening_track_aliases VALUES($1,$2,$3) ON CONFLICT DO NOTHING', [userId, r.key, songKey(r.title, r.artist)]);
         // Absolute, monotonically increasing device counters tolerate retries and stale requests.
         await db.run('INSERT INTO listening_sessions VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(user_id,device_id,record_id) DO UPDATE SET seconds=excluded.seconds,updated_at=excluded.updated_at WHERE excluded.seconds>listening_sessions.seconds', [userId, body.deviceId, r.id, r.key, r.day, r.seconds, Date.now()]);
         await db.run('INSERT INTO listening_tracks VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(user_id,song_key) DO UPDATE SET completion_key=excluded.completion_key,title=excluded.title,artist=excluded.artist,cover=excluded.cover', [userId, r.key, songKey(r.title, r.artist), r.title, r.artist, /^https:\/\//i.test(r.cover) ? r.cover : '']);
@@ -296,8 +301,12 @@ export class Accounts {
       const completed = await db.all('SELECT p.song_key AS key,p.completed-COALESCE(d.completed,0) AS completed FROM play_counts p LEFT JOIN play_devices d ON d.user_id=p.user_id AND d.song_key=p.song_key AND d.device_id=$2 WHERE p.user_id=$1', [userId, deviceId]);
       const metadata = await db.all('SELECT song_key AS key,completion_key AS "completionKey",title,artist,cover FROM listening_tracks WHERE user_id=$1', [userId]);
       const counts = new Map(completed.map(row => [row.key, Number(row.completed)]));
-      const mapped = metadata.map(row => ({ key: row.key, completionKey: row.completionKey, completed: counts.get(row.completionKey) || 0 }));
-      const known = new Set(metadata.map(row => row.completionKey));
+      const aliases = await db.all('SELECT song_key AS key,completion_key AS "completionKey" FROM listening_track_aliases WHERE user_id=$1', [userId]);
+      const keys = new Map(metadata.map(row => [row.key, new Set([row.completionKey])]));
+      for (const row of aliases) keys.get(row.key)?.add(row.completionKey);
+      const mapped = metadata.map(row => ({ key: row.key, completionKey: row.completionKey,
+        completed: [...keys.get(row.key)].reduce((sum, key) => sum + (counts.get(key) || 0), 0) }));
+      const known = new Set([...keys.values()].flatMap(set => [...set]));
       return { daily, tracks, completed: [...mapped, ...completed.filter(row => !known.has(row.key))], coListening, metadata };
     });
   }

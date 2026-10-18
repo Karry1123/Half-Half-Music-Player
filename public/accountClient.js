@@ -2,33 +2,66 @@ import { nativePlugin } from './nativeBridge.js';
 export class AccountClient {
   constructor(base) { this.base = base; this.token = ''; this.user = null; this.required = true; this.revision = 0; this.playlists = []; }
   get key() { return `hh.account.${this.base}`; }
+  async read(key) {
+    return globalThis.Capacitor?.isNativePlatform?.() ? (await nativePlugin('Preferences').get({ key })).value : globalThis.localStorage?.getItem(key);
+  }
+  async store(key, value) {
+    if (globalThis.Capacitor?.isNativePlatform?.()) {
+      const prefs = nativePlugin('Preferences');
+      if (value) await prefs.set({ key, value }); else await prefs.remove({ key });
+    } else if (value) globalThis.localStorage?.setItem(key, value); else globalThis.localStorage?.removeItem(key);
+  }
+  async cacheUser() {
+    if (!this.user?.id) return;
+    await this.store(`${this.key}.user`, JSON.stringify(this.user));
+    await this.store(`${this.key}.lastUserId`, this.user.id);
+  }
   async persist(token) {
     if (globalThis.Capacitor?.isNativePlatform?.()) {
       const prefs = nativePlugin('Preferences');
       if (token) await prefs.set({ key: this.key, value: token }); else await prefs.remove({ key: this.key });
     } else if (token) localStorage.setItem(this.key, token); else localStorage.removeItem(this.key);
     this.token = token;
+    if (!token) {
+      await this.store(`${this.key}.user`, '');
+      await this.store(`${this.key}.lastUserId`, '');
+    }
   }
   async request(path, body, method = body ? 'POST' : 'GET') {
     const r = await fetch(`${this.base}${path}`, { method, headers: { 'Content-Type': 'application/json', ...(this.token && { Authorization: `Bearer ${this.token}` }) }, ...(body && { body: JSON.stringify(body) }), signal: AbortSignal.timeout(60000) });
     const data = await r.json();
-    if (!r.ok) throw Object.assign(new Error(data.error || `HTTP ${r.status}`), { code: data.code, status: r.status });
+    if (!r.ok) throw Object.assign(new Error(data.error || `HTTP ${r.status}`), { code: data.code, status: r.status,
+      retryAfter: Math.max(0, Number(r.headers.get('Retry-After')) || 0) * 1000 });
     return data;
   }
   async init() {
+    this.token = await this.read(this.key) || '';
+    if (this.token) {
+      try { this.user = JSON.parse(await this.read(`${this.key}.user`) || 'null'); } catch {}
+      const id = this.user?.id || await this.read(`${this.key}.lastUserId`);
+      if (id && !this.user) this.user = { id, isActivated: true };
+    }
+    // Cached identity unlocks local playback immediately, including a blackholed network.
+    if (this.user) {
+      this.refreshIdentity().catch(() => {});
+      return;
+    }
+    await this.refreshIdentity();
+  }
+  async refreshIdentity() {
     const cfg = await this.request('/auth/config'); this.required = cfg.required !== false;
     if (!this.required) return;
-    this.token = globalThis.Capacitor?.isNativePlatform?.() ? (await nativePlugin('Preferences').get({ key: this.key })).value || '' : localStorage.getItem(this.key) || '';
     if (this.token) {
-      try { this.user = await this.request('/auth/me'); }
-      catch (e) { if (e.status !== 401) throw e; await this.persist(''); }
+      try { this.user = await this.request('/auth/me'); await this.cacheUser(); }
+      catch (e) { if (e.status !== 401) throw e; await this.persist(''); this.user = null; }
     }
   }
   async login(username, password, register = false) {
     const result = await this.request(register ? '/auth/register' : '/auth/login', { username, password });
     await this.persist(result.token); this.user = result.user;
+    await this.cacheUser();
   }
-  async activate(code) { this.user = await this.request('/auth/activate', { code }); }
+  async activate(code) { this.user = await this.request('/auth/activate', { code }); await this.cacheUser(); }
   async logout() { try { await this.request('/auth/logout', {}); } finally { await this.persist(''); this.user = null; this.playlists = []; this.revision = 0; } }
   async pull() { const data = await this.request('/account/library'); this.revision = data.revision; this.playlists = data.playlists; return data.playlists; }
   async push(playlists) { const data = await this.request('/account/library', { revision: this.revision, playlists }, 'PUT'); this.revision = data.revision; this.playlists = data.playlists; }

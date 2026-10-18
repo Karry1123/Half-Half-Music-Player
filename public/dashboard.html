@@ -4608,10 +4608,10 @@ function App() {
     upload();
     const uploadTimer = setInterval(upload, 60000);
     window.addEventListener('online', upload);
-    const foreground = () => { if (!document.hidden) upload(); };
+    const foreground = () => { if (!document.hidden) upload(); else { sample(); stats.flush().catch(() => {}); } };
     document.addEventListener('visibilitychange', foreground);
     const nativeResume = window.Capacitor?.isNativePlatform?.()
-      ? nativePlugin('App').addListener('appStateChange', ({ isActive }) => { if (isActive) upload(); }).catch(console.warn) : null;
+      ? nativePlugin('App').addListener('appStateChange', ({ isActive }) => { if (isActive) upload(); else { sample(); stats.flush().catch(() => {}); } }).catch(console.warn) : null;
     const flush = () => { sample(); stats.flush().catch(console.warn); };
     window.addEventListener('pagehide', flush);
     const unstore = store.subscribe(sample);

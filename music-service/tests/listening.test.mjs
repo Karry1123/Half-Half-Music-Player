@@ -2,7 +2,74 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { Accounts, mountAccounts, wrapPostgres } from '../src/accounts.js';
+import { ListeningStats, createListeningSync, createCompletedPlayUploader } from '../../public/listeningStats.js';
 const express = createRequire(new URL('../package.json', import.meta.url))('express');
+
+for (const identity of ['source', 'hash', 'title']) for (const order of [[0, 1], [1, 0]]) test(`offline devices sum usage after reload: ${identity}, sync order ${order}`, async () => {
+  const accounts = await Accounts.memory();
+  const { user } = await accounts.register(`offline-${order.join('')}`, 'local-test-password');
+  const now = +new Date(2026, 9, 15, 12);
+  const titleOf = i => i && identity !== 'title' ? 'Song (alternate tag)' : 'Song';
+  const key = identity === 'source' ? 'source:shared' : identity === 'hash' ? 'hash:shared' : '["song","artist"]';
+  const devices = [], syncs = [];
+  try {
+    for (const i of [0, 1]) {
+      let saved;
+      const persistence = {
+        load: async () => structuredClone(saved),
+        save: async value => {
+          const records = new Map((saved?.records || []).map(r => [r.id, r]));
+          value.records.forEach(r => records.set(r.id, r));
+          saved = structuredClone({ ...value, records: [...records.values()] });
+        },
+      };
+      let stats = new ListeningStats({ userId: user.id, persistence });
+      await stats.ready();
+      const trackId = `local-${i}`;
+      for (let play = 0; play <= i; play++) {
+        stats.sample({ trackId, sourceId: identity === 'source' ? key : '', hash: identity === 'hash' ? 'shared' : '', title: titleOf(i), artist: 'Artist', currentTime: 0, duration: 60, playing: true, connected: true, friendId: 'friend', now: now + play * 61000 });
+        stats.sample({ trackId, currentTime: 60, duration: 60, ended: true, connected: true, friendId: 'friend', now: now + play * 61000 + 60000 });
+      }
+      await stats.flush();
+      const deviceId = stats.stats.deviceId;
+      stats = new ListeningStats({ userId: user.id, persistence });
+      await stats.ready();
+      assert.equal(stats.stats.deviceId, deviceId);
+      const client = { user: { ...user, isActivated: true }, request: (path, body) =>
+        path === '/account/plays' ? accounts.recordPlays(user.id, body) : body ? accounts.recordListening(user.id, body) : accounts.listening(user.id, decodeURIComponent(path.split('=')[1])) };
+      const options = { stats, client, listTracks: async () => [] };
+      const sync = createListeningSync({ ...options, uploadPlays: createCompletedPlayUploader(options) });
+      devices.push(stats); syncs.push(sync);
+    }
+    assert.notEqual(devices[0].stats.deviceId, devices[1].stats.deviceId);
+    for (const i of order) await syncs[i].sync();
+    for (const sync of syncs) await sync.sync();
+    for (const [i, stats] of devices.entries()) {
+      assert.equal(stats.summary('week', now + 180000), 180);
+      assert.equal(stats.completedCount(`local-${i}`), 3);
+      assert.equal(stats.coListeningSeconds('friend'), 180);
+      // A stale snapshot and a new uploader replay must not change any total.
+      await accounts.recordListening(user.id, { deviceId: stats.stats.deviceId, records: stats.records.map(r => ({ id: r.id, key, day: '2026-10-15', seconds: 1, title: titleOf(i), artist: 'Artist', cover: '' })), coListening: [{ friendId: 'friend', seconds: 1 }] });
+      await accounts.recordPlays(user.id, { deviceId: stats.stats.deviceId, plays: stats.completedUploads().map(p => ({ ...p, completed: 0 })) });
+      const options = { stats, client: { user: { ...user, isActivated: true }, request: (path, body) => path === '/account/plays' ? accounts.recordPlays(user.id, body) : body ? accounts.recordListening(user.id, body) : accounts.listening(user.id, stats.stats.deviceId) }, listTracks: async () => [] };
+      const replay = createListeningSync({ ...options, uploadPlays: createCompletedPlayUploader(options) });
+      try { await replay.sync(); } finally { replay.stop(); }
+      assert.equal(stats.summary('week', now + 180000), 180);
+      assert.equal(stats.completedCount(`local-${i}`), 3);
+      assert.equal(stats.coListeningSeconds('friend'), 180);
+    }
+    // Clearing the install's IndexedDB discards counters AND identity together.
+    const cleared = new ListeningStats({ userId: user.id, indexedDB: null });
+    await cleared.ready();
+    assert.ok(devices.every(s => s.stats.deviceId !== cleared.stats.deviceId));
+    cleared.rememberTrack({ trackId: 'fresh', sourceId: identity === 'source' ? key : '', hash: identity === 'hash' ? 'shared' : '', title: 'Song', artist: 'Artist' });
+    assert.deepEqual(cleared.completedUploads(), []);
+    cleared.mergeCloud(await accounts.listening(user.id, cleared.stats.deviceId));
+    assert.equal(cleared.summary('week', now + 180000), 180);
+    assert.equal(cleared.completedCount('fresh'), 3);
+    assert.equal(cleared.coListeningSeconds('friend'), 180);
+  } finally { syncs.forEach(s => s.stop()); await Promise.all(devices.map(s => s.flush())); await accounts.close(); }
+});
 
 test('PostgreSQL listening schema and absolute upserts match SQLite semantics', async () => {
   const { PGlite } = createRequire(new URL('../package.json', import.meta.url))('@electric-sql/pglite');

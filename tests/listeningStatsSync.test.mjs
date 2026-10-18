@@ -56,7 +56,7 @@ test('sync retries failed absolute snapshots, batches at 200, and uploads only c
   try {
     stats.mergeCloud(cloud());
     await assert.rejects(sync.sync(), /offline/);
-    assert.equal(stats.cloud, null);
+    assert.deepEqual(stats.cloud, cloud());
     fail = false; await sync.sync();
     const uploads = requests.filter(r => r.body);
     assert.deepEqual(uploads.map(r => r.body.records.length), [200, 200, 200, 1]);

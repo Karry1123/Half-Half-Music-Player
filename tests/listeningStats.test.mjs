@@ -148,6 +148,8 @@ test('startup backfills saved completed totals and preserves device identity acr
   assert.equal(restored.stats.deviceId, requests[0].deviceId);
   await restored.flush();
   await upload();
+  assert.equal(requests.length, 1, 'acknowledged totals need no further request');
+  await createCompletedPlayUploader({ stats: restored, client, listTracks: async () => [] })();
   assert.deepEqual(requests[1], requests[0], 'retries send absolute totals, never increments');
 });
 

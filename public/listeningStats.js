@@ -7,6 +7,7 @@ const calendarDay = timestamp => {
   const date = new Date(timestamp);
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 };
+const recordDay = record => record.localDay || (record.day ? calendarDay(Date.parse(record.day)) : calendarDay(record.timestamp));
 
 export function createListeningStatsPersistence(indexedDB) {
   let database;
@@ -65,6 +66,7 @@ export class ListeningStats {
       const saved = await this.persistence?.load(this.userId);
       this.records = (saved?.records || []).filter(record => record.userId === this.userId);
       this.stats = { ...emptyStats(), ...saved?.stats };
+      this.cloud = this.stats.cloud;
     } catch (error) {
       // Private browsing/storage failures must not stop playback or lose this session's accounting.
       this.storageError = error;
@@ -132,7 +134,7 @@ export class ListeningStats {
             session.record = {
               id: globalThis.crypto?.randomUUID?.() || `${this.userId}-${cursor}-${Math.random()}`,
               userId: this.userId, trackId: sample.trackId, durationPlayed: 0,
-              timestamp: cursor, day,
+              timestamp: cursor, day, localDay: calendarDay(cursor),
             };
             this.records.push(session.record);
           }
@@ -178,7 +180,7 @@ export class ListeningStats {
     const snapshot = {
       userId: this.userId,
       records: this.records.filter(record => ids.has(record.id)).map(record => ({ ...record })),
-      stats: { deviceId: this.stats.deviceId, trackMetadata: { ...this.stats.trackMetadata }, completedPlayCount: { ...this.stats.completedPlayCount }, coListeningTime: { ...this.stats.coListeningTime } },
+      stats: { deviceId: this.stats.deviceId, cloud: this.cloud, trackMetadata: { ...this.stats.trackMetadata }, completedPlayCount: { ...this.stats.completedPlayCount }, coListeningTime: { ...this.stats.coListeningTime } },
     };
     this.dirty.clear();
     this.changed = false;
@@ -194,7 +196,7 @@ export class ListeningStats {
   rememberTrack({ trackId, title, artist = '', cover = '', sourceId, hash }) {
     if (!trackId || !title) return;
     const old = this.stats.trackMetadata[trackId];
-    const meta = { title, artist, cover: /^https:\/\//i.test(cover) ? cover : old?.cover || '',
+    const meta = { title, artist, cover: /^https:\/\//i.test(cover) && cover.length <= 2000 ? cover : old?.cover || '',
       sourceId: sourceId || old?.sourceId || '', hash: hash || old?.hash || '' };
     if (JSON.stringify(old) !== JSON.stringify(meta)) {
       this.stats.trackMetadata[trackId] = meta;
@@ -220,15 +222,15 @@ export class ListeningStats {
     const meta = this.stats.trackMetadata[trackId];
     return meta && (meta.sourceId || (meta.hash && `hash:${meta.hash}`) || songKey(meta));
   }
-  mergeCloud(data) { this.cloud = data; this.notify(); }
+  mergeCloud(data) { this.cloud = data; this.changed = true; this.scheduleSave(); this.notify(); }
   completedCount(trackId) {
     const meta = this.stats.trackMetadata[trackId];
-    if (!this.cloud || !meta) return this.stats.completedPlayCount[trackId] || 0;
+    if (!meta) return this.stats.completedPlayCount[trackId] || 0;
     const key = songKey(meta);
     const local = Object.entries(this.stats.completedPlayCount).reduce((sum, [id, count]) =>
-      sum + (songKey(this.stats.trackMetadata[id]) === key ? count : 0), 0);
-    const remote = this.cloud.completed?.find(row => row.key === this.trackKey(trackId)) ||
-      this.cloud.completed?.find(row => (row.completionKey || row.key) === key);
+      sum + (this.trackKey(id) === this.trackKey(trackId) || songKey(this.stats.trackMetadata[id]) === key ? count : 0), 0);
+    const remote = this.cloud?.completed?.find(row => row.key === this.trackKey(trackId)) ||
+      this.cloud?.completed?.find(row => (row.completionKey || row.key) === key);
     return local + Number(remote?.completed || 0);
   }
   coListeningSeconds(friendId) {
@@ -248,14 +250,32 @@ export class ListeningStats {
     const remote = (this.cloud?.daily || []).reduce((total, row) => total +
       (row.day >= calendarDay(+start) && row.day <= calendarDay(now) ? Number(row.seconds) : 0), 0);
     return this.records.reduce((total, record) => total +
-      (record.timestamp >= start.getTime() && record.timestamp <= now ? record.durationPlayed : 0), remote);
+      (recordDay(record) >= calendarDay(+start) && recordDay(record) <= calendarDay(now) && record.timestamp <= now ? record.durationPlayed : 0), remote);
   }
 }
 
 // Upload absolute device totals: retrying/backfilling cannot double count on the server.
 // A completion during an in-flight request queues another snapshot instead of being lost.
-export function createCompletedPlayUploader({ stats, client, listTracks, onUploaded = () => {} }) {
+// Both uploaders share a conservative rolling budget, leaving room for other account
+// routes. A rejected batch stays pending until a later dashboard/event timer retries.
+const budgets = new WeakMap();
+function statsRequest(client, now, ...args) {
+  let budget = budgets.get(client);
+  if (!budget) budgets.set(client, budget = { times: [], until: 0 });
+  const time = now();
+  budget.times = budget.times.filter(t => time - t <= 60000);
+  if (time < budget.until || budget.times.length >= 8) return Promise.reject(Object.assign(new Error('Listening sync request budget; retry later'), { status: 429 }));
+  if (globalThis.navigator?.onLine === false) return Promise.reject(new Error('Offline'));
+  budget.times.push(time);
+  return client.request(...args).catch(error => {
+    if (error.status === 429) budget.until = now() + Math.max(60000, error.retryAfter || 0);
+    throw error;
+  });
+}
+
+export function createCompletedPlayUploader({ stats, client, listTracks, onUploaded = () => {}, now = Date.now }) {
   let running, queued = false;
+  const sent = new Map();
   const active = () => client.user?.isActivated && (!client.user.id || client.user.id === stats.userId);
   return function upload() {
     if (!active()) return Promise.resolve();
@@ -270,10 +290,12 @@ export function createCompletedPlayUploader({ stats, client, listTracks, onUploa
             stats.rememberTrack({ trackId: t.id, title: t.title, artist: t.artist, cover: t.coverUrl || t.cover, sourceId: t.sourceId, hash: t.hash });
           }
           await stats.flush();
-          const plays = stats.completedUploads();
+          const plays = stats.completedUploads().filter(row => sent.get(songKey(row)) !== JSON.stringify(row));
           for (let i = 0; i < plays.length; i += 100) {
             if (!active()) return;
-            await client.request('/account/plays', { deviceId: stats.stats.deviceId, plays: plays.slice(i, i + 100) });
+            const batch = plays.slice(i, i + 100);
+            await statsRequest(client, now, '/account/plays', { deviceId: stats.stats.deviceId, plays: batch });
+            batch.forEach(row => sent.set(songKey(row), JSON.stringify(row)));
           }
           if (plays.length) onUploaded();
         }
@@ -286,7 +308,7 @@ export function createCompletedPlayUploader({ stats, client, listTracks, onUploa
 // Cloud responses exclude this device for time AND completions. Local counters remain
 // authoritative and are never replaced by cloud totals (including during playback).
 // Signatures only acknowledge successful snapshots; restarting safely backfills all records.
-export function createListeningSync({ stats, client, listTracks, uploadPlays = async () => {} }) {
+export function createListeningSync({ stats, client, listTracks, uploadPlays = async () => {}, now = Date.now }) {
   let running, timer, stopped = false, queued = false;
   const sent = new Map();
   const active = () => !stopped && client.user?.isActivated && client.user.id === stats.userId;
@@ -301,13 +323,13 @@ export function createListeningSync({ stats, client, listTracks, uploadPlays = a
         while (queued && active()) {
           queued = false;
           await stats.ready();
-          for (const t of await listTracks()) stats.rememberTrack({ ...t, trackId: t.id, cover: t.coverUrl || t.cover });
+          for (const t of await listTracks().catch(() => [])) stats.rememberTrack({ ...t, trackId: t.id, cover: t.coverUrl || t.cover });
           await stats.flush();
           if (!active()) return;
           const records = stats.records.flatMap(record => {
             const meta = stats.stats.trackMetadata[record.trackId];
             if (!meta?.title || meta.title.length > 200 || (meta.artist || '').length > 200) return [];
-            return [{ id: String(record.id), key: stats.trackKey(record.trackId), day: calendarDay(record.timestamp),
+            return [{ id: String(record.id), key: stats.trackKey(record.trackId), day: recordDay(record),
               seconds: record.durationPlayed, title: meta.title, artist: meta.artist || '', cover: meta.cover || '' }];
           }).filter(row => sent.get(`r:${row.id}`) !== JSON.stringify(row));
           const co = Object.entries(stats.stats.coListeningTime).map(([friendId, seconds]) => ({ friendId, seconds }))
@@ -315,18 +337,17 @@ export function createListeningSync({ stats, client, listTracks, uploadPlays = a
           for (let i = 0; i < Math.max(records.length, co.length); i += 200) {
             if (!active()) return;
             const batch = records.slice(i, i + 200), friends = co.slice(i, i + 200);
-            await client.request('/account/listening', { deviceId: stats.stats.deviceId, records: batch, coListening: friends }, 'PUT');
+            await statsRequest(client, now, '/account/listening', { deviceId: stats.stats.deviceId, records: batch, coListening: friends }, 'PUT');
             batch.forEach(row => sent.set(`r:${row.id}`, JSON.stringify(row)));
             friends.forEach(row => sent.set(`f:${row.friendId}`, JSON.stringify(row)));
           }
           if (!active()) return;
           await uploadPlays();
           if (!active()) return;
-          const data = await client.request(`/account/listening?deviceId=${encodeURIComponent(stats.stats.deviceId)}`);
+          const data = await statsRequest(client, now, `/account/listening?deviceId=${encodeURIComponent(stats.stats.deviceId)}`);
           if (active()) stats.mergeCloud(data);
         }
       } catch (error) {
-        if (active()) stats.mergeCloud(null); // Unreachable API retains today's local-only behavior.
         throw error;
       } finally { running = null; }
     })();
