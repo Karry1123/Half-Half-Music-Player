@@ -1200,7 +1200,6 @@ class Session {
     if (add.length) {
       set((s) => ({ library: [...add, ...s.library] }));
       this.broadcastLibrary();
-      if (!get().currentId) this.loadTrack(get().library[0].id);
     }
     await refreshOffline();
     repairLibraryCovers(tracks);
@@ -1496,6 +1495,7 @@ class Session {
     const by = opts.by || 'host';
     if (action === 'select') return this.loadTrack(opts.itemId, { autoplay: true, by, via: 'select' });
     if (action === 'next' || action === 'prev') {
+      if (!get().library.some(x => x.id === get().currentId)) return;
       if (action === 'prev' && this.position() > 3) { this.transport('seek', 0, by); this.notifySynced(); return; }
       const q = this.syncQueue();
       const target = action === 'next' ? q.peekNext() : q.peekPrev();
@@ -1856,7 +1856,6 @@ class Session {
     set((s) => ({ library: [...s.library, item] }));
     this.broadcastLibrary();
     if (!item.duration) this.probeDuration(item.id, blob);
-    if (!get().currentId) this.loadTrack(item.id);
     return item;
   }
 
@@ -2055,7 +2054,8 @@ if (mediaSession) {
     }
     // 没有下一首 / 上一首时隐藏系统控件里的按钮
     const canPrev = !!item;
-    if (s.canNext !== last.canNext) bind('nexttrack', (last.canNext = s.canNext) ? handlers.nexttrack : null);
+    const canNext = !!item && s.canNext;
+    if (canNext !== last.canNext) bind('nexttrack', (last.canNext = canNext) ? handlers.nexttrack : null);
     if (canPrev !== last.canPrev) bind('previoustrack', (last.canPrev = canPrev) ? handlers.previoustrack : null);
   });
   // 播放速率微调（同步追赶）会让系统进度条慢慢偏，定期校正
@@ -3255,8 +3255,8 @@ function PlayerBar() {
   const [lastVol, setLastVol] = useState(0.8);
   const item = library.find((x) => x.id === currentId);
   const idx = library.findIndex((x) => x.id === currentId);
-  const can = loaded && (role !== 'guest' || conn === 'open');
-  const canSkip = role !== 'guest' || conn === 'open';
+  const can = !!item && loaded && (role !== 'guest' || conn === 'open');
+  const canSkip = !!item && (role !== 'guest' || conn === 'open');
 
   return html`<footer class="player-bar fixed inset-x-0 bottom-0 z-30 border-t border-ink-700/80 bg-ink-950/90 backdrop-blur-xl">
     <div class="mx-auto grid max-w-[1500px] grid-cols-1 items-center gap-x-4 gap-y-2 px-4 py-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1.6fr)_minmax(0,1fr)]">
@@ -4558,8 +4558,9 @@ function NativePlayer({ open, close, expand }) {
     document.addEventListener('keydown', onKey);
     return () => { document.body.style.overflow = overflow; document.removeEventListener('keydown', onKey); };
   }, [open]);
-  const can = s.loaded && (s.role !== 'guest' || s.conn === 'open');
+  const can = !!item && s.loaded && (s.role !== 'guest' || s.conn === 'open');
   const receiving = item && s.role === 'guest' && !s.loaded;
+  if (!item && !s.role) return null;
   return html`<div>
     <div hidden=${open} class="mini-player fixed inset-x-0 z-40 border-t border-ink-700 bg-ink-950/95 px-4 py-2 backdrop-blur-xl" style=${{ paddingLeft: 'max(16px, var(--safe-left))', paddingRight: 'max(16px, var(--safe-right))', bottom: 'calc(64px + var(--safe-bottom, 0px))' }}>
       <div class="mx-auto flex max-w-5xl items-center gap-3">
@@ -4660,6 +4661,7 @@ function App() {
   const screen = useStore((s) => s.screen);
   useEffect(() => { if (screen === 'deck') setTab('library'); }, [screen]);
   const keyboardOpen = useKeyboardOpen();
+  const playerVisible = useStore(s => !!s.role || s.library.some(x => x.id === s.currentId));
   useEffect(() => {
     probeNetwork();
     const networkChanged = () => { set({ net: { ...get().net, online: navigator.onLine } }); if (navigator.onLine) cloudSync.sync().catch(() => {}); };
@@ -4672,7 +4674,7 @@ function App() {
   return html`
     <${CloudSheet} open=${cloudOpen} onClose=${() => set({ cloudOpen: false })} client=${account} status=${cloudStatus} playlists=${cloudLocalPlaylists}
       onSync=${() => cloudSync.sync().catch((e) => toast(`同步失败：${e.message}`, 'warn'))} onDownload=${(id) => downloadPending(id)} onOpen=${(id) => set({ cloudOpen: false, viewPlaylistId: id, screen: 'deck' })} />
-    <main class="mx-auto max-w-5xl px-4 pt-5" style=${{ paddingBottom: 'calc(170px + var(--safe-bottom, 0px))' }}>
+    <main class="mx-auto max-w-5xl px-4 pt-5" style=${{ paddingBottom: `calc(${keyboardOpen ? 16 : playerVisible ? 170 : 80}px + var(--safe-bottom, 0px))` }}>
       ${tab === 'discover' && html`<${SearchDiscovery} onSearch=${homeSearch} onSelectTrack=${track => { stopPreview(); downloadWithPicker(track); }} />`}
       ${tab === 'library' && html`<div class="mb-4 flex justify-end"><button class="inline-flex items-center gap-2 rounded-xl border border-ink-600 px-4 py-3 text-sm" title=${cloudStatus?.error ? `${cloudLabel}：${cloudStatus.error}` : cloudLabel} aria-label=${cloudLabel} onClick=${() => set({ cloudOpen: true })}><${Cloud} size=${18} /> ${cloudLabel}</button></div><${RoomPlaylistBanner} /><${LibraryPanel} />`}
       ${tab === 'friends' && html`<${FriendsPanel} onPreview=${previewPublicTrack} onCollect=${async p => { await playlistStore.copyPublic(p); toast('已收藏到我的歌单'); }} stats=${listeningStats} client=${account} presence=${presence} invite=${userId => sendSocial({ type: 'INVITE_LISTEN_REQUEST', userId })} history=${history} />`}
