@@ -2,6 +2,7 @@ import { engine } from '../engine/session.js';
 import { useMusic } from '../store/useMusic.js';
 import { useSession } from '../store/useSession.js';
 import { Icon } from './Icon.jsx';
+import { DownloadQueueButton } from './DownloadQueue.jsx';
 
 const PATH = { host: '局域网直连', srflx: 'STUN 打洞', prflx: 'STUN 打洞', relay: 'TURN 中继' };
 
@@ -55,10 +56,12 @@ export function ConnectionBar() {
       <PingMeter />
       <span className="spacer" />
       {role === 'host' && (
+        <><DownloadQueueButton />
         <button className="btn" onClick={() => openDrawer(true)}>
           <Icon name="search" size={16} />
           搜索音乐
         </button>
+        </>
       )}
       <button className="icon-btn" title="离开房间" aria-label="离开房间" onClick={() => confirm('确定离开房间？') && engine.leaveRoom()}>
         <Icon name="leave" />

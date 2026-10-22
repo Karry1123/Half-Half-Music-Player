@@ -3,6 +3,10 @@ import { engine, fmtTime } from '../engine/session.js';
 import { usePlaybackPosition } from '../hooks/usePlayback.js';
 import { useSession } from '../store/useSession.js';
 import { Icon } from './Icon.jsx';
+import { toast } from '../store/useToast.js';
+
+const MODES = ['order', 'repeat', 'shuffle'];
+const MODE_NAMES = { order: '顺序播放', repeat: '单曲循环', shuffle: '随机播放' };
 
 /** 进度条：拖动时只预览，松手才发送 seek（避免拖动过程中对端频繁跳转） */
 function SeekBar({ disabled }) {
@@ -79,6 +83,7 @@ function VolumeControl() {
 }
 
 export function PlayerControls() {
+  const playMode = useSession((s) => s.playMode);
   const role = useSession((s) => s.role);
   const playing = useSession((s) => s.playing);
   const loaded = useSession((s) => s.loaded);
@@ -97,13 +102,18 @@ export function PlayerControls() {
     <div className="controls">
       <SeekBar disabled={!canControl} />
       <div className="transport">
+        <button className="icon-btn mode-btn" disabled={role !== 'host'} aria-label={`播放模式：${MODE_NAMES[playMode]}`} title={MODE_NAMES[playMode]} onClick={() => {
+          const next = MODES[(MODES.indexOf(useSession.getState().playMode) + 1) % MODES.length];
+          useSession.setState({ playMode: next });
+          toast(MODE_NAMES[next], { icon: next, key: 'play-mode' });
+        }}><Icon name={playMode} /></button>
         <button className="icon-btn" aria-label="上一曲" title="上一曲（播放超过 3 秒时回到开头）" disabled={!canSkip || index < 0} onClick={() => engine.act('prev')}>
           <Icon name="prev" size={22} />
         </button>
         <button className="play-btn" aria-label={playing ? '暂停' : '播放'} disabled={!canControl} onClick={() => engine.act('toggle')}>
           <Icon name={playing ? 'pause' : 'play'} size={26} />
         </button>
-        <button className="icon-btn" aria-label="下一曲" disabled={!canSkip || index >= playlist.length - 1} onClick={() => engine.act('next')}>
+        <button className="icon-btn" aria-label="下一曲" disabled={!canSkip || !playlist.length || (playMode !== 'shuffle' && index >= playlist.length - 1)} onClick={() => engine.act('next')}>
           <Icon name="next" size={22} />
         </button>
         <VolumeControl />

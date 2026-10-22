@@ -3,6 +3,7 @@ import { engine, fmtTime } from '../engine/session.js';
 import { jobForTrack, useMusic } from '../store/useMusic.js';
 import { useSession } from '../store/useSession.js';
 import { Icon } from './Icon.jsx';
+import { DownloadQueueButton } from './DownloadQueue.jsx';
 
 const VERSION_TONE = { original: 'ok', variant: 'guest', live: 'guest', unknown: 'warn', cover: 'err', other: 'err' };
 const ACTIVE = ['queued', 'downloading', 'processing'];
@@ -82,41 +83,6 @@ function ResultItem({ t }) {
   );
 }
 
-function DownloadQueue() {
-  const jobs = useMusic((s) => s.jobs);
-  const list = Object.values(jobs)
-    .sort((a, b) => b.createdAt - a.createdAt)
-    .slice(0, 8);
-  if (!list.length) return null;
-  return (
-    <div className="queue" aria-label="下载任务">
-      <span className="muted" style={{ fontSize: 12 }}>
-        下载任务
-      </span>
-      {list.map((j) => (
-        <div className="queue-item" key={j.id}>
-          <div className="row">
-            <span className="name">
-              {j.artist ? `${j.artist} - ` : ''}
-              {j.title}
-            </span>
-            <span className={j.status === 'error' ? 'tag err' : j.status === 'done' ? 'tag ok' : 'muted'}>
-              {j.status === 'downloading' ? `${Math.round(j.progress * 100)}%` : STATUS[j.status]}
-            </span>
-          </div>
-          {ACTIVE.includes(j.status) && (
-            <div className="bar">
-              <i style={{ width: `${Math.round((j.progress || 0) * 100)}%` }} />
-            </div>
-          )}
-          {j.error && <span style={{ color: 'var(--err)' }}>{j.error}</span>}
-          {j.note && j.status === 'done' && <span className="muted">{j.note}</span>}
-        </div>
-      ))}
-    </div>
-  );
-}
-
 function ServiceDown() {
   const init = useMusic((s) => s.init);
   return (
@@ -140,7 +106,7 @@ export function SearchDrawer() {
   useEffect(() => {
     if (!open) return;
     input.current?.focus();
-    const onKey = (e) => e.key === 'Escape' && music.setDrawer(false);
+    const onKey = (e) => e.key === 'Escape' && !useMusic.getState().queueOpen && music.setDrawer(false);
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [open]);
@@ -157,6 +123,7 @@ export function SearchDrawer() {
       <aside className="drawer" role="dialog" aria-label="搜索与下载">
         <div className="panel-head">
           <h2>搜索与下载</h2>
+          <DownloadQueueButton />
           <button className="icon-btn" aria-label="关闭" onClick={() => music.setDrawer(false)}>
             <Icon name="close" />
           </button>
@@ -248,7 +215,6 @@ export function SearchDrawer() {
             </>
           )}
         </div>
-        <DownloadQueue />
       </aside>
     </>
   );

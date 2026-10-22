@@ -200,7 +200,8 @@ a { color: inherit; }
 .transport .icon-btn { width: 44px; height: 44px; color: var(--text); }
 .play-btn { width: 60px; height: 60px; border-radius: 50%; display: grid; place-items: center; color: #fff; background: var(--together); box-shadow: 0 6px 18px color-mix(in srgb, var(--guest) 35%, transparent); transition: transform 0.1s; }
 .play-btn:active:not(:disabled) { transform: scale(0.94); }
-.volume { position: absolute; right: 0; display: flex; align-items: center; gap: 4px; width: 150px; }
+.volume { display: flex; align-items: center; gap: 4px; width: 130px; }
+.transport { flex-wrap: wrap; gap: 10px; }
 @media (max-width: 560px) { .volume { position: static; } .transport { flex-wrap: wrap; } }
 .waiting-hint { text-align: center; font-size: 12px; color: var(--muted); min-height: 18px; }
 
@@ -266,22 +267,38 @@ a.result-title:hover { color: var(--guest); text-decoration: underline; }
 .dl-progress { width: 76px; display: grid; gap: 4px; font-size: 11px; color: var(--muted); text-align: center; }
 .bar { height: 4px; border-radius: 2px; background: var(--line); overflow: hidden; }
 .bar i { display: block; height: 100%; background: var(--together); transition: width 0.25s; }
-.queue { border-top: 1px solid var(--line); padding: 10px 16px 14px; display: grid; gap: 8px; max-height: 32vh; overflow: auto; }
-.queue-item { display: grid; gap: 4px; font-size: 12px; }
-.queue-item .row { display: flex; justify-content: space-between; gap: 8px; }
-.queue-item .name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.queue-entry { white-space: nowrap; flex-shrink: 0; }
+.queue-badge { background: var(--guest); color: #fff; border-radius: 99px; min-width: 20px; padding: 0 5px; font-size: 11px; }
+.queue-scrim { z-index: 54; }
+.download-drawer { z-index: 55; padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); }
+.download-list { gap: 10px; overscroll-behavior: contain; }
+.download-item { display: grid; grid-template-columns: 40px minmax(0, 1fr) 32px; align-items: start; gap: 10px; padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-2); font-size: 12px; }
+.download-item.error { border-color: color-mix(in srgb, var(--err) 65%, var(--line)); }
+.download-info { display: grid; gap: 6px; min-width: 0; }
+.download-info .btn, .download-info .tag { justify-self: start; }
+.download-error { color: var(--err); overflow-wrap: anywhere; }
+.drawer > .panel-head { padding-top: max(14px, env(safe-area-inset-top, 0px)); }
+.download-drawer > .panel-head { padding-top: 14px; }
+@media (max-width: 380px) { .drawer .panel-head { gap: 5px; padding-inline: 10px; } .drawer .panel-head .btn { padding-inline: 8px; } }
 .empty { padding: 24px 8px; text-align: center; color: var(--muted); font-size: 13px; }
 .service-down { padding: 16px; border-radius: 12px; background: var(--surface-2); border: 1px solid var(--line); display: grid; gap: 8px; font-size: 13px; }
 .service-down code { font-family: ui-monospace, Consolas, monospace; background: var(--surface); padding: 2px 6px; border-radius: 6px; border: 1px solid var(--line); }
 
 /* ───────────────────────── 同步提示 ───────────────────────── */
-.toasts { position: fixed; left: 50%; top: 64px; transform: translateX(-50%); z-index: 70; display: grid; gap: 8px; justify-items: center; pointer-events: none; width: max-content; max-width: calc(100vw - 32px); }
+.toasts { position: fixed; left: 50%; top: calc(64px + env(safe-area-inset-top, 0px)); transform: translateX(-50%); z-index: 70; display: grid; gap: 8px; justify-items: center; pointer-events: none; width: max-content; max-width: calc(100vw - 32px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)); }
 .toast {
   display: flex; align-items: center; gap: 10px; padding: 8px 14px 8px 8px; border-radius: 99px;
   background: var(--text); color: var(--bg); font-size: 13px; font-weight: 500; box-shadow: 0 8px 24px rgb(0 0 0 / 20%);
-  animation: toast-in 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
+  animation: toast-in 0.18s ease-out, toast-out 0.18s ease-in 2.02s forwards;
+  max-width: 100%; overflow-wrap: anywhere;
 }
+.toast svg, .toast .avatar { flex-shrink: 0; }
+.toast-app { padding: 10px 16px; }
+.toast-app.error { box-shadow: 0 0 0 1px var(--err), 0 8px 24px rgb(0 0 0 / 20%); }
+.toast-peer { background: var(--surface); color: var(--text); border: 1px solid var(--line); }
 @keyframes toast-in { from { opacity: 0; transform: translateY(-8px) scale(0.96); } }
+@keyframes toast-out { to { opacity: 0; transform: translateY(-6px); } }
+@media (prefers-reduced-motion: reduce) { .toast { animation: none; } }
 
 /* ───────────────────────── 自动播放拦截提示 ───────────────────────── */
 .unlock-banner {

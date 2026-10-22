@@ -36,11 +36,12 @@ import { FileReceiver, sendFile } from '../lib/transfer.js';
 import { useMusic } from '../store/useMusic.js';
 import { saveProfile, saveVolume, useSession } from '../store/useSession.js';
 import { musicApi } from './musicApi.js';
+import { toast } from '../store/useToast.js';
 import { parseNetsim } from './netsim.js';
 
 const HEARTBEAT_MS = 1000;
 const PEER_WAIT_MS = 15000; // 切歌后最多等 Guest 缓冲这么久再开始播放
-const NOTICE_MS = 3500;
+const NOTICE_MS = 2200;
 const GUEST_CACHE_SIZE = 6; // Guest 缓存最近几首的音频，来回切歌不用重传
 const SNIFF_BYTES = 64 * 1024; // 收到这么多字节后判断格式能否流式播放
 const STREAM_START_AHEAD = 3; // 流式播放：当前位置之后至少缓冲 3 秒才开始
@@ -372,9 +373,12 @@ class SessionEngine {
   }
 
   skip(dir, by, quiet = false) {
-    const { playlist, currentId } = get();
+    const { playlist, currentId, playMode } = get();
     const i = playlist.findIndex((x) => x.id === currentId);
-    const next = playlist[i + dir] ?? (i < 0 ? playlist[0] : null);
+    const candidates = playlist.filter((x) => x.id !== currentId);
+    const next = playMode === 'shuffle'
+      ? candidates[Math.floor(Math.random() * candidates.length)] || playlist[0]
+      : playlist[i + dir] ?? (i < 0 ? playlist[0] : null);
     if (next) this.loadItem(next.id, { autoplay: true, by, quiet });
     return !!next;
   }
@@ -468,6 +472,10 @@ class SessionEngine {
 
   onEnded() {
     if (get().role !== 'host') return;
+    if (get().playMode === 'repeat') {
+      this.transport('seek', 0, 'host', true);
+      return;
+    }
     if (this.skip(1, 'host', true)) return; // 自动下一首
     const anchor = { trackId: this.loadedId, playing: false, position: 0, at: now() };
     this.bufferPlayer.pausedAt = 0;
@@ -506,7 +514,7 @@ class SessionEngine {
     set({ currentId: item.id, track: meta(item), loaded: false, playing: false, peerReady: false, peerStreaming: false, duration: item.duration || 0, transfer: { dir: 'decode' } });
     this.send({ type: 'track', ...meta(item), by, quiet });
     this.sendPlaylist();
-    if (by === 'guest') this.notify(`${this.peerName()} 切换到《${item.title}》`);
+    if (by === 'guest') this.notify(`${this.peerName()} 切换到《${item.title}》`, true);
 
     try {
       const file = await this.fileFor(item);
@@ -595,7 +603,7 @@ class SessionEngine {
     this.sync.reset();
     this.anchor = { trackId: m.id, playing: false, position: 0, at: 0 };
     set({ currentId: m.id, track: meta(m), loaded: false, playing: false, duration: m.duration || 0, transfer: null, streaming: false, buffering: false, format: null });
-    if (m.by === 'host' && !m.quiet) this.notify(`${this.peerName()} 切换到《${m.title}》`);
+    if (m.by === 'host' && !m.quiet) this.notify(`${this.peerName()} 切换到《${m.title}》`, true);
     const cached = this.guestCache.get(m.id);
     if (cached) this.guestDecode(m.id, cached, token);
     else this.send({ type: 'need_file', id: m.id });
@@ -735,6 +743,7 @@ class SessionEngine {
     set({ playlist: [...get().playlist, ...items] });
     this.sendPlaylist();
     if (wasEmpty || !get().currentId) this.loadItem(items[0].id);
+    toast(`已添加 ${items.length} 首到播放列表`, { icon: 'plus', key: 'playlist' });
     return items.length;
   }
 
@@ -767,12 +776,13 @@ class SessionEngine {
   notifyAction(action, pos) {
     const who = this.peerName();
     const text = { play: `${who} 开始了播放`, pause: `${who} 暂停了播放`, seek: `${who} 把进度拖到了 ${fmtTime(pos)}` }[action];
-    if (text) this.notify(text);
+    if (text) this.notify(text, true);
   }
 
-  notify(text) {
+  notify(text, peer = false) {
+    if (!peer) return toast(text);
     const id = Math.random().toString(36).slice(2);
-    set({ notices: [...get().notices.slice(-3), { id, text }] });
+    set({ notices: [{ id, text }] });
     setTimeout(() => set({ notices: get().notices.filter((n) => n.id !== id) }), NOTICE_MS);
   }
 

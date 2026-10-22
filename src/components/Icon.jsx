@@ -1,5 +1,8 @@
 // 内联 SVG 图标（24×24 网格，currentColor 描边/填充）
 const PATHS = {
+  order: <path d="M4 7h16m-4-4 4 4-4 4M4 17h16m-4-4 4 4-4 4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />,
+  repeat: <><path d="m17 2 4 4-4 4M3 10V6h18M7 22l-4-4 4-4m14 0v4H3" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" /><text x="10" y="15" fill="currentColor" fontSize="9">1</text></>,
+  shuffle: <path d="M3 6h3c5 0 7 12 12 12h3m-4-4 4 4-4 4M3 18h3c5 0 7-12 12-12h3m-4-4 4 4-4 4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />,
   play: <path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.6-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5Z" fill="currentColor" />,
   pause: (
     <>

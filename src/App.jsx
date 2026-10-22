@@ -7,6 +7,7 @@ import { NowPlaying } from './components/NowPlaying.jsx';
 import { Playlist } from './components/Playlist.jsx';
 import { SearchDrawer } from './components/SearchDrawer.jsx';
 import { Toasts } from './components/Toasts.jsx';
+import { DownloadQueue } from './components/DownloadQueue.jsx';
 import { engine } from './engine/session.js';
 import { useSession } from './store/useSession.js';
 
@@ -77,7 +78,7 @@ export function App() {
     document.title = inRoom ? `Half&Half · ${useSession.getState().roomCode}` : 'Half&Half Music Player';
   }, [inRoom]);
 
-  if (!inRoom) return <Lobby />;
+  if (!inRoom) return <><Lobby /><Toasts /></>;
   return (
     <div className="room">
       <ConnectionBar />
@@ -86,6 +87,7 @@ export function App() {
         <Playlist />
       </main>
       <SearchDrawer />
+      <DownloadQueue />
       <Toasts />
       <AudioUnlock />
       {DEBUG && <DebugPanel />}

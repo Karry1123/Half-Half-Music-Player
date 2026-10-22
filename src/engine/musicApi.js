@@ -28,11 +28,11 @@ export const musicApi = {
     return request(`/api/search?${params}`);
   },
 
-  download: (id, format) =>
+  download: (id, format, meta) =>
     request('/api/download', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id, format }),
+      body: JSON.stringify({ id, format, meta }),
     }),
 
   library: () => request('/api/library'),

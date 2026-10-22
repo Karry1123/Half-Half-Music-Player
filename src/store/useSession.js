@@ -56,6 +56,7 @@ export const useSession = create(() => ({
   track: null, // { id, title, artist, cover, duration }
   loaded: false, // 本地已解码，可以播放
   playing: false,
+  playMode: 'order', // Host controls the shared playback order.
   duration: 0,
   volume: loadVolume(),
   transfer: null, // { dir: 'send'|'recv', done, total, phase: 'transfer'|'decode' }
