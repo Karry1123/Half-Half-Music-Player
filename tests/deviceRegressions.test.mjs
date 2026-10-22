@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import { createCoverBackfill, sourcePage } from '../public/libraryCoverBackfill.js';
+import { coverCandidates, coverError } from '../public/coverUrl.js';
 import React from 'react';
 import htm from 'htm';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -56,7 +57,7 @@ test('guest mini and fullscreen players show metadata and transfer status before
   const state = { library: [item], currentId: item.id, role: 'guest', conn: 'open', loaded: false, volume: 1 };
   const context = {
     html: htm.bind(React.createElement), useStore: fn => fn(state), useState: () => [0, () => {}], useRef: () => ({ current: null }), useBackLayer() {}, useEffect() {},
-    cx: (...args) => args.filter(Boolean).join(' '), gradient: () => 'red', coverSrc: url => url, trackCompletedCount: () => 0, session: {},
+    cx: (...args) => args.filter(Boolean).join(' '), gradient: () => 'red', coverSrc: url => url, coverCandidates, coverError, trackCompletedCount: () => 0, session: {},
     ...Object.fromEntries(['Music2', 'CoListenPill', 'Pause', 'Play', 'SkipForward', 'ChevronDown', 'SeekBar', 'PlayModeButton', 'SkipBack', 'ListMusic', 'Volume2', 'VolumeX', 'SyncStatus'].map(name => [name, () => null])),
   };
   const Player = vm.runInNewContext(`${between('function Cover(', 'function Panel(')};${between('function NativePlayer(', 'function App()')}; NativePlayer`, context);

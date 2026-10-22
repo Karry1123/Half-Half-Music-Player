@@ -191,7 +191,11 @@ export async function coverUrl(track) {
   if (!track?.hasCover) return track?.coverUrl || null;
   if (coverUrls.has(track.id)) return coverUrls.get(track.id);
   const b = await getBinary('covers', track.id).catch(() => null);
-  if (!b) return track.coverUrl || null;
+  if (!b) {
+    track.hasCover = false;
+    await updateTrack(track.id, { hasCover: false });
+    return track.coverUrl || null;
+  }
   const url = URL.createObjectURL(b);
   coverUrls.set(track.id, url);
   return url;

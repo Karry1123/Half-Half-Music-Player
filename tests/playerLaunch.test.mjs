@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
+import { restoreDownloads } from '../public/dashboardFeedback.js';
 import React from 'react';
 import htm from 'htm';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -16,7 +17,7 @@ const between = (start, end) => {
 function harness() {
   // Exercise the real initial state even with an old selection in storage.
   const state = vm.runInNewContext(`${between('const store = createStore(', 'const useStore =')}; store`, {
-    createStore: value => value, loadProfile: () => ({ name: 'Listener' }), MOCK_SOURCES: [], ALL_ID: 'all',
+    createStore: value => value, loadProfile: () => ({ name: 'Listener' }), MOCK_SOURCES: [], ALL_ID: 'all', restoreDownloads,
     localStorage: { getItem: key => key === 'hh.currentId' ? 'previous-track' : null },
   });
   const track = { id: 'song', hash: 'hash', title: 'Song', artist: 'Artist', duration: 100 };

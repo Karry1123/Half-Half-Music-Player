@@ -83,6 +83,8 @@
   @keyframes rise { from { opacity: 0; transform: translateY(10px); } }
   .text-gradient { background: linear-gradient(90deg, #f2a65a, #ec7a96); -webkit-background-clip: text; background-clip: text; color: transparent; }
   @media (prefers-reduced-motion: reduce) { .animate-spin-slow, .eq i, .animate-ping, .animate-pulse, .blob, .breathe, .ripple::before, .ripple::after, .shimmer::after, .rise { animation: none !important; } }
+  .app-toast { animation: app-toast 2.1s ease both; }
+  @keyframes app-toast { 0% { opacity: 0; } 8%, 88% { opacity: 1; } 100% { opacity: 0; } }
   #boot { position: fixed; inset: 0; display: grid; place-items: center; color: #ab9886; font: 14px system-ui; }
 </style>
 <link rel="stylesheet" href="./mobile.css" />
@@ -135,7 +137,8 @@ function useBackLayer(open, close) {
 import { MODE_LABEL, PLAY_MODES, PlayQueue } from './playQueue.js';
 import { ALL_ID, ALL_NAME, INBOX_ID, PlaylistStore, missingFromLibrary, playlistsOf, resolveScope } from './playlists.js';
 import { AccountClient, SOURCE_EXPIRED, cacheCloudTrack, downloadCloudTrack } from './accountClient.js';
-import { coverSrc, setCoverProxy } from './coverUrl.js';
+import { coverSrc, setCoverProxy, coverCandidates, coverError } from './coverUrl.js';
+import { createAppToast, restoreDownloads, persistDownloads, orderedDownloads } from './dashboardFeedback.js';
 import { createCoverBackfill } from './libraryCoverBackfill.js';
 import { CloudSync, toCloudTrack } from './cloudSync.js';
 import { AccountCard, AccountGate, CloudSheet, ZipExport } from './accountUI.js';
@@ -323,7 +326,7 @@ const store = createStore({
   searching: false,
   results: [],
   searchMeta: null,
-  downloads: {}, // resultId → { status, progress, error }
+  downloads: restoreDownloads(globalThis.localStorage), // resultId → { status, progress, error }
   // 曲库 / 播放
   library: [], // [{ id, title, artist, duration, size, source, sourceLabel, quality, cover, addedBy }]
   currentId: null,
@@ -339,6 +342,7 @@ const store = createStore({
   drift: null,
   rate: 1,
   toasts: [],
+  downloadQueueOpen: false,
   dragging: false,
   // 主界面（Home / Lobby）
   screen: 'home', // 'home' | 'deck'（播放台）
@@ -370,10 +374,18 @@ const set = store.set;
 const get = store.get;
 let searchEpoch = 0;
 
-function toast(text, kind = 'info') {
-  const id = uid();
-  set((s) => ({ toasts: [...s.toasts.slice(-3), { id, text, kind }] }));
-  setTimeout(() => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })), 3800);
+const toast = createAppToast(toasts => set({ toasts }));
+let lastDownloads = get().downloads;
+store.subscribe(() => {
+  if (get().downloads === lastDownloads) return;
+  lastDownloads = get().downloads;
+  persistDownloads(globalThis.localStorage, lastDownloads);
+});
+function updateDownload(id, patch) {
+  set(s => !s.downloads[id] && !patch.result ? {} : ({ downloads: { ...s.downloads, [id]: { ...s.downloads[id], ...patch } } }));
+}
+function removeDownload(id) {
+  set(s => { const downloads = { ...s.downloads }; delete downloads[id]; return { downloads }; });
 }
 function note(text, kind = 'info') {
   set({ syncNote: { text, kind, at: Date.now() } });
@@ -591,19 +603,29 @@ const api = {
     const r = await fetch(`${API_BASE}/api/download`, {
       method: 'POST',
       headers: authHeaders({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify({ id: result.id, format: 'm4a', ...(result.qualityId != null && { quality: result.qualityId }) }),
+      body: JSON.stringify({ id: result.id, format: result.downloadFormat || 'm4a', ...(result.qualityId != null && { quality: result.qualityId }) }),
     });
     const body = await r.json();
     if (!r.ok) throw new Error(body.error || `HTTP ${r.status}`);
     let file = body.status === 'exists' ? body.entry.file : body.job?.status === 'done' ? body.job.file : null;
     if (!file) {
+      let poll, timeout, polling = false;
       file = await new Promise((resolve, reject) => {
-        jobWaiters.set(result.id, (job) => {
+        const receive = job => {
           onProgress(job.progress || 0);
           if (job.status === 'done') resolve(job.file);
           if (job.status === 'error') reject(new Error(job.error || '下载失败'));
-        });
-      }).finally(() => jobWaiters.delete(result.id));
+        };
+        jobWaiters.set(result.id, receive);
+        timeout = setTimeout(() => reject(new Error('下载超时，请重新下载')), 180000);
+        if (body.job?.id) poll = setInterval(async () => {
+          if (polling) return;
+          polling = true;
+          try { receive(await account.request(`/api/downloads/${encodeURIComponent(body.job.id)}`)); }
+          catch { /* SSE may still recover; the deadline bounds network failures. */ }
+          finally { polling = false; }
+        }, 1500);
+      }).finally(() => { jobWaiters.delete(result.id); clearInterval(poll); clearTimeout(timeout); });
     }
     onProgress(0.99);
     const fr = await fetch(`${API_BASE}/files/${encodeURIComponent(file)}`, { headers: authHeaders() });
@@ -940,13 +962,13 @@ class Session {
 
   /** 切换播放模式：只有 Host / 单人可以改，改完随歌单广播给 Guest */
   setPlayMode(mode) {
-    if (this.isGuest) return toast('播放模式由房主控制', 'warn');
+    if (this.isGuest) return toast('播放模式由房主控制', 'warn', { key: 'play-mode' });
     this.syncQueue().setMode(mode);
     set({ playMode: this.queue.mode });
     try { localStorage.setItem('hh.playMode', this.queue.mode); } catch {}
     this.broadcastLibrary();
     this.notifySynced();
-    if (!this.conn?.open) toast(MODE_LABEL[this.queue.mode]);
+    toast(MODE_LABEL[this.queue.mode], 'info', { key: 'play-mode', icon: this.queue.mode });
   }
 
   get isGuest() {
@@ -2137,12 +2159,21 @@ const repairLibraryCovers = createCoverBackfill({
   available: () => get().apiMode === 'live' && !session.isGuest && globalThis.navigator?.onLine !== false,
   resolve: url => api.resolve(url, { signal: AbortSignal.timeout(10000) }),
   save: (id, url) => LocalLib.setCover(id, url),
+  metadata: track => [...get().results, ...(account.playlists || []).flatMap(p => p.tracks || p.pending || [])]
+    .filter(t => (track.sourceId && (t.sourceId || t.id) === track.sourceId) || (track.hash && t.hash === track.hash) || (t.title === track.title && t.artist === track.artist))
+    .flatMap(t => [t.coverUrl, t.cover]).filter(Boolean),
   onCover: async track => {
     const cover = await LocalLib.coverUrl(track).catch(() => track.coverUrl);
     if (session.isGuest) return;
     set(s => ({ library: s.library.map(t => t.localId === track.id ? { ...t, cover, coverUrl: track.coverUrl } : t) }));
     session.broadcastLibrary();
   },
+});
+let coverSearchResults = get().results;
+store.subscribe(() => {
+  if (coverSearchResults === get().results) return;
+  coverSearchResults = get().results;
+  LocalLib.listTracks().then(repairLibraryCovers).catch(() => {});
 });
 
 /** 写入本机曲库；失败（空间不足等）只提示，不影响播放 */
@@ -2204,42 +2235,52 @@ const cloudSync = new CloudSync({
   listTracks: () => LocalLib.listTracks(),
   loadBase: async (uid) => { try { return JSON.parse(localStorage.getItem(syncBaseKey(uid)) || 'null'); } catch { return null; } },
   saveBase: async (uid, base) => { try { localStorage.setItem(syncBaseKey(uid), JSON.stringify(base)); } catch {} },
-  onStatus: (status) => set({ cloudSync: status }),
+  onStatus: (status) => {
+    set({ cloudSync: status });
+    LocalLib.listTracks().then(repairLibraryCovers).catch(() => {});
+  },
 });
 playlistStore.subscribe((_list, source) => { if (source !== 'remote' && playlistStore.ready) cloudSync.schedule(); });
 setInterval(() => { if (!document.hidden && playlistStore.ready) (cloudSync.sync().catch(() => {}), syncProfile()); }, 60000);
 document.addEventListener('visibilitychange', () => { if (!document.hidden && playlistStore.ready) (cloudSync.sync().catch(() => {}), syncProfile()); });
 
 /** 下载歌单里"未下载"的歌（keys 为空 = 全部），保存到本机后自动归入歌单 */
-async function downloadPending(playlistId, keys) {
-  const todo = (playlistStore.get(playlistId)?.pending || []).filter((t) => !keys || keys.includes(t.id));
+async function downloadPending(playlistId, keys, retryTrack) {
+  const todo = retryTrack ? [retryTrack] : (playlistStore.get(playlistId)?.pending || []).filter((t) => !keys || keys.includes(t.id));
   const job = (id, v) => set((s) => { const n = { ...s.pendingJobs }; v ? (n[id] = v) : delete n[id]; return { pendingJobs: n }; });
   let ok = 0;
   for (const t of todo) {
+    const queueId = `cloud:${playlistId}:${t.id}`;
+    if (get().downloads[queueId]?.status === 'downloading') continue;
     if (get().pendingJobs[t.id]?.state === 'loading') continue;
+    updateDownload(queueId, { result: { ...t }, title: t.title, artist: t.artist, cover: t.cover, format: 'best', cloudPlaylistId: playlistId, pendingId: t.id, createdAt: Date.now(), status: 'downloading', progress: 0, error: null });
     job(t.id, { state: 'loading' });
     try {
       let track = t;
+      if (t.sourceId && t.id.startsWith('search:')) track = { ...t, id: t.sourceId };
       if (!t.sourceId && t.id.startsWith('search:')) {
         const result = await api.search(`${t.title} ${t.artist}`, []);
         const match = result.results?.[0];
         if (!match?.id) throw new Error('没有找到这首歌的可播放音源');
         track = { ...t, id: match.id, sourceId: match.id, pageUrl: match.pageUrl || '', hash: '' };
+        updateDownload(queueId, { result: track });
       }
-      await cacheCloudTrack(track, { storage: LocalLib, download: (x) => downloadCloudTrack(account, x) });
+      await cacheCloudTrack(track, { storage: LocalLib, download: (x) => downloadCloudTrack(account, x, p => updateDownload(queueId, { progress: p })) });
       if (track !== t) await playlistStore.replacePending(playlistId, t.id, track);
       job(t.id, null);
+      updateDownload(queueId, { status: 'done', progress: 1 });
+      toast(`《${t.title}》已加入曲库`);
       ok++;
     } catch (e) {
       job(t.id, { state: 'error', message: e.message });
+      updateDownload(queueId, { status: 'error', error: e.message });
+      toast(`《${t.title}》下载失败，可在下载队列重试`, 'warn');
     }
   }
   if (ok) {
     await session.restoreLocal();
     await cloudSync.sync().catch(() => {});
-    toast(`已下载 ${ok} 首到本机`);
   }
-  if (todo.length > ok && todo.length > 1) toast(`${todo.length - ok} 首下载失败，原因标在歌单里`, 'warn');
 }
 
 /** 原音源失效：换成重新搜到的链接 */
@@ -2380,8 +2421,9 @@ Object.assign(window.__hh, { playlists: playlistStore, importWithPicker, downloa
 
 // ════════════════════════════════════════════════════════════ 下载动作
 async function downloadResult(r, onProgress, { playlists = [] } = {}) {
-  const setDl = (patch) => set((s) => ({ downloads: { ...s.downloads, [r.id]: { ...s.downloads[r.id], ...patch } } }));
-  setDl({ status: 'downloading', progress: 0, error: null });
+  if (get().downloads[r.id]?.status === 'downloading') return false;
+  const setDl = patch => updateDownload(r.id, patch);
+  setDl({ result: { ...r }, title: r.title, artist: r.artist, cover: r.cover, format: r.downloadFormat || 'm4a', playlists, createdAt: Date.now(), status: 'downloading', progress: 0, error: null });
   try {
     const { blob, demo, remote } = await api.download(r, (p) => {
       setDl({ progress: p });
@@ -2389,6 +2431,7 @@ async function downloadResult(r, onProgress, { playlists = [] } = {}) {
     });
     if (remote) {
       setDl({ status: 'done', progress: 1 }); // 房主已入库并同步曲库
+      toast(`《${r.title}》已加入曲库`);
       saveWhenListed(r.id); // 手机上点的下载：再从房主那里取一份存到手机本地
       return true;
     }
@@ -2404,13 +2447,13 @@ async function downloadResult(r, onProgress, { playlists = [] } = {}) {
       cover: r.cover,
     }, { persist: !demo || playlists.length > 0 }); // 演示音频平时不存；用户明确放进歌单时才存
     setDl({ status: 'done', progress: 1 });
-    if (item?.id && playlists.length && (await addItemsToPlaylists(playlists, [item.id], { quiet: true }))) {
-      toast(`《${item.title}》已放入${playlistNames(playlists)}`);
-    }
+    if (!item?.id) throw new Error('未能加入曲库，请重试');
+    if (playlists.length) await addItemsToPlaylists(playlists, [item.id], { quiet: true });
+    toast(`《${r.title}》已加入曲库`);
     return true;
   } catch (e) {
     setDl({ status: 'error', error: e.message });
-    toast(`下载失败：${e.message}`, 'warn');
+    toast(`《${r.title}》下载失败，可在下载队列重试`, 'warn');
     return false;
   }
 }
@@ -2491,8 +2534,10 @@ function Avatar({ profile, size = 28, ring }) {
 }
 
 function Cover({ item, size = 40, round = 'rounded-lg' }) {
-  return html`<span class=${cx('relative shrink-0 overflow-hidden grid place-items-center', round)} style=${{ width: size, height: size, flex: '0 0 auto', background: gradient(item?.title || '') }}>
-    ${item?.cover ? html`<img src=${coverSrc(item.cover)} alt="" referrerpolicy="no-referrer" loading="lazy" class="absolute inset-0 h-full w-full object-cover" />` : html`<${Music2} size=${size * 0.42} class="text-white/70" />`}
+  const src = coverCandidates(item)[0];
+  return html`<span class=${cx('relative shrink-0 overflow-hidden grid place-items-center', round)} style=${{ width: size, height: size, flex: '0 0 auto', background: '#282b35' }}>
+    <${Music2} size=${size * 0.42} class="text-white/70" />
+    ${src && html`<img key=${src} src=${src} onError=${e => coverError(e, item)} alt="" referrerPolicy="no-referrer" loading="lazy" class="absolute inset-0 h-full w-full object-cover" />`}
   </span>`;
 }
 
@@ -2641,10 +2686,10 @@ function SearchPanel() {
   };
 
   return html`<${Panel} title="聚合搜索与下载" icon=${Search} className="lg:max-h-[calc(100vh-190px)]"
-    right=${html`<button class="inline-flex items-center gap-1.5 rounded-lg border border-ink-600 px-2.5 py-1 text-xs text-sand-200 hover:border-host hover:text-host" onClick=${() => fileInput.current.click()}>
+    right=${html`<div class="flex items-center gap-2"><${DownloadQueueButton} /><button class="inline-flex items-center gap-1.5 rounded-lg border border-ink-600 px-2.5 py-1 text-xs text-sand-200 hover:border-host hover:text-host" onClick=${() => fileInput.current.click()}>
       <${Upload} size=${13} /> 导入本地文件
       <input ref=${fileInput} type="file" accept="audio/*,.mp3,.flac,.m4a,.wav,.ogg" multiple hidden onChange=${(e) => { importWithPicker([...e.target.files]); e.target.value = ''; }} />
-    </button>`}>
+    </button></div>`}>
     <div class="flex justify-end px-4 pt-3"><${CacheToggle} /></div>
     <div class="space-y-3 p-4">
       <form class="flex gap-2" onSubmit=${(e) => { e.preventDefault(); run(); }}>
@@ -3235,7 +3280,7 @@ function PlayModeButton() {
   const Icon = MODE_ICON[mode] || ListOrdered;
   return html`<button class=${cx('relative grid h-8 w-8 place-items-center rounded-full transition disabled:cursor-not-allowed', mode === 'order' ? 'text-sand-400 hover:text-sand-50' : 'text-host hover:brightness-110', isGuest && 'opacity-60')}
     onClick=${() => session.setPlayMode(PLAY_MODES[(PLAY_MODES.indexOf(mode) + 1) % PLAY_MODES.length])}
-    disabled=${isGuest} aria-label=${`播放模式：${MODE_LABEL[mode]}`} title=${isGuest ? `${MODE_LABEL[mode]}（由房主控制）` : `${MODE_LABEL[mode]} · 点击切换`}>
+    aria-label=${`播放模式：${MODE_LABEL[mode]}`} title=${isGuest ? `${MODE_LABEL[mode]}（由房主控制）` : `${MODE_LABEL[mode]} · 点击切换`}>
     <${Icon} size=${17} />
     ${mode !== 'order' && html`<span class="absolute -bottom-0.5 h-1 w-1 rounded-full bg-host" />`}
   </button>`;
@@ -3308,10 +3353,46 @@ function PlayerBar() {
   </footer>`;
 }
 
+function DownloadQueueButton() {
+  const jobs = useStore(s => s.downloads);
+  const count = Object.values(jobs).filter(j => j.status !== 'done').length;
+  return html`<button type="button" class="inline-flex items-center gap-2 rounded-xl border border-ink-600 px-3 py-2 text-sm text-sand-200 hover:text-host" onClick=${() => set({ downloadQueueOpen: true })}><${Download} size=${16} />下载队列${count > 0 && html`<span class="rounded-full bg-guest px-2 text-xs text-ink-950">${count}</span>`}</button>`;
+}
+function DownloadQueueSheet() {
+  const open = useStore(s => s.downloadQueueOpen);
+  const jobs = useStore(s => s.downloads);
+  const close = () => set({ downloadQueueOpen: false });
+  useBackLayer(open, close);
+  if (!open) return null;
+  const retry = (id, job) => {
+    if (job.cloudPlaylistId) {
+      // Preserve the pending row's identity even when its resolved source changed.
+      const originalId = job.pendingId || job.result.id;
+      removeDownload(id);
+      return downloadPending(job.cloudPlaylistId, null, { ...job.result, id: originalId });
+    }
+    return downloadResult({ ...job.result, downloadFormat: job.format }, null, { playlists: job.playlists || [] });
+  };
+  return html`<div class="fixed inset-0 z-[95] flex items-end justify-center bg-black/70 sm:items-center" onClick=${close}>
+    <section role="dialog" aria-modal="true" aria-label="下载队列" class="flex max-h-[85dvh] w-full max-w-xl flex-col rounded-t-3xl border border-ink-700 bg-ink-900 p-5 sm:rounded-3xl" style=${{ paddingBottom: 'calc(20px + var(--safe-bottom, 0px))' }} onClick=${e => e.stopPropagation()}>
+      <header class="flex flex-wrap items-center gap-3"><h2 class="flex-1 text-lg font-semibold">下载队列</h2><button class="text-xs text-sand-400" onClick=${() => set(s => ({ downloads: Object.fromEntries(Object.entries(s.downloads).filter(([, j]) => j.status !== 'done')) }))}>清除已完成</button><button aria-label="关闭下载队列" onClick=${close}><${X} size=${22} /></button></header>
+      <div class="mt-4 space-y-3 overflow-y-auto scroll-thin">
+        ${!Object.keys(jobs).length && html`<p class="py-10 text-center text-sm text-sand-400">还没有下载任务</p>`}
+        ${orderedDownloads(jobs).map(([id, job]) => html`<article key=${id} class="flex items-center gap-3 rounded-xl bg-ink-800 p-3">
+          <${Cover} item=${job} size=${44} /><div class="min-w-0 flex-1"><p class="truncate text-sm">${job.title || '未命名歌曲'}</p><p class="truncate text-xs text-sand-400">${job.artist || '未知歌手'} · ${job.format}</p>
+          ${job.status === 'downloading' ? html`<p class="mt-1 text-xs text-host" role="status">下载中 ${Math.round((job.progress || 0) * 100)}%</p><progress class="mt-1 h-1 w-full" max="1" value=${job.progress || 0} />` : html`<p class=${cx('mt-1 break-words text-xs', job.status === 'error' ? 'text-guest' : 'text-sync')}>${job.status === 'error' ? job.error : '已加入曲库'}</p>`}</div>
+          ${job.status === 'error' && html`<button class="shrink-0 rounded-lg border border-host/40 px-2 py-2 text-xs text-host" onClick=${() => retry(id, job)}>重新下载</button>`}
+          <button aria-label=${`移除 ${job.title}`} class="text-sand-400" onClick=${() => removeDownload(id)}><${X} size=${16} /></button>
+        </article>`)}
+      </div>
+    </section>
+  </div>`;
+}
+
 function Toasts() {
   const toasts = useStore((s) => s.toasts);
-  return html`<div class="pointer-events-none fixed right-4 top-20 z-50 flex w-[min(340px,calc(100vw-32px))] flex-col gap-2" aria-live="polite">
-    ${toasts.map((t) => html`<div key=${t.id} class=${cx('rounded-xl border px-4 py-2.5 text-sm shadow-2xl backdrop-blur', t.kind === 'warn' ? 'border-guest/40 bg-ink-850/95 text-guest' : 'border-ink-600 bg-ink-850/95 text-sand-50')}>${t.text}</div>`)}
+  return html`<div class="pointer-events-none app-toasts fixed right-4 flex w-[min(340px,calc(100vw-32px))] flex-col gap-2" style=${{ zIndex: 10000, top: 'calc(var(--safe-top, env(safe-area-inset-top, 0px)) + 20px)' }} aria-live="polite" aria-atomic="true">
+    ${toasts.map((t) => html`<div key=${t.id} class=${cx('app-toast flex items-center gap-2 rounded-xl border px-4 py-2.5 text-sm shadow-2xl backdrop-blur', t.kind === 'warn' ? 'border-guest/40 bg-ink-850/95 text-guest' : 'border-ink-600 bg-ink-850/95 text-sand-50')}>${t.icon && html`<${({ order: ListOrdered, loopOne: Repeat1, loopAll: Repeat, shuffle: Shuffle })[t.icon] || Repeat} size=${18} />`}${t.text}</div>`)}
   </div>`;
 }
 
@@ -4242,6 +4323,7 @@ function SearchDiscovery({ onSearch, onSelectTrack }) {
   return html`<section class="relative z-10 mx-auto mt-4 max-w-7xl px-4 sm:mt-6" aria-labelledby="search-title">
     <div class="text-center">
       <h2 id="search-title" class="text-xl font-bold">想听什么？</h2>
+      <div class="mt-3 flex justify-center"><${DownloadQueueButton} /></div>
       <p class="mt-1 text-xs leading-relaxed text-sand-400">搜歌名、歌手，或粘贴 B 站 / YouTube 链接</p>
     </div>
 
@@ -4676,7 +4758,7 @@ function App() {
       onSync=${() => cloudSync.sync().catch((e) => toast(`同步失败：${e.message}`, 'warn'))} onDownload=${(id) => downloadPending(id)} onOpen=${(id) => set({ cloudOpen: false, viewPlaylistId: id, screen: 'deck' })} />
     <main class="mx-auto max-w-5xl px-4 pt-5" style=${{ paddingBottom: `calc(${keyboardOpen ? 16 : playerVisible ? 170 : 80}px + var(--safe-bottom, 0px))` }}>
       ${tab === 'discover' && html`<${SearchDiscovery} onSearch=${homeSearch} onSelectTrack=${track => { stopPreview(); downloadWithPicker(track); }} />`}
-      ${tab === 'library' && html`<div class="mb-4 flex justify-end"><button class="inline-flex items-center gap-2 rounded-xl border border-ink-600 px-4 py-3 text-sm" title=${cloudStatus?.error ? `${cloudLabel}：${cloudStatus.error}` : cloudLabel} aria-label=${cloudLabel} onClick=${() => set({ cloudOpen: true })}><${Cloud} size=${18} /> ${cloudLabel}</button></div><${RoomPlaylistBanner} /><${LibraryPanel} />`}
+      ${tab === 'library' && html`<div class="mb-4 flex flex-wrap justify-end gap-2"><${DownloadQueueButton} /><button class="inline-flex items-center gap-2 rounded-xl border border-ink-600 px-4 py-3 text-sm" title=${cloudStatus?.error ? `${cloudLabel}：${cloudStatus.error}` : cloudLabel} aria-label=${cloudLabel} onClick=${() => set({ cloudOpen: true })}><${Cloud} size=${18} /> ${cloudLabel}</button></div><${RoomPlaylistBanner} /><${LibraryPanel} />`}
       ${tab === 'friends' && html`<${FriendsPanel} onPreview=${previewPublicTrack} onCollect=${async p => { await playlistStore.copyPublic(p); toast('已收藏到我的歌单'); }} stats=${listeningStats} client=${account} presence=${presence} invite=${userId => sendSocial({ type: 'INVITE_LISTEN_REQUEST', userId })} history=${history} />`}
       ${tab === 'settings' && html`<${StatsPanel} /><${AccountCard} client=${account} className="space-y-4 rounded-2xl border border-ink-700 p-5" /><button class="mt-5 flex w-full items-center gap-3 rounded-xl border border-ink-600 p-4 text-left" onClick=${() => set({ connSettingsOpen: true })}><${Settings} size=${18} class="shrink-0" /> 网络诊断 / 连接与播放设置</button><${ConnectionBar} />`}
     </main>
@@ -4693,6 +4775,7 @@ function App() {
     <${ConnSettingsModal} />
     <${CoListenDrawer} />
     <${QueueSheet} />
+    <${DownloadQueueSheet} />
     <${TrackMenuSheet} />
     <${PlaylistPicker} />
     <${UpdateGate} />

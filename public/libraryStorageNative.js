@@ -88,8 +88,17 @@ export async function getBlob(id) {
 }
 export async function coverUrl(track) {
   if (!track?.hasCover) return track?.coverUrl || null;
-  const { uri } = await fs().getUri({ path: `${pathFor(track.id)}.cover`, directory });
-  return cap().convertFileSrc(uri);
+  try {
+    const path = `${pathFor(track.id)}.cover`;
+    await fs().stat({ path, directory });
+    const { uri } = await fs().getUri({ path, directory });
+    return cap().convertFileSrc(uri);
+  } catch (error) {
+    if (!missing(error)) throw error;
+    track.hasCover = false;
+    await updateTrack(track.id, { hasCover: false });
+    return track.coverUrl || null;
+  }
 }
 export async function setCover(id, url) {
   const blob = await fetchCover(url);

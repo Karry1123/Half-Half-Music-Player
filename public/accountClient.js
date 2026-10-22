@@ -74,7 +74,14 @@ export const SOURCE_EXPIRED = '原音源已失效，无法下载，建议重新�
 export async function cacheCloudTrack(track, { storage, download }) {
   let existing = track.sourceId ? await storage.findBySource(track.sourceId) : null;
   if (!existing && track.hash) existing = await storage.findByHash(track.hash);
-  if (existing && await storage.getBlob(existing.id)) return existing;
+  if (existing && await storage.getBlob(existing.id)) {
+    const cover = track.coverUrl || track.cover;
+    if (!existing.hasCover && cover && storage.setCover) {
+      // A cloud playlist can carry artwork absent from an older local download.
+      existing = await storage.setCover(existing.id, cover).catch(() => null) || existing;
+    }
+    return existing;
+  }
   if (!track.sourceId && !track.pageUrl) throw new Error('此曲目来自本地文件，请在此设备导入原文件');
   const result = await download(track);
   // The cloud hash was computed on another device; a fresh download may be a different encode, so let storage re-hash it.
@@ -83,17 +90,20 @@ export async function cacheCloudTrack(track, { storage, download }) {
 }
 
 // Bounded polling avoids a lost SSE event leaving the cache button spinning forever.
-export async function downloadCloudTrack(client, track) {
+export async function downloadCloudTrack(client, track, onProgress = () => {}) {
   try {
     const data = await client.request('/api/download', { ...(track.sourceId ? { id: track.sourceId } : { url: track.pageUrl }), format: 'best', meta: { title: track.title, artist: track.artist } });
     let job = data.job, file = data.entry?.file || job?.file;
+    onProgress(job?.progress || 0);
     const deadline = Date.now() + 180000;
     while (!file) {
       if (job?.status === 'error') throw Object.assign(new Error(job.error || '下载失败'), { code: job.code });
       if (!job?.id || Date.now() > deadline) throw new Error('下载超时，请稍后重试');
       await new Promise(r => setTimeout(r, 1000));
       job = await client.request(`/api/downloads/${encodeURIComponent(job.id)}`); file = job.status === 'done' ? job.file : null;
+      onProgress(job.progress || 0);
     }
+    onProgress(0.99);
     const r = await fetch(`${client.base}/files/${encodeURIComponent(file)}`, { headers: { Authorization: `Bearer ${client.token}` }, signal: AbortSignal.timeout(120000) });
     if (!r.ok) throw new Error(`音频读取失败 (${r.status})`);
     return { blob: await r.blob(), fileName: file };

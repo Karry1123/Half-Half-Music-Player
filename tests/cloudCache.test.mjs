@@ -19,3 +19,14 @@ test('cloud cache returns the stored track record, re-hashing the downloaded fil
   assert.equal(meta.hash, undefined);
   assert.equal(meta.source, 'bilibili');
 });
+
+
+test('cloud artwork repairs a cached local track without downloading audio again', async () => {
+  const cover = 'https://example.com/cloud.jpg';
+  const result = await cacheCloudTrack({ sourceId: 'youtube:one', cover }, {
+    storage: { findBySource: async () => ({ id: 'local', hasCover: false }), getBlob: async () => new Blob(['audio']),
+      setCover: async (id, url) => { assert.equal(url, cover); return { id, hasCover: true }; } },
+    download: () => assert.fail('audio already cached'),
+  });
+  assert.equal(result.hasCover, true);
+});

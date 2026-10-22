@@ -6,6 +6,7 @@ const files = new Map();
 let failCommit = false;
 const missing = () => { throw new Error('does not exist'); };
 const plugin = {
+  async stat({ path }) { if (!files.has(path)) missing(); return { size: files.get(path).length }; },
   async writeFile({ path, data, encoding }) { files.set(path, encoding ? data : Buffer.from(data, 'base64')); },
   async appendFile({ path, data }) { files.set(path, Buffer.concat([files.get(path), Buffer.from(data, 'base64')])); },
   async readFile({ path }) { if (!files.has(path)) missing(); return { data: files.get(path) }; },
@@ -60,4 +61,15 @@ test('older missing covers are backfilled through the proxy and survive storage 
     assert.equal(files.get(`library-v1/${track.id}.cover`).toString(), 'cover');
     await storage.deleteTrack(track.id);
   } finally { globalThis.fetch = originalFetch; setCoverProxy(null); }
+});
+
+
+test('missing native cover file clears stale hasCover so backfill can retry', async () => {
+  const { track } = await storage.saveTrack(new Blob(['missing-art-audio']), { title: 'missing art' });
+  await storage.updateTrack(track.id, { hasCover: true, coverUrl: 'https://example.com/cover.jpg' });
+  const stale = await storage.getTrack(track.id);
+  assert.equal(await storage.coverUrl(stale), 'https://example.com/cover.jpg');
+  assert.equal(stale.hasCover, false);
+  assert.equal((await storage.getTrack(track.id)).hasCover, false);
+  await storage.deleteTrack(track.id);
 });
