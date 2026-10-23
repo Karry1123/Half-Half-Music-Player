@@ -57,7 +57,7 @@ export function DebugPanel() {
     <aside className="dbg" aria-label="调试面板">
       <div className="dbg-head">
         <b>调试 · {role}</b>
-        <span style={{ flex: 1 }} />
+        <span className="spacer" />
         <button onClick={copy}>复制诊断</button>
         <button onClick={() => setOpen(false)}>收起</button>
       </div>

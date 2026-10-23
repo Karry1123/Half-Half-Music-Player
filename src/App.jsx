@@ -9,6 +9,7 @@ import { SearchDrawer } from './components/SearchDrawer.jsx';
 import { Toasts } from './components/Toasts.jsx';
 import { DownloadQueue } from './components/DownloadQueue.jsx';
 import { engine } from './engine/session.js';
+import { useMusic } from './store/useMusic.js';
 import { useSession } from './store/useSession.js';
 
 const DEBUG = new URLSearchParams(location.search).has('debug');
@@ -70,6 +71,7 @@ function useSpaceToggle(enabled) {
 export function App() {
   const screen = useSession((s) => s.screen);
   const role = useSession((s) => s.role);
+  const modalOpen = useMusic((s) => s.drawerOpen || s.queueOpen);
   const inRoom = screen === 'room';
   const dragging = useFileDrop(inRoom && role === 'host');
   useSpaceToggle(inRoom);
@@ -82,15 +84,15 @@ export function App() {
   return (
     <div className="room">
       <ConnectionBar />
-      <main className="room-main">
+      <main className="room-main" inert={modalOpen ? '' : undefined}>
         <NowPlaying />
         <Playlist />
       </main>
       <SearchDrawer />
       <DownloadQueue />
       <Toasts />
-      <AudioUnlock />
-      {DEBUG && <DebugPanel />}
+      {!modalOpen && <AudioUnlock />}
+      {DEBUG && !modalOpen && <DebugPanel />}
       {dragging && (
         <div className="drag-overlay">
           <div>松手添加到播放列表</div>

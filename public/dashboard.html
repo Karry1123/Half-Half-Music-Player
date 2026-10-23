@@ -1,9 +1,21 @@
 <!doctype html>
-<html lang="zh-CN" class="dark">
+<html lang="zh-CN">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
-<meta name="color-scheme" content="dark" />
+<meta name="color-scheme" content="light dark" />
+<script>
+  (() => {
+    let theme;
+    try { theme = localStorage.getItem('hh-theme'); } catch {}
+    if (theme !== 'light' && theme !== 'dark') {
+      theme = typeof matchMedia === 'function' ? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : 'dark';
+    }
+    document.documentElement.dataset.theme = theme;
+    document.documentElement.classList.toggle('dark', theme === 'dark');
+  })();
+</script>
+<link rel="stylesheet" href="./design-tokens.css" />
 <title>Half&amp;Half · 同步听歌</title>
 <link rel="icon" type="image/svg+xml" href="./icon.svg" />
 <!--
@@ -30,62 +42,102 @@
     theme: {
       extend: {
         colors: {
-          ink: { 950: '#0e0c0b', 900: '#151210', 850: '#1b1714', 800: '#221d19', 700: '#2e2721', 600: '#3e352d' },
-          sand: { 50: '#f7f0e8', 200: '#dccdbe', 400: '#ab9886', 500: '#86745f' },
-          host: '#f2a65a',
-          guest: '#ec7a96',
-          sync: '#71d6a4',
+          ink: { 950: 'rgb(var(--color-bg-canvas-rgb) / <alpha-value>)', 900: 'rgb(var(--color-bg-surface-rgb) / <alpha-value>)', 850: 'rgb(var(--color-bg-subtle-rgb) / <alpha-value>)', 800: 'rgb(var(--color-bg-raised-rgb) / <alpha-value>)', 700: 'rgb(var(--color-border-subtle-rgb) / <alpha-value>)', 600: 'rgb(var(--color-border-control-rgb) / <alpha-value>)' },
+          sand: { 50: 'rgb(var(--color-text-primary-rgb) / <alpha-value>)', 100: 'rgb(var(--color-text-primary-rgb) / <alpha-value>)', 200: 'rgb(var(--color-text-primary-rgb) / <alpha-value>)', 300: 'rgb(var(--color-text-secondary-rgb) / <alpha-value>)', 400: 'rgb(var(--color-text-secondary-rgb) / <alpha-value>)', 500: 'rgb(var(--color-text-disabled-rgb) / <alpha-value>)' },
+          'host': 'rgb(var(--color-role-host-rgb) / <alpha-value>)',
+          'guest': 'rgb(var(--color-role-guest-rgb) / <alpha-value>)',
+          'sync': 'rgb(var(--color-status-success-fg-rgb) / <alpha-value>)',
+          'primary': 'rgb(var(--color-action-primary-bg-rgb) / <alpha-value>)',
+          'primary-fg': 'rgb(var(--color-action-primary-fg-rgb) / <alpha-value>)',
+          'guest-action': 'rgb(var(--color-action-guest-bg-rgb) / <alpha-value>)',
+          'guest-fg': 'rgb(var(--color-action-guest-fg-rgb) / <alpha-value>)',
+          'success': { DEFAULT: 'rgb(var(--color-status-success-fg-rgb) / <alpha-value>)', soft: 'rgb(var(--color-status-success-bg-rgb) / <alpha-value>)' },
+          'warning': { DEFAULT: 'rgb(var(--color-status-warning-fg-rgb) / <alpha-value>)', soft: 'rgb(var(--color-status-warning-bg-rgb) / <alpha-value>)' },
+          'error': { DEFAULT: 'rgb(var(--color-status-error-fg-rgb) / <alpha-value>)', soft: 'rgb(var(--color-status-error-bg-rgb) / <alpha-value>)' },
+          'info': { DEFAULT: 'rgb(var(--color-status-info-fg-rgb) / <alpha-value>)', soft: 'rgb(var(--color-status-info-bg-rgb) / <alpha-value>)' },
+          'neutral': { DEFAULT: 'rgb(var(--color-status-neutral-fg-rgb) / <alpha-value>)', soft: 'rgb(var(--color-status-neutral-bg-rgb) / <alpha-value>)' },
+          white: 'rgb(var(--color-text-primary-rgb) / <alpha-value>)',
+          black: 'rgb(var(--p-black-rgb) / <alpha-value>)',
         },
-        fontFamily: { sans: ['ui-sans-serif', 'system-ui', '"PingFang SC"', '"Microsoft YaHei"', 'sans-serif'] },
-        animation: { 'spin-slow': 'spin 9s linear infinite' },
+        fontFamily: { sans: ['var(--font-sans)'], mono: ['var(--font-mono)'] },
+        animation: { 'spin-slow': 'spin var(--motion-disc-period) infinite', spin: 'spin var(--motion-status-period) linear infinite', pulse: 'pulse var(--motion-status-period) var(--motion-ease-standard) infinite' },
+        boxShadow: { sm: 'var(--shadow-1)', DEFAULT: 'var(--shadow-1)', lg: 'var(--shadow-2)', xl: 'var(--shadow-2)', '2xl': 'var(--shadow-3)' },
+        transitionDuration: { DEFAULT: 'var(--motion-duration-fast)', 150: 'var(--motion-duration-fast)', 200: 'var(--motion-duration-normal)', 300: 'var(--motion-duration-slow)' },
       },
     },
   };
 </script>
 <style>
-  :root { color-scheme: dark; }
-  html, body { background: #0e0c0b; }
-  body { background-image: radial-gradient(1200px 600px at 10% -10%, rgb(242 166 90 / 7%), transparent 60%), radial-gradient(900px 500px at 110% 10%, rgb(236 122 150 / 6%), transparent 60%); }
+  html, body { background: var(--color-bg-canvas); color: var(--color-text-primary); font-family: var(--font-sans); }
+  body { background-image: radial-gradient(1200px 600px at 10% -10%, rgb(var(--color-brand-host-rgb) / 7%), transparent 60%), radial-gradient(900px 500px at 110% 10%, rgb(var(--color-brand-guest-rgb) / 6%), transparent 60%); }
   .tabular { font-variant-numeric: tabular-nums; }
-  .vinyl { background: repeating-radial-gradient(circle, #1a1715 0 2px, #0f0d0c 2px 4px); box-shadow: 0 0 0 1px rgb(255 255 255 / 6%), 0 8px 24px rgb(0 0 0 / 50%); }
+  :focus-visible { outline: 2px solid transparent; outline-offset: 2px; box-shadow: var(--shadow-focus) !important; }
+  button, a[role="button"] { min-width: var(--size-touch-target); min-height: var(--size-touch-target); }
+  input:not([type="range"]):not([type="checkbox"]):not([type="radio"]):not([type="file"]), select, textarea { min-height: var(--size-input); font-size: var(--text-body-size); border-color: var(--color-border-control); border-radius: var(--radius-control); }
+  input, select, textarea { accent-color: var(--color-action-primary-bg); }
+  input[type="checkbox"], input[type="radio"] { min-width: 22px; min-height: 22px; }
+  label:has(input[type="checkbox"]), label:has(input[type="radio"]) { min-height: var(--size-touch-target); }
+  .hh-primary { background: var(--color-action-primary-bg); color: var(--color-action-primary-fg); }
+  .hh-primary[data-role="guest"], .hh-guest { background: var(--color-action-guest-bg); color: var(--color-action-guest-fg); }
+  @media (hover: hover) { .hh-primary:hover:not(:disabled) { background: var(--color-action-primary-hover); filter: none; } }
+  .hh-primary:active:not(:disabled) { background: var(--color-action-primary-active); transform: scale(var(--motion-press-scale)); }
+  .brand-halves { background: linear-gradient(90deg, var(--color-brand-host) 50%, var(--color-brand-guest) 50%); border-radius: var(--p-radius-circle); }
+  .avatar-link { display: inline-block; height: 2px; width: 28px; margin: 0 var(--p-space-1); background: repeating-linear-gradient(90deg, var(--color-border-control) 0 4px, transparent 4px 8px); }
+  .avatar-link[data-state="open"] { background: var(--gradient-together); }
+  .avatar-link[data-alone="true"] { visibility: hidden; }
+  .hh-selected { background: var(--color-selected-bg); border-left-color: var(--color-selected-indicator); }
+  .hh-playlist-row { border-left: 3px solid transparent; min-height: var(--playlist-row-min-height); }
+  .hh-playlist-row.hh-selected { border-left-color: var(--color-selected-indicator); }
+  .hh-playlist-row.hh-selected:hover { background: var(--color-selected-bg); }
+  .hh-status { color: var(--color-status-neutral-fg); background: var(--color-status-neutral-bg); border-color: transparent; }
+  .hh-status[data-state="sync"], .hh-status[data-state="shake"] { color: var(--color-status-success-fg); background: var(--color-status-success-bg); }
+  .hh-status[data-state="rc"], .hh-status[data-state="conn"] { color: var(--color-status-warning-fg); background: var(--color-status-warning-bg); }
+  .connection-header { box-shadow: var(--shadow-1); }
+  .hh-primary[data-role="guest"]:hover:not(:disabled), .hh-primary[data-role="guest"]:active:not(:disabled) { background: var(--color-action-guest-bg); color: var(--color-action-guest-fg); }
+  .vinyl { background: repeating-radial-gradient(circle, var(--color-disc-groove) 0 1px, transparent 1px 4px), var(--color-disc-bg); border: 8px solid var(--color-disc-ring); box-shadow: var(--shadow-2); }
+  .cover-placeholder { background: var(--color-bg-subtle); color: var(--color-text-secondary); }
+  .vinyl .cover-placeholder { background: var(--gradient-together); color: var(--color-avatar-dark); }
+  .vinyl .cover-placeholder > svg { width: 40%; height: 40%; }
   .paused-anim { animation-play-state: paused !important; }
-  /* 进度条 / 音量滑块 */
-  input[type=range].hh { -webkit-appearance: none; appearance: none; background: transparent; height: 18px; cursor: pointer; width: 100%; }
-  input[type=range].hh::-webkit-slider-runnable-track { height: 4px; border-radius: 4px; background: linear-gradient(90deg, #f2a65a, #ec7a96) 0 / var(--fill, 0%) 100% no-repeat, #3e352d; }
-  input[type=range].hh::-moz-range-track { height: 4px; border-radius: 4px; background: #3e352d; }
-  input[type=range].hh::-moz-range-progress { height: 4px; border-radius: 4px; background: linear-gradient(90deg, #f2a65a, #ec7a96); }
-  input[type=range].hh::-webkit-slider-thumb { -webkit-appearance: none; width: 12px; height: 12px; margin-top: -4px; border-radius: 50%; background: #f7f0e8; opacity: 0; transition: opacity .15s; }
-  input[type=range].hh:hover::-webkit-slider-thumb, input[type=range].hh:focus-visible::-webkit-slider-thumb { opacity: 1; }
-  input[type=range].hh::-moz-range-thumb { width: 12px; height: 12px; border: 0; border-radius: 50%; background: #f7f0e8; }
+  input[type=range].hh { -webkit-appearance: none; appearance: none; background: transparent; height: var(--player-range-hit-height); cursor: pointer; width: 100%; }
+  input[type=range].hh::-webkit-slider-runnable-track { height: var(--player-track-height); border-radius: var(--p-radius-pill); background: linear-gradient(var(--color-player-fill), var(--color-player-fill)) 0 / var(--fill, 0%) 100% no-repeat, var(--color-player-track); }
+  input[type=range].hh::-moz-range-track { height: var(--player-track-height); border-radius: var(--p-radius-pill); background: var(--color-player-track); }
+  input[type=range].hh::-moz-range-progress { height: var(--player-track-height); border-radius: var(--p-radius-pill); background: var(--color-player-fill); }
+  input[type=range].hh::-webkit-slider-thumb { -webkit-appearance: none; width: var(--player-thumb-size); height: var(--player-thumb-size); margin-top: -8px; border-radius: var(--p-radius-circle); background: var(--color-player-thumb); border: 2px solid var(--color-player-fill); }
+  input[type=range].hh::-moz-range-thumb { width: var(--player-thumb-size); height: var(--player-thumb-size); border: 2px solid var(--color-player-fill); border-radius: var(--p-radius-circle); background: var(--color-player-thumb); }
   input[type=range].hh:disabled { cursor: default; opacity: .5; }
-  /* 均衡器动画 */
-  .eq i { display: inline-block; width: 3px; margin-right: 2px; border-radius: 1px; background: #f2a65a; animation: eq .9s ease-in-out infinite; }
+  .eq i { display: inline-block; width: 3px; height: 8px; margin-right: 2px; border-radius: var(--p-radius-xs); background: var(--color-selected-indicator); animation: eq var(--motion-status-period) var(--motion-ease-standard) infinite; }
+  .hh-preview-eq { background: var(--color-selected-indicator); animation: eq var(--motion-status-period) var(--motion-ease-standard) infinite; }
   .eq-paused i { animation-play-state: paused; height: 4px; }
-  .eq i:nth-child(2) { animation-delay: -.3s; } .eq i:nth-child(3) { animation-delay: -.6s; }
+  .eq i:nth-child(2) { animation-delay: calc(var(--motion-status-period) / -3); } .eq i:nth-child(3) { animation-delay: calc(var(--motion-status-period) / -1.5); }
   @keyframes eq { 0%, 100% { height: 3px; } 50% { height: 12px; } }
-  .scroll-thin { scrollbar-width: thin; scrollbar-color: #3e352d transparent; }
-  .scroll-thin::-webkit-scrollbar { width: 6px; } .scroll-thin::-webkit-scrollbar-thumb { background: #3e352d; border-radius: 3px; }
-  /* ── 主界面（Lobby）动效 ── */
-  .glass { background: linear-gradient(160deg, rgb(255 255 255 / 6%), rgb(255 255 255 / 2%)); border: 1px solid rgb(255 255 255 / 9%); box-shadow: inset 0 1px 0 rgb(255 255 255 / 7%), 0 20px 50px -20px rgb(0 0 0 / 60%); backdrop-filter: blur(18px) saturate(140%); -webkit-backdrop-filter: blur(18px) saturate(140%); }
-  .blob { position: absolute; border-radius: 9999px; filter: blur(80px); opacity: .55; animation: drift 22s ease-in-out infinite alternate; }
-  @keyframes drift { 0% { transform: translate(0, 0) scale(1); } 50% { transform: translate(8vw, 4vh) scale(1.15); } 100% { transform: translate(-6vw, 8vh) scale(.9); } }
-  .breathe { animation: breathe 2.8s ease-in-out infinite; }
-  @keyframes breathe { 0%, 100% { transform: scale(1); opacity: .9; } 50% { transform: scale(1.06); opacity: .55; } }
-  .ripple::before, .ripple::after { content: ''; position: absolute; inset: 0; border-radius: inherit; border: 2px solid currentColor; animation: ripple 2.8s ease-out infinite; }
-  .ripple::after { animation-delay: 1.4s; }
-  @keyframes ripple { from { transform: scale(1); opacity: .6; } to { transform: scale(1.9); opacity: 0; } }
-  .shake { animation: shake .42s cubic-bezier(.36,.07,.19,.97); }
+  .scroll-thin { scrollbar-width: thin; scrollbar-color: var(--color-border-control) transparent; }
+  .scroll-thin::-webkit-scrollbar { width: 6px; } .scroll-thin::-webkit-scrollbar-thumb { background: var(--color-border-control); border-radius: var(--p-radius-xs); }
+  .glass { background: var(--color-bg-surface); border: 1px solid var(--color-border-subtle); box-shadow: var(--shadow-2); }
+  .blob { position: absolute; border-radius: var(--p-radius-pill); filter: blur(80px); opacity: .07; background: var(--color-brand-host); }
+  .blob:nth-child(2) { background: var(--color-brand-guest); }
+  .blob:nth-child(3) { display: none; }
+  .breathe, .ripple::before, .ripple::after { animation: none; }
+  .shake { animation: shake var(--motion-duration-slow) var(--motion-ease-standard); }
   @keyframes shake { 20%, 60% { transform: translateX(-6px); } 40%, 80% { transform: translateX(6px); } }
-  .shimmer { position: relative; overflow: hidden; background: rgb(255 255 255 / 5%); }
-  .shimmer::after { content: ''; position: absolute; inset: 0; transform: translateX(-100%); background: linear-gradient(90deg, transparent, rgb(255 255 255 / 7%), transparent); animation: shimmer 1.4s infinite; }
+  .shimmer { position: relative; overflow: hidden; background: var(--color-bg-subtle); }
+  .shimmer::after { content: ''; position: absolute; inset: 0; transform: translateX(-100%); background: linear-gradient(90deg, transparent, rgb(var(--color-text-primary-rgb) / 7%), transparent); animation: shimmer var(--motion-status-period) infinite; }
   @keyframes shimmer { to { transform: translateX(100%); } }
-  .rise { animation: rise .45s cubic-bezier(.2,.8,.2,1) both; }
+  .rise { animation: rise var(--motion-duration-slow) var(--motion-ease-enter) both; }
   @keyframes rise { from { opacity: 0; transform: translateY(10px); } }
-  .text-gradient { background: linear-gradient(90deg, #f2a65a, #ec7a96); -webkit-background-clip: text; background-clip: text; color: transparent; }
-  @media (prefers-reduced-motion: reduce) { .animate-spin-slow, .eq i, .animate-ping, .animate-pulse, .blob, .breathe, .ripple::before, .ripple::after, .shimmer::after, .rise { animation: none !important; } }
-  .app-toast { animation: app-toast 2.1s ease both; }
-  @keyframes app-toast { 0% { opacity: 0; } 8%, 88% { opacity: 1; } 100% { opacity: 0; } }
-  #boot { position: fixed; inset: 0; display: grid; place-items: center; color: #ab9886; font: 14px system-ui; }
+  .text-gradient { color: var(--color-role-host); }
+  .app-toast { animation: rise var(--motion-duration-normal) var(--motion-ease-enter); box-shadow: var(--shadow-2); }
+  .hh-empty { background: radial-gradient(circle at 20% 10%, rgb(var(--color-brand-host-rgb) / 6%), transparent 60%), radial-gradient(circle at 85% 90%, rgb(var(--color-brand-guest-rgb) / 6%), transparent 60%); }
+  progress { accent-color: var(--color-status-info-fg); border: 0; border-radius: var(--p-radius-pill); overflow: hidden; background: var(--color-status-info-bg); }
+  progress::-webkit-progress-bar { background: var(--color-status-info-bg); }
+  progress::-webkit-progress-value { background: var(--color-status-info-fg); }
+  progress::-moz-progress-bar { background: var(--color-status-info-fg); }
+  #boot { position: fixed; inset: 0; display: grid; place-items: center; color: var(--color-text-secondary); font: var(--text-small-size) var(--font-sans); }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+    .eq i, .hh-preview-eq { height: 8px !important; }
+    .hh-primary:active:not(:disabled), .active\:scale-95:active, .active\:scale-\[\.98\]:active { transform: none; }
+  }
 </style>
 <link rel="stylesheet" href="./mobile.css" />
 <!-- 运行时配置：部署时由 scripts/write-app-config.mjs 生成（音乐服务 / ICE 地址） -->
@@ -293,6 +345,7 @@ function createStore(initial) {
   };
 }
 
+// Saved profile palette: persisted user data, independent of the active theme.
 const PROFILE_COLORS = ['#f2a65a', '#ec7a96', '#71d6a4', '#8ea2ff', '#e6c56b'];
 const profileOf = (name) => ({ name: name.slice(0, 16), color: PROFILE_COLORS[hue(name) % PROFILE_COLORS.length] });
 function loadProfile() {
@@ -2525,18 +2578,22 @@ async function handleRpc(m) {
 const cx = (...a) => a.filter(Boolean).join(' ');
 
 function Avatar({ profile, size = 28, ring }) {
+  const hex = String(profile?.color || '').replace(/^#/, '');
+  const rgb = /^[0-9a-f]{6}$/i.test(hex) ? [0, 2, 4].map(i => parseInt(hex.slice(i, i + 2), 16) / 255).map(v => v <= .04045 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4) : [1, 1, 1];
+  const luminance = rgb[0] * .2126 + rgb[1] * .7152 + rgb[2] * .0722;
+  const foreground = (luminance + .05) / .0539 >= 1.05 / (luminance + .05) ? 'var(--color-avatar-dark)' : 'var(--color-avatar-light)';
   if (!profile) return html`<span class="grid place-items-center rounded-full border border-dashed border-ink-600 text-sand-500 text-xs" style=${{ width: size, height: size }} title="等待加入">?</span>`;
   return html`<span
     class=${cx('grid place-items-center rounded-full font-bold text-ink-950 shrink-0', ring)}
-    style=${{ width: size, height: size, background: profile.color, fontSize: size * 0.42 }}
-    title=${profile.name}
+    style=${{ width: size, height: size, background: profile.color, color: foreground, fontSize: size <= 28 ? 'var(--text-caption-size)' : size >= 44 ? 'var(--text-title-sm-size)' : 'var(--text-body-size)' }}
+    title=${profile.name} role="img" aria-label=${profile.name}
   >${[...profile.name][0]}</span>`;
 }
 
 function Cover({ item, size = 40, round = 'rounded-lg' }) {
   const src = coverCandidates(item)[0];
-  return html`<span class=${cx('relative shrink-0 overflow-hidden grid place-items-center', round)} style=${{ width: size, height: size, flex: '0 0 auto', background: '#282b35' }}>
-    <${Music2} size=${size * 0.42} class="text-white/70" />
+  return html`<span class=${cx('cover-placeholder relative shrink-0 overflow-hidden grid place-items-center', round)} style=${{ width: size, height: size, flex: '0 0 auto' }}>
+    <${Music2} size=${size * 0.42} class="opacity-70" />
     ${src && html`<img key=${src} src=${src} onError=${e => coverError(e, item)} alt="" referrerPolicy="no-referrer" loading="lazy" class="absolute inset-0 h-full w-full object-cover" />`}
   </span>`;
 }
@@ -2559,11 +2616,11 @@ function useLinkStatus() {
   const loaded = useStore((s) => s.loaded);
   const role = useStore((s) => s.role);
   const peerReady = useStore((s) => s.peerReady);
-  if (conn === 'open' && playing && loaded && (role === 'guest' || peerReady)) return { key: 'sync', label: '同步中', dot: 'bg-sync', ping: true };
-  if (conn === 'open') return { key: 'shake', label: '握手成功', dot: 'bg-host' };
-  if (conn === 'reconnecting') return { key: 'rc', label: '自动重连中…', dot: 'bg-host animate-pulse' };
-  if (conn === 'waiting') return { key: 'wait', label: get().peer ? '等待对方重连' : '等待对方加入', dot: 'bg-sand-500 animate-pulse' };
-  if (conn === 'connecting' || conn === 'opening') return { key: 'conn', label: '连接中…', dot: 'bg-host animate-pulse' };
+  if (conn === 'open' && playing && loaded && (role === 'guest' || peerReady)) return { key: 'sync', label: '同步中', dot: 'bg-sync' };
+  if (conn === 'open') return { key: 'shake', label: '已连接', dot: 'bg-success' };
+  if (conn === 'reconnecting') return { key: 'rc', label: '自动重连中…', dot: 'bg-warning animate-pulse' };
+  if (conn === 'waiting') return { key: 'wait', label: get().peer ? '等待对方重连' : '等待对方加入', dot: 'bg-neutral' };
+  if (conn === 'connecting' || conn === 'opening') return { key: 'conn', label: '连接中…', dot: 'bg-warning animate-pulse' };
   return { key: 'idle', label: '未连接', dot: 'bg-ink-600' };
 }
 
@@ -2587,7 +2644,7 @@ function ConnectionBar() {
   return html`<header class="connection-header relative md:sticky md:top-0 z-30 border-b border-ink-700/70 bg-ink-950/80 backdrop-blur-xl">
     <div class="mx-auto flex max-w-[1500px] flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3">
       <button class="connection-brand flex shrink-0 items-center gap-2 whitespace-nowrap font-extrabold tracking-tight hover:opacity-80" onClick=${() => set({ screen: 'home' })} title="回到大厅">
-        <span class="h-6 w-6 rounded-full" style=${{ background: 'conic-gradient(#f2a65a 0 50%, #ec7a96 50% 100%)' }} />
+        <span class="brand-halves h-6 w-6" aria-hidden="true" />
         <span>Half<span class="text-host">&</span>Half</span>
         <${Home} size=${14} class="text-sand-500" />
       </button>
@@ -2595,28 +2652,28 @@ function ConnectionBar() {
       <span class="connection-invite text-xs text-sand-400">${role ? '好友同听' : '从好友列表邀请一起听'}</span>
       <${CoListenPill} />
 
-      <span class="inline-flex items-center gap-2 rounded-full border border-ink-700 bg-ink-850 px-3 py-1 text-xs font-medium" role="status">
+      <span class="hh-status inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-medium" data-state=${status.key} role="status">
         <span class="relative flex h-2 w-2">
-          ${status.ping && html`<span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-sync opacity-70" />`}
+
           <span class=${cx('relative inline-flex h-2 w-2 rounded-full', status.dot)} />
         </span>
         ${status.label}
       </span>
       <span class="inline-flex items-center gap-1.5 text-xs text-sand-400" title="P2P 往返延迟">
-        ${ping == null ? html`<${WifiOff} size=${14} />` : html`<${Wifi} size=${14} class=${ping < 80 ? 'text-sync' : ping < 200 ? 'text-host' : 'text-guest'} />`}
+        ${ping == null ? html`<${WifiOff} size=${14} />` : html`<${Wifi} size=${14} class=${ping < 80 ? 'text-sync' : ping < 200 ? 'text-warning' : 'text-error'} />`}
         Ping <b class="tabular text-sand-50">${ping == null ? '–' : `${ping} ms`}</b>
       </span>
-      ${link && html`<span class=${cx('inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium', link.kind === 'relay' ? 'bg-host/15 text-host' : 'bg-sync/15 text-sync')} title=${PATH_TIP[link.kind]}>
+      ${link && html`<span class=${cx('inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium', link.kind === 'relay' ? 'bg-neutral-soft text-neutral' : 'bg-success-soft text-success')} title=${PATH_TIP[link.kind]}>
         ${link.kind === 'relay' ? html`<${Server} size=${12} />` : html`<${Zap} size=${12} />`} ${PATH_LABEL[link.kind]}${link.protocol ? ` · ${link.protocol.toUpperCase()}` : ''}
       </span>`}
       <button class="grid h-7 w-7 place-items-center rounded-lg text-sand-500 hover:bg-ink-800 hover:text-sand-50" onClick=${() => set({ connSettingsOpen: true })} aria-label="连接设置" title="连接设置（TURN 中继）"><${Settings} size=${15} /></button>
 
       <span class="flex-1" />
-      ${apiMode === 'mock' && html`<span class="rounded-md bg-ink-700 px-2 py-0.5 text-[11px] text-sand-400" title="未检测到 music-service，搜索与下载使用演示数据">演示模式</span>`}
-      ${apiMode === 'remote' && html`<span class="rounded-md bg-guest/15 px-2 py-0.5 text-[11px] text-guest" title="搜索与下载由房主电脑的 music-service 执行，结果经 P2P 传回">经房主搜索</span>`}
-      <div class="flex items-center">
+      ${apiMode === 'mock' && html`<span class="rounded-md bg-ink-700 px-2 py-0.5 text-xs text-sand-400" title="未检测到 music-service，搜索与下载使用演示数据">演示模式</span>`}
+      ${apiMode === 'remote' && html`<span class="rounded-md bg-guest/15 px-2 py-0.5 text-xs text-guest" title="搜索与下载由房主电脑的 music-service 执行，结果经 P2P 传回">经房主搜索</span>`}
+      <div class="flex items-center connection-avatars">
         <button onClick=${rename} title="点击修改昵称"><${Avatar} profile=${me} ring=${role === 'guest' ? 'ring-2 ring-guest/60' : 'ring-2 ring-host/60'} /></button>
-        <span class=${cx('mx-1 h-px w-5', peer ? 'bg-gradient-to-r from-host to-guest' : 'bg-ink-600')} />
+        <span class="avatar-link" data-state=${get().conn} data-alone=${!peer && !['connecting', 'opening', 'reconnecting'].includes(get().conn)} aria-hidden="true" />
         <${Avatar} profile=${peer} />
       </div>
       ${role && html`<button class="grid h-8 w-8 place-items-center rounded-lg text-sand-400 hover:bg-ink-800 hover:text-sand-50" onClick=${() => confirm('离开房间？') && session.leave()} aria-label="离开房间" title="离开房间"><${LogOut} size=${16} /></button>`}
@@ -2627,7 +2684,7 @@ function ConnectionBar() {
 // ───────────────────────── 2. 聚合搜索与下载面板
 function QualityBadge({ q }) {
   const tone = q === 'FLAC' ? 'border-host/40 text-host' : q?.startsWith('320') ? 'border-sync/40 text-sync' : 'border-ink-600 text-sand-400';
-  return html`<span class=${cx('rounded border px-1.5 py-px font-mono text-[10px] font-semibold', tone)}>${q}</span>`;
+  return html`<span class=${cx('rounded border px-1.5 py-px font-mono text-xs font-semibold', tone)}>${q}</span>`;
 }
 
 function DownloadButton({ r }) {
@@ -2636,16 +2693,16 @@ function DownloadButton({ r }) {
     const pct = Math.round((dl.progress || 0) * 100);
     return html`<div class="relative grid h-9 w-9 place-items-center" aria-label=${`下载中 ${pct}%`}>
       <svg viewBox="0 0 36 36" class="absolute inset-0 -rotate-90">
-        <circle cx="18" cy="18" r="15" fill="none" stroke="#3e352d" stroke-width="3" />
+        <circle cx="18" cy="18" r="15" fill="none" stroke="var(--color-border-subtle)" stroke-width="3" />
         <circle cx="18" cy="18" r="15" fill="none" stroke="url(#g)" stroke-width="3" stroke-linecap="round" stroke-dasharray=${`${pct * 0.942} 100`} />
-        <defs><linearGradient id="g"><stop offset="0" stop-color="#f2a65a" /><stop offset="1" stop-color="#ec7a96" /></linearGradient></defs>
+        <defs><linearGradient id="g"><stop offset="0" stop-color="var(--color-brand-host)" /><stop offset="1" stop-color="var(--color-brand-guest)" /></linearGradient></defs>
       </svg>
-      <span class="tabular text-[10px] text-sand-200">${pct}</span>
+      <span class="tabular text-xs text-sand-200">${pct}</span>
     </div>`;
   }
-  if (dl?.status === 'done') return html`<span class="grid h-9 w-9 place-items-center rounded-full bg-sync/15 text-sync" title="已加入播放库"><${Check} size=${16} /></span>`;
+  if (dl?.status === 'done') return html`<span class="grid h-9 w-9 place-items-center rounded-full bg-success-soft text-success" title="已加入播放库"><${Check} size=${16} /></span>`;
   return html`<button
-    class=${cx('grid h-9 w-9 place-items-center rounded-full border transition', dl?.status === 'error' ? 'border-guest/50 text-guest' : 'border-ink-600 text-sand-200 hover:border-host hover:text-host')}
+    class=${cx('grid h-9 w-9 place-items-center rounded-full border transition', dl?.status === 'error' ? 'border-error text-error' : 'border-ink-600 text-sand-200 hover:border-host hover:text-host')}
     onClick=${() => downloadWithPicker(r)}
     aria-label=${`下载 ${r.title}`}
     title=${dl?.error ? `失败：${dl.error}，点击重试` : '下载至本地播放库'}
@@ -2698,7 +2755,7 @@ function SearchPanel() {
           <input value=${query} onInput=${(e) => set({ query: e.target.value })} placeholder="歌名 / 歌手，例如：晴天 周杰伦" aria-label="搜索歌曲"
             class="w-full rounded-xl border border-ink-700 bg-ink-900 py-2.5 pl-9 pr-3 text-sm outline-none placeholder:text-sand-500 focus:border-host" />
         </label>
-        <button class="inline-flex items-center gap-1.5 rounded-xl bg-sand-50 px-4 text-sm font-semibold text-ink-950 hover:bg-white disabled:opacity-50" disabled=${searching || !query.trim()}>
+        <button class="inline-flex items-center gap-1.5 rounded-xl hh-primary px-4 text-sm font-semibold disabled:opacity-50" disabled=${searching || !query.trim()}>
           ${searching ? html`<${Loader2} size=${15} class="animate-spin" />` : html`<${Search} size=${15} />`} 搜索
         </button>
       </form>
@@ -2708,7 +2765,7 @@ function SearchPanel() {
           return html`<button key=${s.name} onClick=${() => toggle(s.name)} aria-pressed=${on}
             class=${cx('rounded-full border px-3 py-1 text-xs transition', on ? 'border-host/60 bg-host/10 text-host' : 'border-ink-700 text-sand-500 hover:text-sand-200')}>${s.label}</button>`;
         })}
-        ${meta && html`<span class="ml-auto text-[11px] text-sand-500">
+        ${meta && html`<span class="ml-auto text-xs text-sand-500">
           ${meta.mock ? '演示数据' : `${meta.took}ms${meta.originals?.length ? ` · 原唱 ${meta.originals.join('、')}` : ''}`}
         </span>`}
       </div>
@@ -2727,11 +2784,11 @@ function SearchPanel() {
             ${r.pageUrl
               ? html`<a href=${r.pageUrl} target="_blank" rel="noopener noreferrer" class="truncate text-sm font-medium hover:text-host hover:underline" title="打开原页面核对版本">${r.title}</a>`
               : html`<span class="truncate text-sm font-medium">${r.title}</span>`}
-            ${r.version && html`<span class="shrink-0 rounded bg-sync/10 px-1.5 text-[10px] text-sync">${r.version}</span>`}
+            ${r.version && html`<span class="shrink-0 rounded bg-sync/10 px-1.5 text-xs text-sync">${r.version}</span>`}
           </div>
           <div class="result-metadata mt-0.5 flex items-center gap-2 text-xs text-sand-400">
             <span class="result-artist truncate">${r.artist || '未知歌手'}</span>
-            <span class="shrink-0 rounded bg-ink-700 px-1.5 text-[10px] text-sand-200">${r.sourceLabel}</span>
+            <span class="shrink-0 rounded bg-ink-700 px-1.5 text-xs text-sand-200">${r.sourceLabel}</span>
             <${QualityBadge} q=${r.quality} />
             <span class="tabular shrink-0">${fmtTime(r.duration)}</span>
             ${r.size && html`<span class="tabular shrink-0" title="按码率与时长估算">≈${fmtSize(r.size)}</span>`}
@@ -2789,7 +2846,7 @@ function PlaylistStrip({ view }) {
   };
   const chips = [{ id: ALL_ID, name: '全部', count: libraryCount }, ...playlists.map((p) => ({ id: p.id, name: p.name, count: p.trackIds.length, system: p.system }))];
   return html`<div class="border-b border-ink-700/60 px-3 py-2.5">
-    ${!asking && html`<div class="mb-2 flex items-center gap-2 px-1 text-[11px] text-sand-500">
+    ${!asking && html`<div class="mb-2 flex items-center gap-2 px-1 text-xs text-sand-500">
       下载 / 导入的歌直接进「默认曲库」<button class="text-host hover:underline" onClick=${restoreAsking}>恢复询问歌单</button>
     </div>`}
     <div class="scroll-thin -mx-1 flex items-center gap-2 overflow-x-auto px-1 pb-1" role="tablist" aria-label="我的歌单">
@@ -2798,7 +2855,7 @@ function PlaylistStrip({ view }) {
         const playingHere = playing && (c.id === ALL_ID ? !active : active === c.id);
         return html`<button key=${c.id} role="tab" aria-selected=${on} onClick=${() => set({ viewPlaylistId: c.id })}
           class=${cx('inline-flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs transition', on ? 'border-host/60 bg-host/15 text-sand-50' : 'border-ink-700 text-sand-400 hover:text-sand-100')}>
-          ${playingHere && html`<span class="eq inline-flex h-2.5 items-end" aria-label="正在播放"><i /><i /><i /></span>`}
+          ${playingHere && html`<span class="eq inline-flex h-2.5 items-end" aria-hidden="true"><i /><i /><i /></span>`}
           <span class="max-w-[9rem] truncate">${c.name}</span>
           <span class="tabular text-sand-500">${c.count}</span>
         </button>`;
@@ -2808,7 +2865,7 @@ function PlaylistStrip({ view }) {
             <input autofocus value=${name} onInput=${(e) => setName(e.target.value)} maxlength="40" placeholder="歌单名称" aria-label="新歌单名称"
               class="w-32 rounded-full border border-host/60 bg-ink-900 px-3 py-1.5 text-xs outline-none placeholder:text-sand-500"
               onKeyDown=${(e) => e.key === 'Escape' && (setCreating(false), setName(''))} />
-            <button class="rounded-full bg-host px-3 py-1.5 text-xs font-semibold text-ink-950 disabled:opacity-40" disabled=${!name.trim()}>创建</button>
+            <button class="rounded-full hh-primary px-3 py-1.5 text-xs font-semibold  disabled:opacity-40" disabled=${!name.trim()}>创建</button>
             <button type="button" class="grid h-7 w-7 place-items-center rounded-full text-sand-400 hover:text-sand-50" onClick=${() => (setCreating(false), setName(''))} aria-label="取消新建"><${X} size=${14} /></button>
           </form>`
         : html`<button class="inline-flex shrink-0 items-center gap-1 rounded-full border border-dashed border-host/50 px-3 py-1.5 text-xs font-medium text-host hover:bg-host/10" onClick=${() => setCreating(true)}>
@@ -2859,12 +2916,12 @@ function PlaylistHeader({ view, items }) {
             <input autofocus value=${name} onInput=${(e) => setName(e.target.value)} maxlength="40" aria-label="歌单新名称"
               class="min-w-0 flex-1 rounded-lg border border-host/60 bg-ink-900 px-2.5 py-1.5 text-sm outline-none"
               onKeyDown=${(e) => e.key === 'Escape' && setRenaming(false)} />
-            <button class="rounded-lg bg-host px-3 py-1.5 text-xs font-semibold text-ink-950 disabled:opacity-40" disabled=${!name.trim()}>保存</button>
+            <button class="rounded-lg hh-primary px-3 py-1.5 text-xs font-semibold  disabled:opacity-40" disabled=${!name.trim()}>保存</button>
             <button type="button" class="rounded-lg px-2 py-1.5 text-xs text-sand-400" onClick=${() => setRenaming(false)}>取消</button>
           </form>`
         : html`<div class="flex items-center gap-1.5">
             <h3 class="truncate text-sm font-semibold">${title}</h3>
-            ${playlist?.system && html`<span class="shrink-0 rounded bg-white/5 px-1.5 text-[10px] text-sand-400" title="下载 / 导入时选「稍后整理」的歌放在这里">稍后整理</span>`}
+            ${playlist?.system && html`<span class="shrink-0 rounded bg-white/5 px-1.5 text-xs text-sand-400" title="下载 / 导入时选「稍后整理」的歌放在这里">稍后整理</span>`}
             ${custom && html`<button class="grid h-7 w-7 shrink-0 place-items-center rounded-full text-sand-500 hover:text-sand-50" onClick=${() => (setName(playlist.name), setRenaming(true))} aria-label="重命名歌单" title="重命名"><${Pencil} size=${13} /></button>`}
           </div>`}
       <div class="mt-0.5 text-xs text-sand-500 tabular">${items.length} 首${playlist?.pending?.length ? ` · ${playlist.pending.length} 首未下载` : ''}${total ? ` · ${fmtTime(total)}` : ''}${isActive && items.length ? ' · 正在播放' : ''}</div>
@@ -2872,7 +2929,7 @@ function PlaylistHeader({ view, items }) {
     </div>
     <div class="flex w-full items-center gap-1.5 sm:w-auto sm:shrink-0">
       ${custom && !renaming && html`<button class="grid h-9 w-9 shrink-0 place-items-center rounded-full text-sand-500 hover:bg-guest/10 hover:text-guest" onClick=${remove} aria-label="删除歌单" title="删除歌单（歌曲保留）"><${Trash2} size=${15} /></button>`}
-      <button class="inline-flex flex-1 items-center justify-center gap-1.5 rounded-full bg-host px-3.5 py-2 text-xs font-semibold text-ink-950 hover:brightness-110 disabled:opacity-40 sm:flex-none"
+      <button class="inline-flex flex-1 items-center justify-center gap-1.5 rounded-full hh-primary px-3.5 py-2 text-xs font-semibold   disabled:opacity-40 sm:flex-none"
         disabled=${!items.length} onClick=${() => session.playPlaylist(view, { orderedIds: items.map(x => x.id) })}
         title=${inRoom ? '加载这个歌单，和对方一起听' : '用这个歌单替换播放队列'}>
         <${inRoom ? Users : Play} size=${14} fill=${inRoom ? 'none' : 'currentColor'} /> ${inRoom ? '在房间中播放' : '播放全部'}
@@ -2922,11 +2979,11 @@ function LibraryPanel() {
           <${ListMusic} size=${14} class="shrink-0" /><span class="truncate">房主正在播放歌单《${roomPlaylist.name}》· ${items.length} 首</span>
         </div>`
       : html`<${PlaylistStrip} view=${view} /><${PlaylistHeader} view=${view} items=${items} />`}
-    <div class="hidden grid-cols-[32px_minmax(0,1fr)_88px_72px_56px_76px] gap-3 border-b border-ink-700/60 px-5 py-2 text-[11px] uppercase tracking-wider text-sand-500 md:grid">
+    <div class="hidden grid-cols-[32px_minmax(0,1fr)_88px_72px_56px_76px] gap-3 border-b border-ink-700/60 px-5 py-2 text-xs uppercase tracking-wider text-sand-500 md:grid">
       <span>#</span><span>标题</span><span>来源</span><span class="text-right">大小</span><span class="text-right">时长</span><span />
     </div>
     <div class="scroll-thin min-h-[200px] flex-1 overflow-y-auto p-2" role="list">
-      ${!items.length && !pending.length && html`<div class="m-3 grid place-items-center gap-2 rounded-2xl border-2 border-dashed border-ink-700 px-6 py-14 text-center text-sm text-sand-500">
+      ${!items.length && !pending.length && html`<div class="hh-empty m-3 grid place-items-center gap-2 rounded-2xl border-2 border-dashed border-ink-700 px-6 py-14 text-center text-sm text-sand-500">
         <${FileAudio} size=${26} class="text-guest/70" />
         ${isGuest
           ? '房主还没有添加歌曲 · 你也可以拖入文件分享给房主'
@@ -2938,17 +2995,17 @@ function LibraryPanel() {
         const cur = x.id === currentId;
         const saved = (x.localId && !isGuest) || (x.hash && offline.hashes.has(x.hash));
         return html`<div key=${x.id} role="listitem"
-          class=${cx('group grid cursor-default grid-cols-[32px_minmax(0,1fr)_auto] items-center gap-3 rounded-xl px-3 py-2 md:grid-cols-[32px_minmax(0,1fr)_88px_72px_56px_76px]', cur ? 'bg-gradient-to-r from-host/15 to-guest/5 ring-1 ring-host/30' : 'hover:bg-ink-800')}
+          class=${cx('hh-playlist-row group grid cursor-default grid-cols-[32px_minmax(0,1fr)_auto] items-center gap-3 rounded-xl px-3 py-2 md:grid-cols-[32px_minmax(0,1fr)_88px_72px_56px_76px]', cur ? 'hh-selected' : 'hover:bg-ink-800')}
           onDblClick=${() => play(x)}
           title=${isGuest ? '双击请求房主切到这首' : playlist ? '双击：播放这个歌单，从这首开始' : '双击播放'}>
           <span class="text-center text-xs text-sand-500 tabular">
-            ${cur ? html`<span class=${cx('eq inline-flex h-3 items-end', !playing && 'eq-paused')}><i /><i /><i /></span>` : i + 1}
+            ${cur ? html`<span class=${cx('eq inline-flex h-3 items-end', !playing && 'eq-paused')} aria-hidden="true"><i /><i /><i /></span>` : i + 1}
           </span>
           <div class="flex min-w-0 items-center gap-3">
             <${Cover} item=${x} size=${38} />
             <div class="min-w-0">
               <div class="flex items-center gap-1.5">
-                <span class=${cx('truncate text-sm font-medium', cur && 'text-host')}>${x.title}</span>
+                <span class=${cx('truncate text-sm font-medium', cur && 'text-guest')}>${x.title}</span>
                 ${saved ? html`<${HardDrive} size=${12} class="shrink-0 text-sync" aria-label="已存本机" title="已保存在这台设备上，离线也能播放" />` : ''}
               </div>
               <div class="truncate text-xs text-sand-400">${x.artist}${trackCompletedCount(x) > 0 && html`<span class="ml-1 text-host/80">· 已听 ${trackCompletedCount(x)} 次</span>`}${x.addedBy && x.addedBy !== get().me.name ? html` · <span class="text-guest/80">${x.addedBy} 添加</span>` : ''}</div>
@@ -2958,7 +3015,7 @@ function LibraryPanel() {
           <span class="hidden text-right text-xs text-sand-400 tabular md:block">${fmtSize(x.size)}</span>
           <span class="hidden text-right text-xs text-sand-400 tabular md:block">${x.duration ? fmtTime(x.duration) : '–'}</span>
           <span class="flex justify-end gap-1">
-            <button class="grid h-8 w-8 place-items-center rounded-full text-sand-200 opacity-80 hover:bg-host hover:text-ink-950 group-hover:opacity-100"
+            <button class="grid h-8 w-8 place-items-center rounded-full text-sand-200 opacity-80 hover:bg-primary hover:text-primary-fg group-hover:opacity-100"
               onClick=${() => play(x)} aria-label=${cur && playing ? '暂停' : `播放 ${x.title}`}>
               <${cur && playing ? Pause : Play} size=${15} />
             </button>
@@ -2977,10 +3034,10 @@ function LibraryPanel() {
 function PendingRows({ playlistId, pending, start }) {
   const jobs = useStore((s) => s.pendingJobs);
   return html`<div class="mt-1 border-t border-ink-700/60 pt-1">
-    <div class="flex items-center gap-2 px-3 py-2 text-[11px] text-sand-500">
+    <div class="flex items-center gap-2 px-3 py-2 text-xs text-sand-500">
       <${Cloud} size=${12} /> 未下载到这台设备 · ${pending.length} 首
       <span class="flex-1" />
-      <button class="inline-flex items-center gap-1 rounded-full border border-sync/40 px-2.5 py-1 text-[11px] font-medium text-sync hover:bg-sync/10" onClick=${() => downloadPending(playlistId)}>
+      <button class="inline-flex items-center gap-1 rounded-full border border-sync/40 px-2.5 py-1 text-xs font-medium text-sync hover:bg-sync/10" onClick=${() => downloadPending(playlistId)}>
         <${CloudDownload} size=${12} /> 全部下载
       </button>
     </div>
@@ -2993,7 +3050,7 @@ function PendingRows({ playlistId, pending, start }) {
             <span class="grid h-[38px] w-[38px] shrink-0 place-items-center rounded-lg bg-ink-800 text-sand-500"><${Cloud} size=${16} /></span>
             <div class="min-w-0">
               <div class="flex items-center gap-1.5"><span class="truncate text-sm font-medium">${t.title || '未命名'}</span>
-                <span class="shrink-0 rounded bg-white/5 px-1.5 text-[10px] text-sand-400">未下载</span></div>
+                <span class="shrink-0 rounded bg-white/5 px-1.5 text-xs text-sand-400">未下载</span></div>
               <div class="truncate text-xs text-sand-400">${t.artist || '未知歌手'}</div>
             </div>
           </div>
@@ -3103,7 +3160,7 @@ function PlaylistPicker() {
   return html`<div class="fixed inset-0 z-[75] flex items-end justify-center bg-ink-950/70 backdrop-blur-sm sm:items-center sm:p-6" onClick=${(e) => e.target === e.currentTarget && closePlaylistPicker(null)}>
     <section role="dialog" aria-modal="true" aria-labelledby="pp-title" class="flex max-h-[85vh] w-full max-w-md flex-col overflow-hidden rounded-t-3xl border border-ink-700 bg-ink-900 shadow-2xl sm:rounded-3xl">
       <header class="flex items-start gap-3 border-b border-ink-700/70 px-5 py-4">
-        <span class="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-host/15 text-host"><${ListPlus} size=${19} /></span>
+        <span class="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-warning-soft text-warning"><${ListPlus} size=${19} /></span>
         <div class="min-w-0 flex-1">
           <h2 id="pp-title" class="font-semibold">${req.title}</h2>
           ${req.subtitle && html`<p class="truncate text-xs text-sand-500">${req.subtitle}</p>`}
@@ -3114,7 +3171,7 @@ function PlaylistPicker() {
         ${playlists.map((p) => {
           const on = sel.has(p.id) || locked.has(p.id);
           return html`<label key=${p.id} class=${cx('flex cursor-pointer items-center gap-3 rounded-xl px-3 py-2.5 hover:bg-white/5', locked.has(p.id) && 'cursor-default opacity-60')}>
-            <input type="checkbox" class="h-4 w-4 accent-[#f2a65a]" checked=${on} disabled=${locked.has(p.id)} onChange=${() => toggle(p.id)} />
+            <input type="checkbox" class="h-4 w-4 accent-primary" checked=${on} disabled=${locked.has(p.id)} onChange=${() => toggle(p.id)} />
             <${PlaylistCover} playlist=${p} size=${36} round="rounded-lg" />
             <span class="min-w-0 flex-1">
               <span class="block truncate text-sm">${p.name}${p.system ? html`<span class="ml-1.5 text-xs text-sand-500">稍后整理</span>` : ''}</span>
@@ -3131,12 +3188,12 @@ function PlaylistPicker() {
       </div>
       <footer class="space-y-3 border-t border-ink-700/70 px-5 py-4">
         ${req.mode !== 'add' && html`<label class="flex items-center gap-2 text-xs text-sand-400">
-          <input type="checkbox" class="h-3.5 w-3.5 accent-[#f2a65a]" checked=${skip} onChange=${(e) => setSkip(e.target.checked)} />
+          <input type="checkbox" class="h-3.5 w-3.5 accent-primary" checked=${skip} onChange=${(e) => setSkip(e.target.checked)} />
           以后不再询问，直接放进「默认曲库」
         </label>`}
         <div class="flex gap-2">
           <button class="flex-1 rounded-xl border border-ink-600 px-4 py-2.5 text-sm text-sand-200 hover:border-sand-400" onClick=${() => closePlaylistPicker(null)}>取消</button>
-          <button class="flex-[2] rounded-xl bg-host px-4 py-2.5 text-sm font-semibold text-ink-950 hover:brightness-110 disabled:opacity-40" disabled=${!count} onClick=${confirmPick}>
+          <button class="flex-[2] rounded-xl hh-primary px-4 py-2.5 text-sm font-semibold   disabled:opacity-40" disabled=${!count} onClick=${confirmPick}>
             ${count ? `${verb}到 ${count} 个歌单` : '至少选一个歌单'}
           </button>
         </div>
@@ -3152,11 +3209,12 @@ function RoomPlaylistBanner() {
   const peer = useStore((s) => s.peer);
   const hostPl = useStore((s) => (s.activePlaylistId ? s.playlists.find((p) => p.id === s.activePlaylistId) : null));
   const roomPl = useStore((s) => s.roomPlaylist);
+  const playing = useStore((s) => s.playing);
   const name = role === 'host' ? hostPl?.name : role === 'guest' ? roomPl?.name : null;
   if (!role || conn !== 'open' || !name) return null;
   return html`<div class="mx-auto mt-3 flex max-w-[1500px] px-4" role="status">
     <div class="flex min-w-0 items-center gap-2 rounded-full border border-sync/30 bg-sync/10 px-4 py-2 text-xs text-sync">
-      <span class="eq inline-flex h-2.5 shrink-0 items-end"><i /><i /><i /></span>
+      <span class=${cx('eq inline-flex h-2.5 shrink-0 items-end', !playing && 'eq-paused')} aria-hidden="true"><i /><i /><i /></span>
       <span class="truncate">正在与 ${peer?.name || '对方'} 一起收听歌单：<b class="text-sand-50">【${name}】</b></span>
     </div>
   </div>`;
@@ -3171,25 +3229,33 @@ function MiniWave({ active }) {
   const canvas = useRef(null);
   useEffect(() => {
     let raf;
+    const media = window.matchMedia('(prefers-reduced-motion: reduce)');
     const data = new Uint8Array(32);
     const draw = () => {
       const c = canvas.current;
       const an = session.out.analyser;
+      const animate = active && !media.matches;
       if (c) {
         const ctx = c.getContext('2d');
         ctx.clearRect(0, 0, c.width, c.height);
-        if (an && active) an.getByteFrequencyData(data);
+        const styles = getComputedStyle(c);
+        const gradient = ctx.createLinearGradient(0, 0, c.width, 0);
+        gradient.addColorStop(0, styles.getPropertyValue('--color-brand-host').trim());
+        gradient.addColorStop(1, styles.getPropertyValue('--color-brand-guest').trim());
+        ctx.fillStyle = gradient;
+        if (an && animate) an.getByteFrequencyData(data);
         for (let i = 0; i < 16; i++) {
-          const v = active ? (an ? data[i + 1] / 255 : 0.3 + 0.3 * Math.sin(Date.now() / 180 + i)) : 0.08;
+          const v = animate && an ? data[i + 1] / 255 : 0.08;
           const h = Math.max(2, v * c.height);
-          ctx.fillStyle = `hsl(${30 - i * 2.5} 85% ${60 + i}%)`;
           ctx.fillRect(i * 5, c.height - h, 3, h);
         }
       }
-      raf = requestAnimationFrame(draw);
+      if (animate) raf = requestAnimationFrame(draw);
     };
+    const update = () => { cancelAnimationFrame(raf); draw(); };
+    media.addEventListener('change', update);
     draw();
-    return () => cancelAnimationFrame(raf);
+    return () => { cancelAnimationFrame(raf); media.removeEventListener('change', update); };
   }, [active]);
   return html`<canvas ref=${canvas} width="80" height="22" class="h-[22px] w-20" aria-hidden="true" />`;
 }
@@ -3208,7 +3274,7 @@ function SeekBar() {
     session.act('seek', { position: drag });
     setDrag(null);
   };
-  return html`<div class="flex w-full items-center gap-3 text-[11px] text-sand-400 tabular">
+  return html`<div class="flex w-full items-center gap-3 text-xs text-sand-400 tabular">
     <span class="w-10 text-right">${fmtTime(v)}</span>
     <input type="range" class="hh flex-1" min="0" max=${duration || 0} step="0.1" value=${v} disabled=${!canSeek}
       style=${{ '--fill': `${duration ? (v / duration) * 100 : 0}%` }} aria-label="播放进度"
@@ -3235,15 +3301,15 @@ function SyncStatus() {
   if (transfer) {
     icon = transfer.dir === 'send' ? Upload : Download;
     text = `${transfer.label} ${Math.round(transfer.pct * 100)}%`;
-    tone = 'text-host';
+    tone = 'text-info';
   } else if (waiting) {
     icon = Loader2;
     text = `等 ${peer?.name || '对方'} 缓冲完一起开始…`;
-    tone = 'text-host';
+    tone = 'text-info';
   } else if (fresh) {
     icon = syncNote.kind === 'warn' ? AlertTriangle : syncNote.kind === 'sync' ? RefreshCw : Activity;
     text = syncNote.text;
-    tone = syncNote.kind === 'warn' ? 'text-guest' : syncNote.kind === 'sync' ? 'text-sync' : 'text-sand-50';
+    tone = syncNote.kind === 'warn' ? 'text-warning' : syncNote.kind === 'sync' ? 'text-sync' : 'text-sand-50';
   }
   return html`<div class=${cx('flex min-w-0 items-center gap-1.5 text-xs', tone)} aria-live="polite">
     <${icon} size=${14} class=${cx('shrink-0', icon === Loader2 && 'animate-spin')} />
@@ -3261,14 +3327,14 @@ function LinkIndicator() {
   const ping = useStore((s) => s.ping);
   const drift = useStore((s) => s.drift);
   const away = useStore((s) => s.peerAway);
-  const chip = (tone, Icon, text, title, spin) => html`<span class=${cx('inline-flex max-w-full items-center gap-1 truncate rounded-full px-2 py-0.5 text-[10px] font-medium tabular', tone)} title=${title}>
+  const chip = (tone, Icon, text, title, spin) => html`<span class=${cx('inline-flex max-w-full items-center gap-1 truncate rounded-full px-2 py-0.5 text-xs font-medium tabular', tone)} title=${title}>
     <${Icon} size=${11} class=${cx('shrink-0', spin && 'animate-spin')} /> <span class="truncate">${text}</span></span>`;
-  if (!role) return chip('bg-sync/10 text-sync', User, '单人 · 本地播放', '单人模式：不经过网络，没有同步延迟');
-  if (conn === 'reconnecting') return chip('bg-host/15 text-host', RefreshCw, '重连中 · 音乐不中断', '连接中断，正在后台自动重连；本地按最后的同步点继续播放', true);
-  if (conn !== 'open') return chip('bg-white/5 text-sand-400', Loader2, role === 'host' ? '等待伙伴' : '连接中', '', conn === 'connecting');
-  if (away) return chip('bg-host/15 text-host', AlertTriangle, '对方在后台 / 无响应', '对方切到后台或网络卡顿，恢复后自动校准');
+  if (!role) return chip('bg-success-soft text-success', User, '单人 · 本地播放', '单人模式：不经过网络，没有同步延迟');
+  if (conn === 'reconnecting') return chip('bg-warning-soft text-warning', RefreshCw, '重连中 · 音乐不中断', '连接中断，正在后台自动重连；本地按最后的同步点继续播放', true);
+  if (conn !== 'open') return chip('bg-neutral-soft text-neutral', Loader2, role === 'host' ? '等待伙伴' : '连接中', '', conn === 'connecting');
+  if (away) return chip('bg-warning-soft text-warning', AlertTriangle, '对方在后台 / 无响应', '对方切到后台或网络卡顿，恢复后自动校准');
   const ms = link?.rtt ?? ping;
-  const tone = ms == null ? 'bg-white/5 text-sand-400' : ms < 80 ? 'bg-sync/10 text-sync' : ms < 200 ? 'bg-host/15 text-host' : 'bg-guest/15 text-guest';
+  const tone = ms == null ? 'bg-neutral-soft text-neutral' : ms < 80 ? 'bg-success-soft text-success' : ms < 200 ? 'bg-warning-soft text-warning' : 'bg-error-soft text-error';
   const parts = [link ? PATH_LABEL[link.kind] : 'P2P', ms != null ? `${ms}ms` : null, role === 'guest' && drift != null ? `偏差 ${drift > 0 ? '+' : ''}${drift}ms` : null].filter(Boolean);
   return chip(tone, link?.kind === 'relay' ? Server : Gauge, parts.join(' · '), `连接路径：${link ? PATH_TIP[link.kind] : '检测中'}\n往返延迟：${ms ?? '–'}ms${role === 'guest' ? `\n与房主的播放偏差：${drift ?? '–'}ms（±15ms 内视为完全同步）` : ''}`);
 }
@@ -3316,11 +3382,11 @@ function PlayerBar() {
           <div class="flex items-center gap-2 text-xs text-sand-400">
             <span class="truncate">${item ? item.artist || '未知歌手' : '从曲库选择一首开始'}</span>
             ${role
-              ? html`<span class=${cx('shrink-0 rounded px-1.5 text-[10px] font-semibold', role === 'host' ? 'bg-host/15 text-host' : 'bg-guest/15 text-guest')}>${role === 'host' ? 'Host 放歌' : '收听中'}</span>`
-              : html`<span class="shrink-0 rounded bg-sync/15 px-1.5 text-[10px] font-semibold text-sync" title="不需要房间和网络，直接播放本机曲库">单人模式</span>`}
+              ? html`<span class=${cx('shrink-0 rounded px-1.5 text-xs font-semibold', role === 'host' ? 'bg-[var(--color-role-host-bg)] text-host' : 'bg-[var(--color-role-guest-bg)] text-guest')}>${role === 'host' ? 'Host 放歌' : '收听中'}</span>`
+              : html`<span class="shrink-0 rounded bg-sync/15 px-1.5 text-xs font-semibold text-sync" title="不需要房间和网络，直接播放本机曲库">单人模式</span>`}
           </div>
           <div class="mt-1 flex min-w-0"><${LinkIndicator} /></div>
-          ${item && upNext && html`<div class="hidden truncate text-[11px] text-sand-500 md:block">${upNext === item.id ? '单曲循环中' : `下一首：${library.find((x) => x.id === upNext)?.title || ''}`}</div>`}
+          ${item && upNext && html`<div class="hidden truncate text-xs text-sand-500 md:block">${upNext === item.id ? '单曲循环中' : `下一首：${library.find((x) => x.id === upNext)?.title || ''}`}</div>`}
         </div>
         <span class="hidden sm:block"><${MiniWave} active=${playing && loaded} /></span>
       </div>
@@ -3330,7 +3396,7 @@ function PlayerBar() {
         <div class="player-transport">
           <${PlayModeButton} />
           <button class="text-sand-200 hover:text-sand-50 disabled:opacity-30" disabled=${!canSkip || idx < 0} onClick=${() => session.act('prev')} aria-label="上一首"><${SkipBack} size=${20} fill="currentColor" /></button>
-          <button class="player-primary grid h-11 w-11 place-items-center rounded-full bg-gradient-to-br from-host to-guest text-ink-950 shadow-lg shadow-host/20 transition active:scale-95 disabled:opacity-40" disabled=${!can} onClick=${() => session.act('toggle')} aria-label=${playing ? '暂停' : '播放'}>
+          <button data-role=${role} class="player-primary grid h-11 w-11 place-items-center rounded-full hh-primary shadow-lg  transition active:scale-95 disabled:opacity-40" disabled=${!can} onClick=${() => session.act('toggle')} aria-label=${playing ? '暂停' : '播放'}>
             <${playing ? Pause : Play} size=${20} fill="currentColor" class=${playing ? '' : 'translate-x-px'} />
           </button>
           <button class="text-sand-200 hover:text-sand-50 disabled:opacity-30" disabled=${!canSkip || !canNext} onClick=${() => session.act('next')} aria-label="下一首" title=${playMode === 'shuffle' ? '随机下一首' : '下一首'}><${SkipForward} size=${20} fill="currentColor" /></button>
@@ -3356,7 +3422,7 @@ function PlayerBar() {
 function DownloadQueueButton() {
   const jobs = useStore(s => s.downloads);
   const count = Object.values(jobs).filter(j => j.status !== 'done').length;
-  return html`<button type="button" class="inline-flex items-center gap-2 rounded-xl border border-ink-600 px-3 py-2 text-sm text-sand-200 hover:text-host" onClick=${() => set({ downloadQueueOpen: true })}><${Download} size=${16} />下载队列${count > 0 && html`<span class="rounded-full bg-guest px-2 text-xs text-ink-950">${count}</span>`}</button>`;
+  return html`<button type="button" class="inline-flex items-center gap-2 rounded-xl border border-ink-600 px-3 py-2 text-sm text-sand-200 hover:text-host" onClick=${() => set({ downloadQueueOpen: true })}><${Download} size=${16} />下载队列${count > 0 && html`<span class="rounded-full bg-info-soft px-2 text-xs text-info">${count}</span>`}</button>`;
 }
 function DownloadQueueSheet() {
   const open = useStore(s => s.downloadQueueOpen);
@@ -3380,7 +3446,7 @@ function DownloadQueueSheet() {
         ${!Object.keys(jobs).length && html`<p class="py-10 text-center text-sm text-sand-400">还没有下载任务</p>`}
         ${orderedDownloads(jobs).map(([id, job]) => html`<article key=${id} class="flex items-center gap-3 rounded-xl bg-ink-800 p-3">
           <${Cover} item=${job} size=${44} /><div class="min-w-0 flex-1"><p class="truncate text-sm">${job.title || '未命名歌曲'}</p><p class="truncate text-xs text-sand-400">${job.artist || '未知歌手'} · ${job.format}</p>
-          ${job.status === 'downloading' ? html`<p class="mt-1 text-xs text-host" role="status">下载中 ${Math.round((job.progress || 0) * 100)}%</p><progress class="mt-1 h-1 w-full" max="1" value=${job.progress || 0} />` : html`<p class=${cx('mt-1 break-words text-xs', job.status === 'error' ? 'text-guest' : 'text-sync')}>${job.status === 'error' ? job.error : '已加入曲库'}</p>`}</div>
+          ${job.status === 'downloading' ? html`<p class="mt-1 rounded px-2 py-1 text-xs text-info bg-info-soft" role="status">下载中 ${Math.round((job.progress || 0) * 100)}%</p><progress class="mt-1 h-1 w-full" max="1" value=${job.progress || 0} />` : html`<p class=${cx('mt-1 break-words text-xs', job.status === 'error' ? 'text-error bg-error-soft' : 'text-success bg-success-soft')}>${job.status === 'error' ? job.error : '已加入曲库'}</p>`}</div>
           ${job.status === 'error' && html`<button class="shrink-0 rounded-lg border border-host/40 px-2 py-2 text-xs text-host" onClick=${() => retry(id, job)}>重新下载</button>`}
           <button aria-label=${`移除 ${job.title}`} class="text-sand-400" onClick=${() => removeDownload(id)}><${X} size=${16} /></button>
         </article>`)}
@@ -3391,8 +3457,8 @@ function DownloadQueueSheet() {
 
 function Toasts() {
   const toasts = useStore((s) => s.toasts);
-  return html`<div class="pointer-events-none app-toasts fixed right-4 flex w-[min(340px,calc(100vw-32px))] flex-col gap-2" style=${{ zIndex: 10000, top: 'calc(var(--safe-top, env(safe-area-inset-top, 0px)) + 20px)' }} aria-live="polite" aria-atomic="true">
-    ${toasts.map((t) => html`<div key=${t.id} class=${cx('app-toast flex items-center gap-2 rounded-xl border px-4 py-2.5 text-sm shadow-2xl backdrop-blur', t.kind === 'warn' ? 'border-guest/40 bg-ink-850/95 text-guest' : 'border-ink-600 bg-ink-850/95 text-sand-50')}>${t.icon && html`<${({ order: ListOrdered, loopOne: Repeat1, loopAll: Repeat, shuffle: Shuffle })[t.icon] || Repeat} size=${18} />`}${t.text}</div>`)}
+  return html`<div class="pointer-events-none app-toasts fixed right-4 flex w-[min(340px,calc(100vw-32px))] flex-col gap-2" style=${{ zIndex: 'var(--z-toast)', top: 'calc(var(--safe-top, env(safe-area-inset-top, 0px)) + 20px)' }} aria-live="polite" aria-atomic="true">
+    ${toasts.map((t) => html`<div key=${t.id} class=${cx('app-toast flex items-center gap-2 rounded-xl border px-4 py-2.5 text-sm shadow-2xl backdrop-blur', t.kind === 'warn' ? 'border-warning bg-warning-soft text-warning' : 'border-info bg-info-soft text-info')}>${t.icon && html`<${({ order: ListOrdered, loopOne: Repeat1, loopAll: Repeat, shuffle: Shuffle })[t.icon] || Repeat} size=${18} />`}${t.text}</div>`)}
   </div>`;
 }
 
@@ -3404,7 +3470,7 @@ function CacheToggle() {
     try { localStorage.setItem('hh.cacheImports', e.target.checked ? '1' : '0'); } catch {}
   };
   return html`<label class="inline-flex cursor-pointer select-none items-center gap-2 text-xs text-sand-400 hover:text-sand-200" title=${LocalLib.isNative ? "存入 App 私有目录，下次打开自动出现" : "存入 IndexedDB，下次打开自动出现"}>
-    <input type="checkbox" checked=${on} onChange=${toggle} class="h-3.5 w-3.5 accent-[#5fd4b0]" />
+    <input type="checkbox" checked=${on} onChange=${toggle} class="h-3.5 w-3.5 accent-primary" />
     ${LocalLib.isNative ? '导入时保存到 App 离线曲库' : '导入时保存到浏览器离线曲库'}
   </label>`;
 }
@@ -3508,7 +3574,7 @@ function LocalLibraryModal() {
   return html`<div class="fixed inset-0 z-[70] flex items-end justify-center bg-ink-950/70 backdrop-blur-sm sm:items-center sm:p-6" onClick=${(e) => e.target === e.currentTarget && close()}>
     <section role="dialog" aria-modal="true" aria-label="本机曲库" class="flex max-h-[88vh] w-full max-w-2xl flex-col overflow-hidden rounded-t-3xl border border-ink-700 bg-ink-900 shadow-2xl sm:rounded-3xl">
       <header class="flex items-start gap-3 border-b border-ink-700/70 px-5 py-4">
-        <span class="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-sync/15 text-sync"><${HardDrive} size=${19} /></span>
+        <span class="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-success-soft text-success"><${HardDrive} size=${19} /></span>
         <div class="min-w-0 flex-1">
           <h2 class="font-semibold">本机曲库</h2>
           <p class="text-xs text-sand-500">${LocalLib.isNative ? '保存在 App 私有目录，离线可播放；卸载应用会删除' : '保存在这台设备的浏览器里，离线可播放，下次打开自动出现'}</p>
@@ -3523,10 +3589,10 @@ function LocalLibraryModal() {
           <span class="flex-1" />
           ${info && (info.persisted
             ? html`<span class="inline-flex items-center gap-1 text-sync"><${ShieldCheck} size=${13} /> 持久保存</span>`
-            : html`<button class="inline-flex items-center gap-1 text-guest hover:underline" onClick=${persist} title="未持久化时，浏览器可能在空间紧张时清理"><${AlertTriangle} size=${13} /> 申请持久保存</button>`)}
+            : html`<button class="inline-flex items-center gap-1 text-warning hover:underline" onClick=${persist} title="未持久化时，浏览器可能在空间紧张时清理"><${AlertTriangle} size=${13} /> 申请持久保存</button>`)}
         </div>
         ${info?.quota ? html`<div class="h-1 overflow-hidden rounded-full bg-ink-700"><div class="h-full rounded-full bg-sync" style=${{ width: `${Math.max(pct, 0.5)}%` }} /></div>` : ''}
-        ${isIOS && !isStandalone && html`<p class="rounded-lg bg-guest/10 px-3 py-2 text-guest">iPhone / iPad：Safari 会清理 7 天没打开过的网站数据。点分享按钮 →「添加到主屏幕」，从主屏幕打开就不会被清理。</p>`}
+        ${isIOS && !isStandalone && html`<p class="rounded-lg bg-warning-soft px-3 py-2 text-warning">iPhone / iPad：Safari 会清理 7 天没打开过的网站数据。点分享按钮 →「添加到主屏幕」，从主屏幕打开就不会被清理。</p>`}
       </div>
 
       <div class="flex items-center gap-2 px-5 py-2.5">
@@ -3543,7 +3609,7 @@ function LocalLibraryModal() {
       </div>
 
       <div class="scroll-thin min-h-[160px] flex-1 overflow-y-auto px-3 pb-4" role="list">
-        ${tracks?.error && html`<p class="p-6 text-center text-sm text-guest">${tracks.error}</p>`}
+        ${tracks?.error && html`<p class="p-6 text-center text-sm text-error">${tracks.error}</p>`}
         ${tracks === null && html`<p class="p-6 text-center text-sm text-sand-500"><${Loader2} size=${16} class="mr-1 inline animate-spin" /> 读取中…</p>`}
         ${Array.isArray(tracks) && !list.length && html`<div class="m-2 grid place-items-center gap-2 rounded-2xl border-2 border-dashed border-ink-700 px-6 py-12 text-center text-sm text-sand-500">
           <${HardDrive} size=${24} class="text-sync/70" />
@@ -3647,7 +3713,7 @@ function ConnSettingsModal() {
 
   const input = 'w-full min-w-0 rounded-xl border border-ink-700 bg-ink-850 px-3 py-2.5 text-sm outline-none placeholder:text-sand-500 focus:border-host';
   const card = 'space-y-3 rounded-2xl border border-white/5 bg-white/[0.03] p-4';
-  const result = (r, runningText) => r && html`<div class=${cx('rounded-xl px-3 py-2 text-xs leading-relaxed', r.running ? 'bg-white/5 text-sand-400' : r.ok ? 'bg-sync/10 text-sync' : 'bg-guest/10 text-guest')} role="status">
+  const result = (r, runningText) => r && html`<div class=${cx('rounded-xl px-3 py-2 text-xs leading-relaxed', r.running ? 'bg-neutral-soft text-neutral' : r.ok ? 'bg-success-soft text-success' : 'bg-info-soft text-info')} role="status">
     ${r.running ? html`<${Loader2} size=${13} class="mr-1 inline animate-spin" /> ${runningText}` : r.text}
   </div>`;
   const svcHost = (() => { try { return new URL(svcBase, location.href).host; } catch { return svcBase; } })();
@@ -3656,7 +3722,7 @@ function ConnSettingsModal() {
   return html`<div class="fixed inset-0 z-[70] flex items-end justify-center bg-ink-950/70 backdrop-blur-sm sm:items-center sm:p-6" onClick=${(e) => e.target === e.currentTarget && close()}>
     <section role="dialog" aria-modal="true" aria-label="连接设置" class="flex max-h-[92vh] w-full max-w-lg flex-col overflow-hidden rounded-t-3xl border border-ink-700 bg-ink-900 shadow-2xl sm:rounded-3xl">
       <header class="flex items-center gap-3 border-b border-ink-700/70 px-5 py-4">
-        <span class="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-host/15 text-host"><${Settings} size=${19} /></span>
+        <span class="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-warning-soft text-warning"><${Settings} size=${19} /></span>
         <div class="min-w-0 flex-1">
           <h2 class="font-semibold">设置</h2>
           <p class="truncate text-xs text-sand-500">昵称 · 音乐服务 · 跨网络连接</p>
@@ -3685,7 +3751,7 @@ function ConnSettingsModal() {
         <section class=${card} aria-labelledby="set-svc">
           <div class="flex items-center gap-2">
             <h3 id="set-svc" class="flex-1 text-xs font-semibold uppercase tracking-wider text-sand-500">音乐服务（搜索 / 下载）</h3>
-            <span class=${cx('shrink-0 rounded-full px-2 py-0.5 text-[11px]', hasToken ? 'bg-sync/15 text-sync' : 'bg-white/5 text-sand-400')}>${account.required ? '账号自动授权' : hasToken ? '已填令牌' : '未填令牌'}</span>
+            <span class=${cx('shrink-0 rounded-full px-2 py-0.5 text-xs', hasToken ? 'bg-success-soft text-success' : 'bg-neutral-soft text-neutral')}>${account.required ? '账号自动授权' : hasToken ? '已填令牌' : '未填令牌'}</span>
           </div>
           <div class="truncate text-xs text-sand-400" title=${svcBase}>服务器：<span class="text-sand-200">${API_BASE ? svcHost : '无（演示模式）'}</span></div>
           ${account.required ? html`<p class="text-xs text-sand-400">已使用账号授权，无需填写 API_TOKEN。</p>` : html`          <label class="block space-y-1.5">
@@ -3737,7 +3803,7 @@ function ConnSettingsModal() {
             </div>
           </label>
           <label class="flex cursor-pointer items-start gap-2 text-xs text-sand-400">
-            <input type="checkbox" class="mt-0.5 h-4 w-4 shrink-0 accent-[#f2a65a]" checked=${!!form.forceRelay} onChange=${(e) => setForm({ ...form, forceRelay: e.target.checked })} />
+            <input type="checkbox" class="mt-0.5 h-4 w-4 shrink-0 accent-primary" checked=${!!form.forceRelay} onChange=${(e) => setForm({ ...form, forceRelay: e.target.checked })} />
             <span>强制只走 TURN 中继（排查用；平时不要勾，直连更快）</span>
           </label>
           <button class="inline-flex w-full items-center justify-center gap-1.5 rounded-xl border border-ink-600 px-3 py-2.5 text-xs text-sand-200 hover:border-sync hover:text-sync disabled:opacity-40" disabled=${test?.running} onClick=${runTest}>
@@ -3749,7 +3815,7 @@ function ConnSettingsModal() {
 
       <footer class="flex gap-2 border-t border-ink-700/70 px-4 py-3 sm:px-5">
         <button class="flex-1 rounded-xl border border-ink-600 px-4 py-2.5 text-sm text-sand-200 hover:border-sand-400 sm:flex-none" onClick=${close}>取消</button>
-        <button class="flex-[2] rounded-xl bg-host px-4 py-2.5 text-sm font-semibold text-ink-950 hover:brightness-110 sm:ml-auto sm:flex-none" onClick=${save}>保存</button>
+        <button class="flex-[2] rounded-xl hh-primary px-4 py-2.5 text-sm font-semibold   sm:ml-auto sm:flex-none" onClick=${save}>保存</button>
       </footer>
     </section>
   </div>`;
@@ -3805,11 +3871,12 @@ const PLATFORMS = [
   { key: 'bilibili', label: 'Bilibili', mock: 'bilibili', live: ['bilibili'] },
   { key: 'youtube', label: 'YouTube', mock: 'youtube', live: ['ytmusic', 'youtube'] },
 ];
+// Third-party platform identities; these are not Half&Half theme colors.
 const BRAND = {
   youtube: ['#ff0033', 'YouTube'],
   ytmusic: ['#ff0033', 'YT Music'],
   bilibili: ['#fb7299', 'B站'],
-  local: ['#86745f', '本地'],
+  local: ['var(--color-status-neutral-bg)', '本地'],
 };
 
 /** 输入框里的提示：识别出是哪个平台的哪条视频（真正解析在服务端 /api/resolve） */
@@ -3943,8 +4010,8 @@ function NetBadge() {
   let tone = 'text-sand-400';
   let label = '检测网络中…';
   let Icon = Loader2;
-  if (!net.online && net.checked !== false) [tone, label, Icon] = ['text-guest', '离线', WifiOff];
-  else if (net.checked && net.webrtc === false) [tone, label, Icon] = ['text-guest', '浏览器不支持 WebRTC', AlertTriangle];
+  if (!net.online && net.checked !== false) [tone, label, Icon] = ['text-neutral', '离线', WifiOff];
+  else if (net.checked && net.webrtc === false) [tone, label, Icon] = ['text-error', '浏览器不支持 WebRTC', AlertTriangle];
   else if (net.checked) {
     if (net.srflxMs != null) [tone, label, Icon] = ['text-sync', `STUN 连通 · ${net.srflxMs}ms`, ShieldCheck];
     else if (net.relayMs != null) [tone, label, Icon] = ['text-host', '仅中继可用', Signal];
@@ -3959,7 +4026,7 @@ function NetBadge() {
       <span class="hidden sm:inline">${net.online === false ? '离线' : net.type ? `在线 · ${net.type}` : '在线'}</span>
       <span class="hidden sm:inline text-white/20">|</span>
       ${label}
-      ${net.relayMs != null && net.srflxMs != null && html`<span class="rounded bg-sync/15 px-1 text-[10px] text-sync">TURN</span>`}
+      ${net.relayMs != null && net.srflxMs != null && html`<span class="rounded bg-sync/15 px-1 text-xs text-sync">TURN</span>`}
     </button>
     ${apiMode === 'mock' && html`<span class="hh-chip inline-flex items-center glass rounded-full px-3 py-1.5 text-xs text-sand-400" title="未检测到 music-service，搜索与下载使用演示数据">演示数据</span>`}
     ${apiMode === 'remote' && html`<span class="hh-chip inline-flex items-center glass rounded-full px-3 py-1.5 text-xs text-guest" title="搜索与下载由房主电脑的 music-service 执行，结果经 P2P 传回">经房主搜索</span>`}
@@ -3972,10 +4039,9 @@ function HomeHeader() {
   const openSettings = () => set({ connSettingsOpen: true });
   return html`<header class="relative z-10 mx-auto max-w-7xl px-5 pt-5 sm:pt-10">
     <div class="flex items-center gap-3">
-      <div class="relative h-11 w-11 shrink-0 sm:h-12 sm:w-12">
-        <span class="absolute inset-0 rounded-full" style=${{ background: 'conic-gradient(#f2a65a 0 50%, #ec7a96 50% 100%)' }} />
-        <span class="absolute inset-[30%] rounded-full bg-ink-950" />
-        <${Headphones} size=${16} class="absolute inset-0 m-auto text-sand-50" />
+      <div class="relative h-11 w-11 shrink-0 sm:h-12 sm:w-12" aria-hidden="true">
+        <span class="brand-halves absolute inset-0" aria-hidden="true" />
+
       </div>
       <div class="min-w-0 flex-1">
         <h1 class="truncate text-lg font-extrabold tracking-tight sm:text-2xl">Half<span class="text-gradient">&</span>Half <span class="hidden min-[380px]:inline">Music Player</span></h1>
@@ -4010,7 +4076,7 @@ function SoloCard() {
     <div class="pointer-events-none absolute -right-10 -bottom-16 h-48 w-48 rounded-full bg-sync/15 blur-3xl" />
     <div class="relative flex items-start justify-between gap-3">
       <div>
-        <span class="inline-flex items-center gap-1 rounded-full bg-sync/15 px-2.5 py-1 text-[11px] font-semibold text-sync"><${User} size=${12} /> Solo 单人</span>
+        <span class="inline-flex items-center gap-1 rounded-full bg-sync/15 px-2.5 py-1 text-xs font-semibold text-sync"><${User} size=${12} /> Solo 单人</span>
         <h2 id="solo-title" class="mt-3 text-xl font-bold">单人沉浸听歌</h2>
         <p class="mt-1 text-sm text-sand-400">不建房间、不连任何人，直接听本机曲库，也能搜索下载</p>
       </div>
@@ -4022,7 +4088,7 @@ function SoloCard() {
     </div>
 
     <div class="relative mt-6 space-y-4">
-      <button class="group inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-sync to-[#8fe3c9] px-5 py-3.5 font-semibold text-ink-950 shadow-lg shadow-sync/20 transition hover:brightness-110 active:scale-[.98] disabled:opacity-40"
+      <button class="group inline-flex w-full items-center justify-center gap-2 rounded-2xl hh-primary px-5 py-3.5 font-semibold  shadow-lg  transition  active:scale-[.98] disabled:opacity-40"
         disabled=${role === 'guest'} onClick=${() => set({ screen: 'deck' })} title=${role === 'guest' ? '正在别人的房间里' : '进入个人曲库与搜索'}>
         <${Headphones} size=${18} /> 开始听歌 <${ArrowRight} size=${16} class="transition group-hover:translate-x-0.5" />
       </button>
@@ -4111,11 +4177,11 @@ function LibraryShelf() {
                 <${Cover} item=${x} size=${124} round="rounded-xl" />
                 <span class="absolute inset-0 grid place-items-center rounded-xl bg-black/40 opacity-0 transition group-hover:opacity-100"><${cur && playing ? Pause : Play} size=${22} fill="currentColor" /></span>
                 ${cached(x)
-                  ? html`<span class="absolute left-1.5 top-1.5 inline-flex items-center gap-0.5 rounded-md bg-ink-950/80 px-1.5 py-0.5 text-[10px] font-semibold text-sync" title="已缓存在这台设备上，离线可播"><${HardDrive} size=${10} /> 已缓存</span>`
-                  : html`<span class="absolute left-1.5 top-1.5 rounded-md bg-ink-950/80 px-1.5 py-0.5 text-[10px] text-sand-400" title=${isGuest ? '在房主那里，可在歌单里"保存到本机"' : '只在本次打开期间有效'}>${isGuest ? '房主的' : '未缓存'}</span>`}
-                ${cur && html`<span class=${cx('eq absolute bottom-1.5 right-1.5 inline-flex h-3 items-end', !playing && 'eq-paused')}><i /><i /><i /></span>`}
+                  ? html`<span class="absolute left-1.5 top-1.5 inline-flex items-center gap-0.5 rounded-md bg-ink-950/80 px-1.5 py-0.5 text-xs font-semibold text-sync" title="已缓存在这台设备上，离线可播"><${HardDrive} size=${10} /> 已缓存</span>`
+                  : html`<span class="absolute left-1.5 top-1.5 rounded-md bg-ink-950/80 px-1.5 py-0.5 text-xs text-sand-400" title=${isGuest ? '在房主那里，可在歌单里"保存到本机"' : '只在本次打开期间有效'}>${isGuest ? '房主的' : '未缓存'}</span>`}
+                ${cur && html`<span class=${cx('eq absolute bottom-1.5 right-1.5 inline-flex h-3 items-end', !playing && 'eq-paused')} aria-hidden="true"><i /><i /><i /></span>`}
               </div>
-              <div class=${cx('mt-2 truncate text-sm font-medium', cur && 'text-host')}>${x.title}</div>
+              <div class=${cx('mt-2 truncate text-sm font-medium', cur && 'text-guest')}>${x.title}</div>
               <div class="flex items-center gap-1.5 truncate text-xs text-sand-500"><span class="truncate">${x.artist || x.sourceLabel}</span><span class="tabular shrink-0">${fmtSize(x.size)}</span></div>
             </button>`;
           })}
@@ -4137,7 +4203,7 @@ function LinkCard({ r, onSelectTrack }) {
     <div class="flex flex-col gap-5 p-5 sm:flex-row">
       <div class="relative shrink-0 self-center sm:self-start">
         <${Cover} item=${r} size=${148} round="rounded-2xl" />
-        <button class="absolute bottom-2 right-2 grid h-10 w-10 place-items-center rounded-full bg-ink-950/80 text-sand-50 backdrop-blur hover:bg-host hover:text-ink-950" onClick=${() => startPreview(r)} aria-label=${previewing ? '停止试听' : '试听'}>
+        <button class="absolute bottom-2 right-2 grid h-10 w-10 place-items-center rounded-full bg-ink-950/80 text-sand-50 backdrop-blur hover:bg-primary hover:text-primary-fg" onClick=${() => startPreview(r)} aria-label=${previewing ? '停止试听' : '试听'}>
           <${previewing ? Square : Play} size=${16} fill="currentColor" />
         </button>
       </div>
@@ -4157,7 +4223,7 @@ function LinkCard({ r, onSelectTrack }) {
               const on = String(x.id) === String(q?.id);
               return html`<button key=${x.id} role="radio" aria-checked=${on} onClick=${() => setQid(x.id)}
                 class=${cx('rounded-xl border px-3 py-2 text-left text-xs transition', on ? 'border-host bg-host/15 text-sand-50' : 'border-white/10 text-sand-300 hover:border-white/30')}>
-                <div class="flex items-center gap-1.5 font-semibold">${x.label}${x.lossless ? html`<span class="rounded bg-host/20 px-1 text-[10px] text-host">无损</span>` : ''}${x.vip ? html`<span class="rounded bg-guest/20 px-1 text-[10px] text-guest">大会员</span>` : ''}</div>
+                <div class="flex items-center gap-1.5 font-semibold">${x.label}${x.lossless ? html`<span class="rounded bg-host/20 px-1 text-xs text-host">无损</span>` : ''}${x.vip ? html`<span class="rounded bg-guest/20 px-1 text-xs text-guest">大会员</span>` : ''}</div>
                 <div class="mt-0.5 tabular text-sand-500">${x.bitrate ? `${x.bitrate}kbps · ` : ''}${x.size ? `≈${fmtSize(x.size)}` : ''}</div>
               </button>`;
             })}
@@ -4169,7 +4235,7 @@ function LinkCard({ r, onSelectTrack }) {
             ? html`<div class="w-56"><div class="h-2 overflow-hidden rounded-full bg-white/10"><i class="block h-full bg-gradient-to-r from-host to-guest transition-all" style=${{ width: `${pct}%` }} /></div><span class="text-xs text-sand-400 tabular">下载中 ${pct}%</span></div>`
             : dl?.status === 'done'
               ? html`<span class="inline-flex items-center gap-1.5 rounded-xl bg-sync/15 px-4 py-2.5 text-sm font-medium text-sync"><${Check} size=${16} /> 已加入歌单并缓存到本机</span>`
-              : html`<button class="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-host to-guest px-5 py-2.5 text-sm font-semibold text-ink-950 shadow-lg shadow-host/20 hover:brightness-110" onClick=${choose}>
+              : html`<button data-role=${get().role} class="inline-flex items-center gap-2 rounded-xl hh-primary px-5 py-2.5 text-sm font-semibold shadow-lg" onClick=${choose}>
                   ${dl?.status === 'error' ? html`<${RefreshCw} size=${16} /> 重试` : html`<${Download} size=${16} /> 提取音频并加入歌单`}
                 </button>`}
           ${q?.size ? html`<span class="text-xs text-sand-500">${q.label} · ≈${fmtSize(q.size)}</span>` : ''}
@@ -4181,8 +4247,8 @@ function LinkCard({ r, onSelectTrack }) {
 
 /** 6 位分段输入：自动跳格、退格回退、方向键、粘贴一键填充、输满自动提交 */
 function PlatformBadge({ source, label }) {
-  const [color, text] = BRAND[source] || ['#3e352d', label || source];
-  return html`<span class="inline-flex shrink-0 items-center rounded-md px-1.5 py-px text-[10px] font-bold text-white" style=${{ background: color }}>${text}</span>`;
+  const [color, text] = BRAND[source] || ['var(--color-status-neutral-bg)', label || source];
+  return html`<span class="inline-flex shrink-0 items-center rounded-md px-1.5 py-px text-xs font-bold" style=${{ background: color, color: source === 'youtube' || source === 'ytmusic' ? 'var(--p-neutral-0)' : source === 'bilibili' ? 'var(--p-neutral-950)' : 'var(--color-status-neutral-fg)' }}>${text}</span>`;
 }
 
 /** 试听：演示模式合成一段音频；真实模式嵌入 YouTube / B 站官方播放器（不下载文件） */
@@ -4246,7 +4312,7 @@ function PreviewDock() {
     ${p.kind === 'embed'
       ? html`<iframe src=${p.src} class="aspect-video w-full" allow="autoplay; encrypted-media" referrerpolicy="no-referrer-when-downgrade" title="试听播放器" />`
       : html`<div class="flex h-10 items-end gap-[3px] px-3 pb-3">
-          ${p.loading ? html`<span class="text-xs text-sand-500">${p.kind === 'stream' ? '正在加载试听…' : '生成试听片段…'}</span>` : Array.from({ length: 40 }, (_, i) => html`<i key=${i} class="eq block w-1 rounded-sm bg-gradient-to-t from-host to-guest" style=${{ animationDelay: `${-i * 0.07}s`, height: '100%' }} />`)}
+          ${p.loading ? html`<span class="text-xs text-sand-500">${p.kind === 'stream' ? '正在加载试听…' : '生成试听片段…'}</span>` : Array.from({ length: 40 }, (_, i) => html`<i key=${i} class="hh-preview-eq block w-1 rounded-sm" aria-hidden="true" style=${{ animationDelay: `${-i * 0.07}s`, height: '100%' }} />`)}
         </div>`}
   </div>`;
 }
@@ -4272,19 +4338,19 @@ function ResultCard({ r, i, onSelectTrack }) {
       <div class="result-metadata mt-1.5 flex items-center gap-1.5">
         <${PlatformBadge} source=${r.source} label=${r.sourceLabel} />
         <${QualityBadge} q=${r.quality} />
-        ${r.duration ? html`<span class="inline-flex items-center gap-0.5 text-[10px] text-sand-500 tabular"><${ClockIcon} size=${10} /> ${fmtTime(r.duration)}</span>` : ''}
-        ${r.size ? html`<span class="text-[10px] text-sand-500 tabular" title=${r.fromLink ? '按实际音轨码率计算' : '按码率与时长估算'}>≈${fmtSize(r.size)}</span>` : ''}
+        ${r.duration ? html`<span class="inline-flex items-center gap-0.5 text-xs text-sand-500 tabular"><${ClockIcon} size=${10} /> ${fmtTime(r.duration)}</span>` : ''}
+        ${r.size ? html`<span class="text-xs text-sand-500 tabular" title=${r.fromLink ? '按实际音轨码率计算' : '按码率与时长估算'}>≈${fmtSize(r.size)}</span>` : ''}
       </div>
     </div>
     <div class="flex shrink-0 flex-col items-end gap-1.5">
       ${dl?.status === 'downloading'
         ? html`<div class="w-24 text-right">
             <div class="h-1.5 overflow-hidden rounded-full bg-white/10"><i class="block h-full bg-gradient-to-r from-host to-guest transition-all" style=${{ width: `${pct}%` }} /></div>
-            <span class="text-[10px] text-sand-400 tabular">下载中 ${pct}%</span>
+            <span class="text-xs text-sand-400 tabular">下载中 ${pct}%</span>
           </div>`
         : dl?.status === 'done'
           ? html`<span class="inline-flex items-center gap-1 rounded-xl bg-sync/15 px-3 py-2 text-xs font-medium text-sync"><${Check} size=${14} /> 已加入歌单</span>`
-          : html`<button class="inline-flex items-center gap-1.5 rounded-xl bg-white/10 px-3 py-2 text-xs font-medium transition hover:bg-host hover:text-ink-950"
+          : html`<button class="inline-flex items-center gap-1.5 rounded-xl bg-white/10 px-3 py-2 text-xs font-medium transition hover:bg-primary hover:text-primary-fg"
               onClick=${() => onSelectTrack(r)} title=${role === 'guest' ? '下载后分享给房主' : '下载并加入同听歌单'}>
               ${dl?.status === 'error' ? html`<${RefreshCw} size=${14} /> 重试` : html`<${Download} size=${14} /> <span class="hidden sm:inline">下载并</span>加入歌单`}
             </button>`}
@@ -4338,7 +4404,7 @@ function SearchDiscovery({ onSearch, onSelectTrack }) {
         placeholder="歌名、歌手或音源链接"
         class="min-w-0 flex-1 bg-transparent py-3 text-base outline-none placeholder:text-sand-500" />
       ${keyword && html`<button type="button" class="grid h-8 w-8 place-items-center rounded-full text-sand-500 hover:bg-white/10 hover:text-sand-50" onClick=${() => setKeyword('')} aria-label="清空"><${X} size=${15} /></button>`}
-      <button class="inline-flex items-center gap-1.5 rounded-xl bg-sand-50 px-5 py-3 text-sm font-semibold text-ink-950 transition hover:bg-white disabled:opacity-50" disabled=${searching || !keyword.trim()}>
+      <button class="inline-flex items-center gap-1.5 rounded-xl hh-primary px-5 py-3 text-sm font-semibold transition disabled:opacity-50" disabled=${searching || !keyword.trim()}>
         ${searching ? html`<${Loader2} size=${16} class="animate-spin" />` : isLink ? html`<${Link} size=${16} />` : html`<${Search} size=${16} />`}
         <span class="hidden sm:inline">${isLink ? '解析链接' : '搜索'}</span>
       </button>
@@ -4401,7 +4467,7 @@ function HomeView() {
     <div class="pointer-events-none fixed inset-0 overflow-hidden" aria-hidden="true">
       <span class="blob left-[-10%] top-[-10%] h-[45vw] w-[45vw] bg-host/30" />
       <span class="blob right-[-15%] top-[10%] h-[40vw] w-[40vw] bg-guest/25" style=${{ animationDelay: '-7s' }} />
-      <span class="blob bottom-[-20%] left-[20%] h-[40vw] w-[40vw] bg-[#6d4cff]/15" style=${{ animationDelay: '-13s' }} />
+      <span class="blob bottom-[-20%] left-[20%] h-[40vw] w-[40vw] bg-guest/5" style=${{ animationDelay: '-13s' }} />
     </div>
     <${HomeHeader} />
     <main class="relative z-10 mx-auto mt-8 grid max-w-7xl gap-5 px-5 md:grid-cols-2 xl:grid-cols-3" aria-label="选择听歌方式">
@@ -4493,7 +4559,7 @@ function UpdateGate() {
   return html`<div class="fixed inset-0 z-[200] grid place-items-center bg-black/85 p-4 backdrop-blur-md" role="alertdialog" aria-modal="true" aria-labelledby="upd-title" aria-describedby="upd-body" onContextMenu=${(e) => e.preventDefault()}>
     <section class="w-full max-w-md overflow-hidden rounded-3xl border border-ink-700 bg-ink-900 shadow-2xl">
       <header class="px-6 pt-7 text-center">
-        <span class="mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-host/15 text-host"><${Sparkles} size=${26} /></span>
+        <span class="mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-warning-soft text-warning"><${Sparkles} size=${26} /></span>
         <h2 id="upd-title" class="mt-4 text-lg font-semibold">发现新版本</h2>
         <p class="mt-1 text-xs text-sand-500">新版本已准备好，可稍后更新</p>
         <div class="mt-4 flex items-center justify-center gap-3 text-sm">
@@ -4509,19 +4575,19 @@ function UpdateGate() {
           <div class="scroll-thin max-h-48 overflow-y-auto whitespace-pre-wrap break-words rounded-2xl bg-black/25 px-3.5 py-3 text-sm leading-relaxed text-sand-200">${u.update.notes || '本次更新没有填写更新日志。'}</div>
         </div>
         ${(u.busy || u.phase === 'installed') && html`<div aria-live="polite">
-          <div class="h-1.5 overflow-hidden rounded-full bg-white/10"><div class="h-full rounded-full bg-host transition-[width] duration-200" style=${{ width: `${u.phase === 'downloading' ? pct : 100}%` }} /></div>
+          <div class="h-1.5 overflow-hidden rounded-full bg-white/10"><div class="h-full rounded-full hh-primary transition-[width] duration-200" style=${{ width: `${u.phase === 'downloading' ? pct : 100}%` }} /></div>
           <div class="mt-1.5 flex justify-between text-xs text-sand-500">
             <span>${u.phase === 'installed' ? '安装界面已打开' : u.source ? `来自 ${u.source}` : ''}</span>
             <span>${u.phase === 'downloading' && u.total ? `${mb(u.received)} / ${mb(u.total)} MB` : ''}</span>
           </div>
         </div>`}
         ${u.phase === 'installed' && html`<p class="rounded-xl bg-white/5 px-3 py-2 text-xs text-sand-400">按系统提示安装。如果没有出现安装界面，请在弹出的设置里允许「Half&Half」安装未知应用，然后点下面的按钮。</p>`}
-        ${u.error && html`<p role="alert" class="flex gap-2 rounded-xl bg-guest/10 px-3 py-2 text-xs text-guest"><${AlertTriangle} size=${14} class="mt-0.5 shrink-0" />${u.error}</p>`}
+        ${u.error && html`<p role="alert" class="flex gap-2 rounded-xl bg-error-soft px-3 py-2 text-xs text-error"><${AlertTriangle} size=${14} class="mt-0.5 shrink-0" />${u.error}</p>`}
       </div>
 
       <footer class="px-6 pb-6">
         <button type="button" class="mb-3 w-full text-sm text-sand-400" onClick=${u.dismiss}>稍后更新</button>
-        <button ref=${btn} type="button" class="flex w-full items-center justify-center gap-2 rounded-2xl bg-host px-4 py-3 font-semibold text-ink-950 hover:brightness-110 disabled:opacity-70" disabled=${u.busy} onClick=${u.start}>
+        <button ref=${btn} type="button" class="flex w-full items-center justify-center gap-2 rounded-2xl hh-primary px-4 py-3 font-semibold   disabled:opacity-70" disabled=${u.busy} onClick=${u.start}>
           ${u.busy ? html`<${Loader2} size=${17} class="animate-spin" />` : html`<${Download} size=${17} />`}${label}
         </button>
         ${(u.phase === 'error' || u.phase === 'installed') && html`<button type="button" class="mt-3 flex w-full items-center justify-center gap-1.5 text-xs text-sand-500 hover:text-sand-200" onClick=${u.openBrowser}><${ExternalLink} size=${12} />改用浏览器下载</button>`}
@@ -4561,7 +4627,7 @@ function CoListenDrawer() {
   const close = () => set({ coListenOpen: false });
   useBackLayer(s.coListenOpen, close);
   if (!s.coListenOpen) return null;
-  return html`<div class="fixed inset-0 z-[85] flex items-end bg-black/60" onClick=${e => e.target === e.currentTarget && close()}><section role="dialog" aria-modal="true" aria-label="同听控制台" class="w-full space-y-5 rounded-t-3xl border border-ink-700 bg-ink-900 p-6" style=${{ paddingBottom: 'calc(24px + var(--safe-bottom, 0px))' }}><header class="flex justify-between"><h2>当前同听中</h2><button onClick=${close} aria-label="关闭"><${X} size=${20} /></button></header><p>${s.peer?.name || session.invitation?.nickname || '好友'}</p><p class="text-sm text-sand-400">${s.conn === 'open' ? '已连接' : s.conn === 'reconnecting' ? '正在重连' : '连接已断开'} · Ping ${s.ping ?? '–'} ms</p>${s.role === 'host' ? html`<button class="rounded-xl bg-host px-4 py-3 text-ink-950" onClick=${() => set({ queueSheetOpen: true })}>更换同听歌单</button>` : html`<p class="text-sm text-sand-400">由好友控制播放和歌单</p>`}</section></div>`;
+  return html`<div class="fixed inset-0 z-[85] flex items-end bg-black/60" onClick=${e => e.target === e.currentTarget && close()}><section role="dialog" aria-modal="true" aria-label="同听控制台" class="w-full space-y-5 rounded-t-3xl border border-ink-700 bg-ink-900 p-6" style=${{ paddingBottom: 'calc(24px + var(--safe-bottom, 0px))' }}><header class="flex justify-between"><h2>当前同听中</h2><button onClick=${close} aria-label="关闭"><${X} size=${20} /></button></header><p>${s.peer?.name || session.invitation?.nickname || '好友'}</p><p class="text-sm text-sand-400">${s.conn === 'open' ? '已连接' : s.conn === 'reconnecting' ? '正在重连' : '连接已断开'} · Ping ${s.ping ?? '–'} ms</p>${s.role === 'host' ? html`<button class="rounded-xl hh-primary px-4 py-3 " onClick=${() => set({ queueSheetOpen: true })}>更换同听歌单</button>` : html`<p class="text-sm text-sand-400">由好友控制播放和歌单</p>`}</section></div>`;
 }
 function QueueSheet() {
   const s = useStore(s => s), close = () => set({ queueSheetOpen: false });
@@ -4600,26 +4666,26 @@ function QueueSheet() {
             <h3 class="queue-sheet-text font-semibold">${playlist.name}</h3>
             <p class="mt-1 text-xs text-sand-400">${items.length + pending.length} 首${pending.length ? ` · ${pending.length} 首未下载` : ''}</p>
             <div class="mt-3 grid grid-cols-2 gap-2">
-              <button disabled=${loading || !items.length} onClick=${() => play({ mode: 'shuffle' })} class="flex items-center justify-center gap-2 rounded-xl bg-host px-2 py-3 text-sm text-ink-950 disabled:opacity-40"><${Shuffle} size=${16} />随机播放</button>
+              <button disabled=${loading || !items.length} onClick=${() => play({ mode: 'shuffle' })} class="flex items-center justify-center gap-2 rounded-xl hh-primary px-2 py-3 text-sm  disabled:opacity-40"><${Shuffle} size=${16} />随机播放</button>
               <button disabled=${loading || !items.length} onClick=${() => play({ mode: 'order', startItemId: items[0]?.id })} class="flex items-center justify-center gap-2 rounded-xl border border-ink-700 px-2 py-3 text-sm disabled:opacity-40"><${ListOrdered} size=${16} />顺序播放</button>
             </div>
           </div>
           <div class="scroll-thin min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 py-2" aria-busy=${loading}>
             ${loading && html`<p class="p-3 text-sm text-sand-400">正在读取歌单…</p>`}
-            ${error && html`<p role="alert" class="queue-sheet-text p-3 text-sm text-guest">${error}</p>`}
+            ${error && html`<p role="alert" class="queue-sheet-text p-3 text-sm text-error">${error}</p>`}
             ${!loading && !items.length && !pending.length && html`<p class="p-3 text-sm text-sand-400">歌单里还没有歌</p>`}
-            ${items.map(t => html`<button key=${t.id} aria-current=${s.currentId === t.id ? 'true' : undefined} disabled=${loading} onClick=${() => play({ startItemId: t.id })} class=${cx('queue-sheet-row flex w-full items-center gap-3 rounded-xl p-3 text-left', s.currentId === t.id ? 'bg-host/10 text-host' : 'hover:bg-ink-800')}>
+            ${items.map(t => html`<button key=${t.id} aria-current=${s.currentId === t.id ? 'true' : undefined} disabled=${loading} onClick=${() => play({ startItemId: t.id })} class=${cx('queue-sheet-row hh-playlist-row flex w-full items-center gap-3 rounded-xl p-3 text-left', s.currentId === t.id ? 'hh-selected text-guest' : 'hover:bg-ink-800')}>
               <${Cover} item=${t} size=${40} /><span class="min-w-0 flex-1"><span class="queue-sheet-text block text-sm font-medium">${t.title}</span><span class="queue-sheet-text mt-1 block text-xs text-sand-400">${t.artist || '未知歌手'}${trackCompletedCount(t) > 0 && html`<span class="ml-1 text-host/80">· 已听 ${trackCompletedCount(t)} 次</span>`}</span></span>
               ${s.currentId === t.id && html`<${Music2} size=${16} class="shrink-0" />`}
             </button>`)}
             ${pending.map(t => {
               const job = s.pendingJobs[t.id];
-              return html`<button key=${t.id} disabled=${job?.state === 'loading'} onClick=${() => downloadPending(playlist.id, [t.id]).catch(e => toast(e.message, 'warn'))} class="queue-sheet-row flex w-full items-center gap-3 rounded-xl p-3 text-left opacity-60 hover:bg-ink-800">
+              return html`<button key=${t.id} disabled=${job?.state === 'loading'} onClick=${() => downloadPending(playlist.id, [t.id]).catch(e => toast(e.message, 'warn'))} class="queue-sheet-row hh-playlist-row flex w-full items-center gap-3 rounded-xl p-3 text-left opacity-60 hover:bg-ink-800">
                 <${Cover} item=${t} size=${40} /><span class="min-w-0 flex-1"><span class="queue-sheet-text block text-sm font-medium">${t.title || '未命名'}</span><span class="queue-sheet-text mt-1 block text-xs text-sand-400">${t.artist || '未知歌手'}${trackCompletedCount(t) > 0 && html`<span class="ml-1">· 已听 ${trackCompletedCount(t)} 次</span>`}</span><span class="queue-sheet-text mt-1 block text-xs text-sand-400">${job?.state === 'loading' ? '正在下载…' : job?.state === 'error' ? `${job.message} · 点击重试下载` : '未下载到这台设备 · 点击下载'}</span></span><${CloudDownload} size=${16} class="shrink-0" />
               </button>`;
             })}
           </div>` : html`<div class="scroll-thin min-h-0 flex-1 space-y-2 overflow-y-auto overscroll-contain px-4 pb-3">
-            ${choices.map(p => html`<button key=${p.id} class="queue-sheet-row flex w-full items-center gap-3 rounded-xl border border-ink-700 p-3 text-left" onClick=${() => select(p.id)}>
+            ${choices.map(p => html`<button key=${p.id} class="queue-sheet-row hh-playlist-row flex w-full items-center gap-3 rounded-xl border border-ink-700 p-3 text-left" onClick=${() => select(p.id)}>
               ${p.coverUrl || p.pending?.[0]?.cover ? html`<${Cover} item=${{ title: p.name, cover: p.coverUrl || p.pending[0].cover }} size=${40} />` : html`<${PlaylistCover} playlist=${p} size=${40} />`}<span class="min-w-0 flex-1"><span class="queue-sheet-text block text-sm">${p.name}</span><span class="mt-1 block text-xs text-sand-400">${p.trackIds.length + (p.pending?.length || 0)} 首</span></span><${ChevronRight} size=${16} class="shrink-0" />
             </button>`)}
           </div>`}
@@ -4652,17 +4718,17 @@ function NativePlayer({ open, close, expand }) {
         <button class="p-3 disabled:opacity-30" disabled=${!can || !s.canNext} onClick=${() => session.act('next')} aria-label="下一首"><${SkipForward} size=${23} /></button>
       </div>
     </div>
-    ${open && html`<section role="dialog" aria-modal="true" aria-label="正在播放" class="fullscreen-player fixed inset-0 z-[65] flex flex-col overflow-y-auto bg-ink-950 p-6" style=${{ paddingTop: 'calc(var(--safe-top, 0px) + 20px)', paddingBottom: 'calc(var(--safe-bottom, 0px) + 24px)', transform: `translateY(${dy}px)`, transition: start.current === null ? 'transform 220ms ease' : 'none' }}
+    ${open && html`<section role="dialog" aria-modal="true" aria-label="正在播放" class="fullscreen-player fixed inset-0 z-[65] flex flex-col overflow-y-auto bg-ink-950 p-6" style=${{ paddingTop: 'calc(var(--safe-top, 0px) + 20px)', paddingBottom: 'calc(var(--safe-bottom, 0px) + 24px)', transform: typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'none' : `translateY(${dy}px)`, transition: start.current === null ? 'transform var(--motion-duration-normal) var(--motion-ease-standard)' : 'none' }}
       onTouchStart=${e => { if (e.target.closest('button,input') || e.currentTarget.scrollTop > 0) return; start.current = e.touches[0].clientY; }}
       onTouchMove=${e => { if (start.current !== null) setDy(Math.max(0, e.touches[0].clientY - start.current)); }}
-      onTouchEnd=${() => { start.current = null; if (dy > 100) { setDy(window.innerHeight); setTimeout(() => { close(); setDy(0); }, 220); } else setDy(0); }} onTouchCancel=${() => { start.current = null; setDy(0); }}>
+      onTouchEnd=${() => { start.current = null; if (dy > 100 && window.matchMedia('(prefers-reduced-motion: reduce)').matches) { close(); setDy(0); } else if (dy > 100) { setDy(window.innerHeight); setTimeout(() => { close(); setDy(0); }, 220); } else setDy(0); }} onTouchCancel=${() => { start.current = null; setDy(0); }}>
       <${CoListenPill} />
       <button class="mx-auto p-3 text-sand-400" onClick=${close} aria-label="收起播放器"><${ChevronDown} size=${28} /></button>
       <div class="mx-auto flex w-full max-w-md flex-1 flex-col items-center justify-center gap-7">
-        <div class=${cx('vinyl grid h-64 w-64 shrink-0 place-items-center rounded-full animate-spin-slow shadow-2xl', !s.playing && 'paused-anim')}><${Cover} item=${item} size=${170} round="rounded-full" /></div>
+        <div class=${cx('vinyl grid h-64 w-64 shrink-0 place-items-center rounded-full animate-spin-slow shadow-2xl', !(s.playing && s.loaded) && 'paused-anim')}><${Cover} item=${item} size=${170} round="rounded-full" /></div>
         <div class="w-full text-center"><h2 class="text-xl font-bold">${item?.title || '未在播放'}</h2><p class="mt-2 text-sand-400">${item?.artist || '选择喜欢的音乐'}</p>${receiving && html`<p role="status" class="mt-2 text-sm text-sand-400">正在从好友获取音频…</p>`}<p class="mt-2 text-xs text-sand-400">已完整聆听 ${trackCompletedCount(item)} 次</p></div>
         <${SeekBar} />
-        <div class="flex w-full items-center justify-around"><${PlayModeButton} /><button disabled=${!can} onClick=${() => session.act('prev')} aria-label="上一首"><${SkipBack} size=${28} /></button><button class="rounded-full bg-host p-5 text-ink-950 disabled:opacity-30" disabled=${!can} onClick=${() => session.act('toggle')} aria-label=${s.playing ? '暂停' : '播放'}><${s.playing ? Pause : Play} size=${30} /></button><button disabled=${!can || !s.canNext} onClick=${() => session.act('next')} aria-label="下一首"><${SkipForward} size=${28} /></button><button disabled=${s.role === 'guest'} onClick=${() => set({ queueSheetOpen: true })} aria-label="切换歌单" title="切换歌单"><${ListMusic} size=${24} /></button></div>
+        <div class="hh-player-transport w-full"><${PlayModeButton} /><button disabled=${!can} onClick=${() => session.act('prev')} aria-label="上一首"><${SkipBack} size=${28} /></button><button data-role=${s.role} class="player-primary rounded-full hh-primary disabled:opacity-30" disabled=${!can} onClick=${() => session.act('toggle')} aria-label=${s.playing ? '暂停' : '播放'}><${s.playing ? Pause : Play} size=${30} /></button><button disabled=${!can || !s.canNext} onClick=${() => session.act('next')} aria-label="下一首"><${SkipForward} size=${28} /></button><button disabled=${s.role === 'guest'} onClick=${() => set({ queueSheetOpen: true })} aria-label="切换歌单" title="切换歌单"><${ListMusic} size=${24} /></button></div>
         <div class="flex w-full items-center gap-3 text-sand-400"><${s.volume ? Volume2 : VolumeX} size=${20} /><input type="range" class="hh flex-1" min="0" max="1" step="0.01" value=${s.volume} style=${{ '--fill': `${s.volume * 100}%` }} aria-label="音量" onInput=${e => session.setVolume(Number(e.target.value))} /></div>
         <${SyncStatus} />
       </div>

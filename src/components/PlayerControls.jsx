@@ -75,7 +75,7 @@ function VolumeControl() {
         step={0.01}
         value={volume}
         style={{ '--fill': `${volume * 100}%` }}
-        aria-label="音量"
+        aria-label="本机音量"
         onChange={(e) => engine.setVolume(Number(e.target.value))}
       />
     </div>
@@ -110,14 +110,15 @@ export function PlayerControls() {
         <button className="icon-btn" aria-label="上一曲" title="上一曲（播放超过 3 秒时回到开头）" disabled={!canSkip || index < 0} onClick={() => engine.act('prev')}>
           <Icon name="prev" size={22} />
         </button>
-        <button className="play-btn" aria-label={playing ? '暂停' : '播放'} disabled={!canControl} onClick={() => engine.act('toggle')}>
+        <button className={`play-btn${role === 'guest' ? ' guest' : ''}`}  aria-label={playing ? '暂停' : '播放'} disabled={!canControl} onClick={() => engine.act('toggle')}>
           <Icon name={playing ? 'pause' : 'play'} size={26} />
         </button>
         <button className="icon-btn" aria-label="下一曲" disabled={!canSkip || !playlist.length || (playMode !== 'shuffle' && index >= playlist.length - 1)} onClick={() => engine.act('next')}>
           <Icon name="next" size={22} />
         </button>
-        <VolumeControl />
+        <span aria-hidden="true" />
       </div>
+      <VolumeControl />
       <div className="waiting-hint" aria-live="polite">
         {waitingPeer ? `等 ${peer?.name || '对方'} 缓冲完就一起开始…` : role === 'guest' && !channelOpen ? '正在连接房主…' : ''}
       </div>

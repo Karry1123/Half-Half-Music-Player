@@ -5,7 +5,7 @@ import { createPlaylistZip, saveZip } from './playlistZip.js';
 import { pushBackLayer } from './mobileRuntime.js';
 const html = htm.bind(React.createElement);
 const cx = (...c) => c.filter(Boolean).join(' ');
-const primary = 'inline-flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-sync to-[#8fe3c9] px-4 py-3 text-sm font-semibold text-ink-950 shadow-lg shadow-sync/20 transition hover:brightness-110 active:scale-[.98] disabled:opacity-40';
+const primary = 'inline-flex w-full items-center justify-center gap-2 rounded-xl hh-primary px-4 py-3 text-sm font-semibold shadow-lg transition active:scale-[.98] disabled:opacity-40';
 const ghost = 'inline-flex items-center justify-center gap-1.5 rounded-xl border border-ink-600 px-3 py-2 text-xs font-medium text-sand-200 hover:border-sand-400 hover:text-sand-50 disabled:opacity-40';
 const field = 'w-full rounded-xl border border-ink-700 bg-ink-850 px-4 py-3 text-sm text-sand-50 outline-none placeholder:text-sand-500 focus:border-sync';
 const mb = (n) => `${(n / 1048576).toFixed(n >= 104857600 ? 0 : 1)} MB`;
@@ -18,14 +18,14 @@ function useBack(open, close) {
 
 function Logo({ size = 64 }) {
   return html`<div class="relative shrink-0" style=${{ width: size, height: size }}>
-    <span class="absolute inset-0 rounded-full" style=${{ background: 'conic-gradient(#f2a65a 0 50%, #ec7a96 50% 100%)' }} />
+    <span class="absolute inset-0 rounded-full" style=${{ background: 'linear-gradient(90deg, var(--color-brand-host) 50%, var(--color-brand-guest) 50%)' }} />
     <span class="absolute inset-[30%] rounded-full bg-ink-950" />
     <${Headphones} size=${Math.round(size * 0.36)} class="absolute inset-0 m-auto text-sand-50" />
   </div>`;
 }
 
 function Alert({ children, tone = 'warn' }) {
-  return html`<p role="alert" class=${cx('flex items-start gap-2 rounded-xl border px-3 py-2 text-xs leading-relaxed', tone === 'warn' ? 'border-guest/30 bg-guest/10 text-guest' : 'border-sync/30 bg-sync/10 text-sync')}>
+  return html`<p role="alert" class=${cx('flex items-start gap-2 rounded-xl border px-3 py-2 text-xs leading-relaxed', tone === 'warn' ? 'border-warning bg-warning-soft text-warning' : 'border-sync/30 bg-sync/10 text-sync')}>
     <${tone === 'warn' ? AlertTriangle : Check} size=${14} class="mt-0.5 shrink-0" /><span class="min-w-0 whitespace-pre-wrap break-words">${children}</span>
   </p>`;
 }
@@ -106,7 +106,7 @@ export function CloudSheet({ open, onClose, client, status, playlists, onSync, o
       </header>
       <div class="scroll-thin flex-1 space-y-3 overflow-y-auto p-4">
         <div class="flex items-center gap-3 rounded-2xl border border-ink-700 bg-ink-850/60 px-4 py-3">
-          <span class=${cx('grid h-8 w-8 shrink-0 place-items-center rounded-full', status?.state === 'error' ? 'bg-guest/15 text-guest' : 'bg-sync/15 text-sync')}>
+          <span class=${cx('grid h-8 w-8 shrink-0 place-items-center rounded-full', status?.state === 'error' ? 'bg-error-soft text-error' : 'bg-sync/15 text-sync')}>
             ${syncing ? html`<${Loader2} size=${15} class="animate-spin" />` : status?.state === 'error' ? html`<${AlertTriangle} size=${15} />` : html`<${Check} size=${15} />`}
           </span>
           <span class="min-w-0 flex-1 text-sm">
@@ -176,7 +176,7 @@ export function ZipExport({ storage, name, trackIds, variant = 'chip' }) {
       <div class="scroll-thin flex-1 overflow-y-auto p-2">
         ${!tracks.length && html`<p class="py-8 text-center text-sm text-sand-500">这个歌单里还没有本机缓存的歌曲</p>`}
         ${tracks.map(t => html`<label key=${t.id} class="flex cursor-pointer items-center gap-3 rounded-xl px-3 py-2 hover:bg-white/5">
-          <input type="checkbox" class="h-4 w-4 shrink-0 accent-[#f2a65a]" checked=${checked.has(t.id)} disabled=${busy} onChange=${e => setChecked(s => { const n = new Set(s); e.target.checked ? n.add(t.id) : n.delete(t.id); return n; })} />
+          <input type="checkbox" class="h-4 w-4 shrink-0 accent-primary" checked=${checked.has(t.id)} disabled=${busy} onChange=${e => setChecked(s => { const n = new Set(s); e.target.checked ? n.add(t.id) : n.delete(t.id); return n; })} />
           <span class="min-w-0 flex-1"><span class="block truncate text-sm">${t.title}</span><span class="block truncate text-xs text-sand-500">${t.artist || '未知歌手'}${t.size ? ` · ${mb(t.size)}` : ''}</span></span>
         </label>`)}
       </div>

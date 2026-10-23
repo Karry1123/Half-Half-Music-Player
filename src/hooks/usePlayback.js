@@ -3,8 +3,13 @@ import { engine } from '../engine/session.js';
 
 /** 每帧读取播放位置（秒）。只让调用它的小组件重渲染，而不是整棵树。 */
 export function usePlaybackPosition() {
+  const reducedMotion = useReducedMotion();
   const [pos, setPos] = useState(() => engine.position());
   useEffect(() => {
+    if (reducedMotion) {
+      const timer = setInterval(() => setPos(engine.position()), 1000);
+      return () => clearInterval(timer);
+    }
     let raf;
     let last = -1;
     const tick = () => {
@@ -18,7 +23,7 @@ export function usePlaybackPosition() {
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, []);
+  }, [reducedMotion]);
   return pos;
 }
 
@@ -36,4 +41,17 @@ export function useAnimationFrame(callback, active = true) {
     raf = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(raf);
   }, [active]);
+}
+
+/** Decorative animations follow the live accessibility preference. */
+export function useReducedMotion() {
+  const [reduced, setReduced] = useState(() => window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  useEffect(() => {
+    const media = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const update = () => setReduced(media.matches);
+    update();
+    media.addEventListener('change', update);
+    return () => media.removeEventListener('change', update);
+  }, []);
+  return reduced;
 }

@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>大厅与搜索 · 深色</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;color:#f7f0e8;background:#0e0c0b}
+a{color:#f2a65a}a:hover{color:#e99544}
+button,input{font:inherit}
+button{cursor:pointer}
+.num{font-variant-numeric:tabular-nums}
+</style>
+</helmet>
+<div style="width: 390px; height: 844px; box-sizing: border-box; background: #0e0c0b; display: flex; flex-direction: column; padding: 56px 16px 24px; gap: 24px; overflow: hidden; position: relative">
+
+  <!-- Brand header -->
+  <div style="display: flex; flex-direction: column; gap: 6px; align-items: center; padding-top: 8px">
+    <div aria-hidden="true" style="display: flex; align-items: center; gap: 0">
+      <div style="width: 28px; height: 56px; border-radius: 28px 0 0 28px; background: #f2a65a"></div>
+      <div style="width: 28px; height: 56px; border-radius: 0 28px 28px 0; background: #ec7a96"></div>
+    </div>
+    <div style="font-size: 24px; font-weight: 700; line-height: 32px; margin-top: 8px">Half &amp; Half</div>
+    <div style="font-size: 14px; line-height: 21px; color: #ab9886">两个人，一首歌，同一拍</div>
+  </div>
+
+  <!-- Lobby: create / join -->
+  <div style="display: flex; flex-direction: column; gap: 12px; background: #151210; border: 1px solid #2e2721; border-radius: 24px; padding: 20px">
+    <label for="nick" style="font-size: 12px; line-height: 18px; color: #ab9886; font-weight: 500">你的昵称</label>
+    <input id="nick" value="Karry" style="height: 48px; box-sizing: border-box; border-radius: 12px; border: 1px solid #86745f; background: #1b1714; color: #f7f0e8; padding: 0 14px; font-size: 16px; outline: none; margin-top: -6px">
+    <button style="height: 48px; border: 0; border-radius: 12px; background: #f2a65a; color: #151210; font-size: 16px; font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 4px">
+      <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+      创建房间，我来当 Host
+    </button>
+    <div style="display: flex; align-items: center; gap: 12px; color: #86745f; font-size: 12px"><span style="flex: 1; height: 1px; background: #2e2721"></span>或者加入对方的房间<span style="flex: 1; height: 1px; background: #2e2721"></span></div>
+    <div style="display: flex; gap: 8px">
+      <label for="code" style="position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0)">房间码</label>
+      <input id="code" placeholder="房间码，例如 H4F2" style="flex: 1; min-width: 0; height: 48px; box-sizing: border-box; border-radius: 12px; border: 1px solid #86745f; background: #1b1714; color: #f7f0e8; padding: 0 14px; font-size: 16px; letter-spacing: 0.12em; outline: none">
+      <button style="height: 48px; padding: 0 18px; border: 0; border-radius: 12px; background: #ec7a96; color: #151210; font-size: 16px; font-weight: 600">加入</button>
+    </div>
+    <button style="height: 44px; border: 0; border-radius: 12px; background: transparent; color: #ab9886; font-size: 14px; font-weight: 500; display: flex; align-items: center; justify-content: center; gap: 6px">
+      <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 14h3v3M21 14v7h-7"/></svg>
+      扫码加入
+    </button>
+  </div>
+
+  <!-- Offline status chip -->
+  <div style="display: flex; justify-content: center">
+    <span style="display: inline-flex; align-items: center; gap: 6px; background: #221d19; color: #ab9886; padding: 6px 12px; border-radius: 999px; font-size: 12px; line-height: 18px">
+      <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M2 2l20 20M8.5 16.5a5 5 0 0 1 7 0M5 13a10 10 0 0 1 4.3-2.6M12 20h.01M1.4 9a16 16 0 0 1 5.7-3.7M16.7 10.3A10 10 0 0 1 19 13M22.6 9a16 16 0 0 0-6.6-4"/></svg>
+      离线，可播放本机歌曲
+    </span>
+  </div>
+
+  <!-- SearchDrawer sheet (bottom) -->
+  <div aria-hidden="true" style="position: absolute; left: 0; right: 0; bottom: 0; height: 300px; background: rgb(0 0 0 / 64%)"></div>
+  <div role="dialog" aria-label="搜索歌曲" style="position: absolute; left: 0; right: 0; bottom: 0; height: 320px; background: #151210; border-radius: 24px 24px 0 0; box-shadow: 0 16px 48px rgb(0 0 0 / 48%); display: flex; flex-direction: column; padding: 10px 16px 24px; gap: 12px; box-sizing: border-box">
+    <div aria-hidden="true" style="width: 36px; height: 4px; border-radius: 999px; background: #3e352d; align-self: center"></div>
+    <div style="display: flex; gap: 8px; align-items: center">
+      <label for="q" style="position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0)">搜索歌曲</label>
+      <div style="flex: 1; display: flex; align-items: center; gap: 10px; height: 48px; box-sizing: border-box; border-radius: 12px; border: 1px solid #86745f; background: #1b1714; padding: 0 14px; color: #ab9886">
+        <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <input id="q" value="河图" style="flex: 1; min-width: 0; border: 0; background: transparent; color: #f7f0e8; font-size: 16px; outline: none; padding: 0">
+      </div>
+      <button style="height: 44px; padding: 0 12px; border: 0; border-radius: 12px; background: transparent; color: #f2a65a; font-size: 14px; font-weight: 600">取消</button>
+    </div>
+    <div style="display: flex; flex-direction: column; gap: 2px">
+      <div style="display: flex; align-items: center; gap: 12px; height: 56px; padding: 0 4px">
+        <div aria-hidden="true" style="width: 44px; height: 44px; border-radius: 8px; background: linear-gradient(145deg, #342417, #351d27)"></div>
+        <div style="flex: 1; min-width: 0; display: flex; flex-direction: column"><span style="font-size: 14px; font-weight: 600; line-height: 20px">夜航星</span><span style="font-size: 12px; line-height: 16px; color: #ab9886">河图 · 4:23</span></div>
+        <span style="display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: #71d6a4; background: #123326; padding: 2px 8px; border-radius: 999px">已在列表</span>
+      </div>
+      <div style="display: flex; align-items: center; gap: 12px; height: 56px; padding: 0 4px">
+        <div aria-hidden="true" style="width: 44px; height: 44px; border-radius: 8px; background: linear-gradient(145deg, #221d19, #2e2721)"></div>
+        <div style="flex: 1; min-width: 0; display: flex; flex-direction: column"><span style="font-size: 14px; font-weight: 600; line-height: 20px">不见长安</span><span style="font-size: 12px; line-height: 16px; color: #ab9886">河图 · 5:02</span></div>
+        <button aria-label="添加到播放列表" style="width: 44px; height: 44px; border: 0; border-radius: 12px; background: #221d19; color: #f2a65a; display: flex; align-items: center; justify-content: center">
+          <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+        </button>
+      </div>
+      <div style="display: flex; align-items: center; gap: 12px; height: 56px; padding: 0 4px">
+        <div aria-hidden="true" style="width: 44px; height: 44px; border-radius: 8px; background: linear-gradient(145deg, #2e2721, #342417)"></div>
+        <div style="flex: 1; min-width: 0; display: flex; flex-direction: column"><span style="font-size: 14px; font-weight: 600; line-height: 20px">倾尽天下</span><span style="font-size: 12px; line-height: 16px; color: #ab9886">河图 · 4:40</span></div>
+        <span style="display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: #ff99a4; background: #3b1e25; padding: 2px 8px; border-radius: 999px">下载失败 · 重试</span>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

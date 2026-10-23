@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { ACTIVE_DOWNLOADS, useMusic } from '../store/useMusic.js';
 import { useSession } from '../store/useSession.js';
+import { AudioUnlock } from './AudioUnlock.jsx';
 import { Icon } from './Icon.jsx';
 
 const STATUS = { queued: '排队中', downloading: '下载中', processing: '处理中', done: '已完成', error: '下载失败' };
@@ -22,7 +23,7 @@ export function DownloadQueue() {
   useEffect(() => {
     if (!open || role !== 'host') return;
     const previous = document.activeElement;
-    panel.current?.querySelector('button')?.focus();
+    panel.current?.querySelector('[aria-label="关闭下载队列"]')?.focus();
     const onKey = (e) => {
       if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); useMusic.getState().setQueue(false); }
       if (e.key !== 'Tab') return;
@@ -48,23 +49,23 @@ export function DownloadQueue() {
       <div className="drawer-body download-list">
         {!list.length && <div className="empty">还没有下载任务，搜索歌曲后点击下载</div>}
         {list.map((j) => {
-          const active = ACTIVE_DOWNLOADS.includes(j.status);
           const percent = Math.max(0, Math.min(100, Math.round((j.progress || 0) * 100)));
           return <article className={`download-item ${j.status}`} key={j.id}>
             <span className="thumb">{j.cover ? <img src={j.cover} alt="" loading="lazy" referrerPolicy="no-referrer" /> : <Icon name="music" />}</span>
             <div className="download-info">
               <div className="item-title" title={j.title}>{j.title}</div>
               <div className="muted">{j.artist || '未知歌手'} · {(j.format || 'original').toUpperCase()}</div>
-              <span className={`tag ${j.status === 'error' ? 'err' : j.status === 'done' ? 'ok' : ''}`}>{STATUS[j.status]}{active ? ` ${percent}%` : ''}</span>
-              {active && <div className="bar" role="progressbar" aria-label={`${j.title} 下载进度`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent}><i style={{ width: `${percent}%` }} /></div>}
+              <span className={`tag ${j.status === 'error' ? 'err' : j.status === 'done' ? 'ok' : 'info'}`}>{STATUS[j.status]}{j.status === 'downloading' ? ` ${percent}%` : ''}</span>
+              {j.status === 'downloading' && <div className="bar" role="progressbar" aria-label={`${j.title} 下载进度`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent}><i style={{ width: `${percent}%` }} /></div>}
               {j.status === 'error' && <div className="download-error">{j.error || '下载未完成，请重试'}</div>}
               {j.status === 'done' && j.note && <div className="muted">{j.note}</div>}
               {j.status === 'error' && <button className="btn" onClick={() => music.download(j.trackId, { jobId: j.id })}><Icon name="download" size={14} />重新下载</button>}
             </div>
-            <button className="icon-btn" aria-label={`移除下载任务：${j.title}`} title="仅从队列移除，不取消下载" onClick={() => music.removeJob(j.id)}><Icon name="trash" size={16} /></button>
+            <button className="icon-btn" aria-label={`移除记录（不取消下载）：${j.title}`} title="仅从队列移除，不取消下载" onClick={() => music.removeJob(j.id)}><Icon name="trash" size={16} /></button>
           </article>;
         })}
       </div>
+      <AudioUnlock />
     </aside>
   </>;
 }

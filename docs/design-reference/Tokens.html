@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Token 速览</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;color:#221d19;background:#f7f0e8}
+a{color:#8a460c}a:hover{color:#713805}
+.mono{font-family:ui-monospace,SFMono-Regular,Consolas,"Liberation Mono",monospace;font-size:11px;letter-spacing:0.02em}
+</style>
+</helmet>
+<div style="width: 1280px; height: 720px; box-sizing: border-box; background: #f7f0e8; padding: 40px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 32px">
+
+  <!-- Column 1: colors -->
+  <div style="display: flex; flex-direction: column; gap: 20px">
+    <div style="display: flex; flex-direction: column; gap: 4px">
+      <h2 style="margin: 0; font-size: 20px; font-weight: 600; line-height: 28px">颜色 · Primitive</h2>
+      <p style="margin: 0; font-size: 12px; line-height: 18px; color: #6b594a">暖中性底色，琥珀 = Host，玫瑰 = Guest，绿色 = 连接 / 同步</p>
+    </div>
+    <div style="display: flex; flex-direction: column; gap: 6px">
+      <span class="mono" style="color: #6b594a">neutral 50 → 950</span>
+      <div style="display: flex; border-radius: 8px; overflow: hidden; height: 36px; border: 1px solid #dccdbe">
+        <div style="flex: 1; background: #f7f0e8"></div><div style="flex: 1; background: #f4eee7"></div><div style="flex: 1; background: #dccdbe"></div><div style="flex: 1; background: #c4b3a3"></div><div style="flex: 1; background: #ab9886"></div><div style="flex: 1; background: #86745f"></div><div style="flex: 1; background: #6b594a"></div><div style="flex: 1; background: #3e352d"></div><div style="flex: 1; background: #221d19"></div><div style="flex: 1; background: #151210"></div><div style="flex: 1; background: #0e0c0b"></div>
+      </div>
+    </div>
+    <div style="display: flex; flex-direction: column; gap: 6px">
+      <span class="mono" style="color: #6b594a">amber · Host</span>
+      <div style="display: flex; border-radius: 8px; overflow: hidden; height: 36px; border: 1px solid #dccdbe">
+        <div style="flex: 1; background: #fff1df"></div><div style="flex: 1; background: #f2a65a"></div><div style="flex: 1; background: #e99544"></div><div style="flex: 1; background: #d7852f"></div><div style="flex: 1; background: #8a460c"></div><div style="flex: 1; background: #713805"></div><div style="flex: 1; background: #342417"></div>
+      </div>
+    </div>
+    <div style="display: flex; flex-direction: column; gap: 6px">
+      <span class="mono" style="color: #6b594a">rose · Guest</span>
+      <div style="display: flex; border-radius: 8px; overflow: hidden; height: 36px; border: 1px solid #dccdbe">
+        <div style="flex: 1; background: #fdebf1"></div><div style="flex: 1; background: #ec7a96"></div><div style="flex: 1; background: #dc6684"></div><div style="flex: 1; background: #a32f55"></div><div style="flex: 1; background: #872342"></div><div style="flex: 1; background: #351d27"></div>
+      </div>
+    </div>
+    <div style="display: flex; flex-direction: column; gap: 6px">
+      <span class="mono" style="color: #6b594a">status · success / warning / error</span>
+      <div style="display: flex; gap: 6px">
+        <div style="flex: 1; display: flex; border-radius: 8px; overflow: hidden; height: 36px; border: 1px solid #dccdbe"><div style="flex: 1; background: #e8f5ed"></div><div style="flex: 1; background: #71d6a4"></div><div style="flex: 1; background: #146c43"></div><div style="flex: 1; background: #123326"></div></div>
+        <div style="flex: 1; display: flex; border-radius: 8px; overflow: hidden; height: 36px; border: 1px solid #dccdbe"><div style="flex: 1; background: #fff3d6"></div><div style="flex: 1; background: #f4c46a"></div><div style="flex: 1; background: #855000"></div><div style="flex: 1; background: #382b13"></div></div>
+        <div style="flex: 1; display: flex; border-radius: 8px; overflow: hidden; height: 36px; border: 1px solid #dccdbe"><div style="flex: 1; background: #fdecef"></div><div style="flex: 1; background: #ff99a4"></div><div style="flex: 1; background: #b42332"></div><div style="flex: 1; background: #3b1e25"></div></div>
+      </div>
+    </div>
+    <div style="display: flex; flex-direction: column; gap: 6px">
+      <span class="mono" style="color: #6b594a">--gradient-together</span>
+      <div style="height: 36px; border-radius: 8px; background: linear-gradient(90deg, #f2a65a, #ec7a96)"></div>
+      <p style="margin: 0; font-size: 12px; line-height: 18px; color: #6b594a">渐变只用于品牌标记、两人连线与装饰；按钮一律实色。</p>
+    </div>
+  </div>
+
+  <!-- Column 2: semantic in both themes -->
+  <div style="display: flex; flex-direction: column; gap: 20px">
+    <div style="display: flex; flex-direction: column; gap: 4px">
+      <h2 style="margin: 0; font-size: 20px; font-weight: 600; line-height: 28px">颜色 · Semantic</h2>
+      <p style="margin: 0; font-size: 12px; line-height: 18px; color: #6b594a">同一 token 在浅色 / 深色下的取值，对比度已验算</p>
+    </div>
+    <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px">
+      <div style="background: #ffffff; border: 1px solid #dccdbe; border-radius: 16px; padding: 16px; display: flex; flex-direction: column; gap: 10px; color: #221d19">
+        <span style="font-size: 12px; font-weight: 600; color: #6b594a">Light</span>
+        <button style="height: 40px; border: 0; border-radius: 12px; background: #8a460c; color: #ffffff; font: inherit; font-size: 14px; font-weight: 600">action-primary 7.09:1</button>
+        <button style="height: 40px; border: 0; border-radius: 12px; background: #f4eee7; color: #221d19; font: inherit; font-size: 14px; font-weight: 500">action-secondary</button>
+        <button style="height: 40px; border: 0; border-radius: 12px; background: #a32f55; color: #ffffff; font: inherit; font-size: 14px; font-weight: 600">action-guest 6.78:1</button>
+        <div style="display: flex; gap: 6px; flex-wrap: wrap">
+          <span style="font-size: 11px; padding: 2px 8px; border-radius: 999px; background: #e8f5ed; color: #146c43">已同步</span>
+          <span style="font-size: 11px; padding: 2px 8px; border-radius: 999px; background: #fff3d6; color: #855000">重连中</span>
+          <span style="font-size: 11px; padding: 2px 8px; border-radius: 999px; background: #fdecef; color: #b42332">中断</span>
+          <span style="font-size: 11px; padding: 2px 8px; border-radius: 999px; background: #f4eee7; color: #6b594a">离线</span>
+        </div>
+        <div style="height: 36px; border-radius: 8px; background: #fdebf1; border-left: 3px solid #a32f55; display: flex; align-items: center; padding: 0 10px; font-size: 12px; color: #221d19">selected 行</div>
+        <div style="height: 40px; border-radius: 12px; border: 1px solid #86745f; box-shadow: 0 0 0 2px #ffffff, 0 0 0 4px #a32f55; display: flex; align-items: center; padding: 0 12px; font-size: 12px; color: #6b594a">focus 环</div>
+      </div>
+      <div style="background: #151210; border: 1px solid #2e2721; border-radius: 16px; padding: 16px; display: flex; flex-direction: column; gap: 10px; color: #f7f0e8">
+        <span style="font-size: 12px; font-weight: 600; color: #ab9886">Dark</span>
+        <button style="height: 40px; border: 0; border-radius: 12px; background: #f2a65a; color: #151210; font: inherit; font-size: 14px; font-weight: 600">action-primary 9.22:1</button>
+        <button style="height: 40px; border: 0; border-radius: 12px; background: #221d19; color: #f7f0e8; font: inherit; font-size: 14px; font-weight: 500">action-secondary</button>
+        <button style="height: 40px; border: 0; border-radius: 12px; background: #ec7a96; color: #151210; font: inherit; font-size: 14px; font-weight: 600">action-guest</button>
+        <div style="display: flex; gap: 6px; flex-wrap: wrap">
+          <span style="font-size: 11px; padding: 2px 8px; border-radius: 999px; background: #123326; color: #71d6a4">已同步</span>
+          <span style="font-size: 11px; padding: 2px 8px; border-radius: 999px; background: #382b13; color: #f4c46a">重连中</span>
+          <span style="font-size: 11px; padding: 2px 8px; border-radius: 999px; background: #3b1e25; color: #ff99a4">中断</span>
+          <span style="font-size: 11px; padding: 2px 8px; border-radius: 999px; background: #221d19; color: #ab9886">离线</span>
+        </div>
+        <div style="height: 36px; border-radius: 8px; background: #351d27; border-left: 3px solid #ec7a96; display: flex; align-items: center; padding: 0 10px; font-size: 12px; color: #f7f0e8">selected 行</div>
+        <div style="height: 40px; border-radius: 12px; border: 1px solid #86745f; box-shadow: 0 0 0 2px #151210, 0 0 0 4px #ec7a96; display: flex; align-items: center; padding: 0 12px; font-size: 12px; color: #ab9886">focus 环</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Column 3: type, spacing, radius, motion -->
+  <div style="display: flex; flex-direction: column; gap: 20px">
+    <div style="display: flex; flex-direction: column; gap: 4px">
+      <h2 style="margin: 0; font-size: 20px; font-weight: 600; line-height: 28px">字体 · 间距 · 形状</h2>
+      <p style="margin: 0; font-size: 12px; line-height: 18px; color: #6b594a">系统字体栈，不加载远程字体；4px 基准网格</p>
+    </div>
+    <div style="display: flex; flex-direction: column; gap: 2px; background: #ffffff; border: 1px solid #dccdbe; border-radius: 16px; padding: 16px">
+      <div style="display: flex; align-items: baseline; justify-content: space-between"><span style="font-size: 32px; font-weight: 700; line-height: 40px">一起听歌</span><span class="mono" style="color: #6b594a">display 32/40</span></div>
+      <div style="display: flex; align-items: baseline; justify-content: space-between"><span style="font-size: 24px; font-weight: 600; line-height: 32px">夜航星</span><span class="mono" style="color: #6b594a">title 24/32</span></div>
+      <div style="display: flex; align-items: baseline; justify-content: space-between"><span style="font-size: 20px; font-weight: 600; line-height: 28px">播放列表</span><span class="mono" style="color: #6b594a">title-sm 20/28</span></div>
+      <div style="display: flex; align-items: baseline; justify-content: space-between"><span style="font-size: 16px; line-height: 24px">正文与所有输入框 Body</span><span class="mono" style="color: #6b594a">body 16/24</span></div>
+      <div style="display: flex; align-items: baseline; justify-content: space-between"><span style="font-size: 14px; line-height: 21px">列表与次级说明 Small</span><span class="mono" style="color: #6b594a">small 14/21</span></div>
+      <div style="display: flex; align-items: baseline; justify-content: space-between"><span style="font-size: 12px; line-height: 18px; color: #6b594a">时间 1:36 / 4:23 · 房间码 H4F2</span><span class="mono" style="color: #6b594a">caption 12/18</span></div>
+    </div>
+    <div style="display: flex; flex-direction: column; gap: 8px">
+      <span class="mono" style="color: #6b594a">space 4 / 8 / 12 / 16 / 20 / 24 / 32 / 40 / 48</span>
+      <div style="display: flex; align-items: flex-end; gap: 6px; height: 48px">
+        <div style="width: 4px; height: 4px; background: #8a460c"></div><div style="width: 8px; height: 8px; background: #8a460c"></div><div style="width: 12px; height: 12px; background: #8a460c"></div><div style="width: 16px; height: 16px; background: #8a460c"></div><div style="width: 20px; height: 20px; background: #8a460c"></div><div style="width: 24px; height: 24px; background: #8a460c"></div><div style="width: 32px; height: 32px; background: #8a460c"></div><div style="width: 40px; height: 40px; background: #8a460c"></div><div style="width: 48px; height: 48px; background: #8a460c"></div>
+      </div>
+    </div>
+    <div style="display: flex; flex-direction: column; gap: 8px">
+      <span class="mono" style="color: #6b594a">radius control 12 · card 16 · sheet 24 · pill</span>
+      <div style="display: flex; align-items: center; gap: 10px">
+        <div style="width: 44px; height: 44px; border-radius: 12px; background: #ffffff; border: 1px solid #dccdbe"></div>
+        <div style="width: 64px; height: 44px; border-radius: 16px; background: #ffffff; border: 1px solid #dccdbe"></div>
+        <div style="width: 84px; height: 44px; border-radius: 24px 24px 0 0; background: #ffffff; border: 1px solid #dccdbe"></div>
+        <div style="height: 32px; padding: 0 14px; border-radius: 999px; background: #ffffff; border: 1px solid #dccdbe; display: flex; align-items: center; font-size: 12px; color: #6b594a">pill</div>
+        <div style="width: 44px; height: 44px; border-radius: 12px; border: 2px dashed #a32f55; display: flex; align-items: center; justify-content: center; font-size: 10px; color: #a32f55">44</div>
+      </div>
+    </div>
+    <div style="display: flex; flex-direction: column; gap: 4px">
+      <span class="mono" style="color: #6b594a">motion 120 / 180 / 240 ms · ease (0.2,0,0,1) · press 0.98</span>
+      <p style="margin: 0; font-size: 12px; line-height: 18px; color: #6b594a">稳定连接不闪烁；reduced-motion 时唱片、连线、均衡器一律静止。</p>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":720}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

@@ -4,6 +4,17 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
     <meta name="color-scheme" content="light dark" />
+    <script>
+      (() => {
+        let theme;
+        try { theme = localStorage.getItem('hh-theme'); } catch {}
+        if (theme !== 'light' && theme !== 'dark') {
+          theme = typeof matchMedia === 'function' ? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : 'dark';
+        }
+        document.documentElement.dataset.theme = theme;
+      })();
+    </script>
+    <link rel="stylesheet" href="/design-tokens.css" />
     <link rel="icon" type="image/svg+xml" href="/icon.svg" />
     <title>Half&amp;Half Music Player</title>
     <!-- 运行时配置：部署时由 scripts/write-app-config.mjs 生成（音乐服务 / 信令地址） -->

@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { engine } from '../engine/session.js';
-import { useAnimationFrame } from '../hooks/usePlayback.js';
+import { useAnimationFrame, useReducedMotion } from '../hooks/usePlayback.js';
 import { useSession } from '../store/useSession.js';
 import { Avatar } from './Avatar.jsx';
 import { Icon } from './Icon.jsx';
@@ -11,7 +11,7 @@ const mb = (b) => `${(b / 1048576).toFixed(1)} MB`;
 /** 黑胶唱片：播放时旋转 */
 function CoverDisc({ cover, spinning }) {
   return (
-    <div className={`disc${spinning ? ' spinning' : ''}`}>
+    <div className={`disc${spinning ? ' spinning' : ''}${cover ? ' has-cover' : ''}`} aria-hidden="true">
       <div className="disc-art">{cover ? <img src={cover} alt="" referrerPolicy="no-referrer" /> : <Icon name="music" size={36} />}</div>
       <div className="disc-hole" />
     </div>
@@ -20,6 +20,8 @@ function CoverDisc({ cover, spinning }) {
 
 /** 实时频谱（AnalyserNode），Host/Guest 看到的都是各自本地正在发声的音频 */
 function Visualizer({ active }) {
+  const reducedMotion = useReducedMotion();
+  const animate = active && !reducedMotion;
   const canvas = useRef(null);
   const data = useRef(null);
   useAnimationFrame(() => {
@@ -41,8 +43,8 @@ function Visualizer({ active }) {
 
     const styles = getComputedStyle(c);
     const grad = ctx.createLinearGradient(0, 0, w, 0);
-    grad.addColorStop(0, styles.getPropertyValue('--host').trim());
-    grad.addColorStop(1, styles.getPropertyValue('--guest').trim());
+    grad.addColorStop(0, styles.getPropertyValue('--color-brand-host').trim());
+    grad.addColorStop(1, styles.getPropertyValue('--color-brand-guest').trim());
     ctx.fillStyle = grad;
 
     const bars = Math.min(64, Math.floor(w / 7));
@@ -57,18 +59,18 @@ function Visualizer({ active }) {
       else ctx.rect(i * (bw + gap), (h - bh) / 2, bw, bh);
       ctx.fill();
     }
-  }, active);
+  }, animate);
 
   // 暂停时收成一条细线
   useEffect(() => {
     const c = canvas.current;
-    if (active || !c) return;
+    if (animate || !c) return;
     const ctx = c.getContext('2d');
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, c.width, c.height);
-    ctx.fillStyle = getComputedStyle(c).getPropertyValue('--line').trim();
+    ctx.fillStyle = getComputedStyle(c).getPropertyValue('--color-border-subtle').trim();
     ctx.fillRect(0, c.height / 2 - 1, c.width, 2);
-  }, [active]);
+  }, [animate]);
 
   return <canvas ref={canvas} className="visualizer" aria-hidden="true" />;
 }
@@ -82,15 +84,19 @@ function DuoAvatars() {
   const loaded = useSession((s) => s.loaded);
   const hasTrack = useSession((s) => !!s.track);
   const peerReady = useSession((s) => s.peerReady);
+  const channelOpen = useSession((s) => s.channelOpen);
+  const peerState = useSession((s) => s.peerState);
+  const audioBlocked = useSession((s) => s.audioBlocked);
+  const buffering = useSession((s) => s.buffering);
   // Host 要等 Guest 也缓冲好才算"在一起"；Guest 这边 Host 一定已就绪
   const together = !!peer && loaded && (role === 'guest' || peerReady);
   const [left, right] = role === 'host' ? [me, peer] : [peer, me];
-  const caption = !peer ? '等待对方加入' : !hasTrack ? '已连接，等待选歌' : together && playing ? '正在一起听' : together ? '已同步，随时开始' : '缓冲中…';
+  const caption = audioBlocked ? '声音尚未开启' : buffering ? '缓冲中…' : peer && !channelOpen ? '正在重新连接…' : !peer ? '等待对方加入' : !hasTrack ? '已连接，等待选歌' : together && playing ? '正在一起听' : together ? '已同步，随时开始' : '缓冲中…';
   return (
     <div>
       <div className="duo">
         <Avatar profile={left} size={40} title={left ? `${left.name}（Host）` : '等待 Host'} />
-        <span className={`duo-link${together && playing ? ' on' : ''}`} />
+        <span className={`duo-link${channelOpen && peer ? ' on' : peer || peerState === 'connecting' ? '' : ' alone'}`} aria-hidden="true" />
         <Avatar profile={right} size={40} title={right ? `${right.name}（Guest）` : '等待对方加入'} />
       </div>
       <div className="duo-caption">{caption}</div>
@@ -152,11 +158,11 @@ export function NowPlaying() {
       <div className="stage">
         <CoverDisc cover={track?.cover} spinning={playing && loaded} />
         <div className="track-meta">
-          <span className="muted" style={{ fontSize: 12, letterSpacing: '0.08em' }}>
+          <span className="muted track-label">
             {playing ? 'NOW PLAYING' : track ? 'PAUSED' : 'READY'}
           </span>
           <h1 className="track-title">{track?.title || '还没有选择歌曲'}</h1>
-          <div className="track-artist">{track ? track.artist || '未知歌手' : '从右侧播放列表选一首，或拖入本地音频文件'}</div>
+          <div className="track-artist">{track ? track.artist || '未知歌手' : '从播放列表选一首，或添加本地音频文件'}</div>
           <TransferLine />
           <DuoAvatars />
         </div>

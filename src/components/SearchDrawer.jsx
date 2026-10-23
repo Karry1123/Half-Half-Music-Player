@@ -3,9 +3,10 @@ import { engine, fmtTime } from '../engine/session.js';
 import { jobForTrack, useMusic } from '../store/useMusic.js';
 import { useSession } from '../store/useSession.js';
 import { Icon } from './Icon.jsx';
+import { AudioUnlock } from './AudioUnlock.jsx';
 import { DownloadQueueButton } from './DownloadQueue.jsx';
 
-const VERSION_TONE = { original: 'ok', variant: 'guest', live: 'guest', unknown: 'warn', cover: 'err', other: 'err' };
+const VERSION_TONE = { original: '', variant: '', live: '', unknown: '', cover: '', other: '' };
 const ACTIVE = ['queued', 'downloading', 'processing'];
 const STATUS = { queued: '排队中', downloading: '下载中', processing: '处理中', done: '完成', error: '失败' };
 
@@ -57,10 +58,10 @@ function ResultItem({ t }) {
   return (
     <div className="result">
       <span className="thumb">{t.cover ? <img src={t.cover} alt="" loading="lazy" referrerPolicy="no-referrer" /> : <Icon name="music" size={20} />}</span>
-      <div style={{ minWidth: 0 }}>
+      <div className="result-meta">
         {t.pageUrl ? (
           <a className="result-title" href={t.pageUrl} target="_blank" rel="noopener noreferrer" title={`在 ${t.sourceName} 打开，核对版本`}>
-            {t.title} <Icon name="external" size={12} style={{ verticalAlign: '-1px', opacity: 0.6 }} />
+            {t.title} <Icon name="external" size={12} className="external-icon" />
           </a>
         ) : (
           <span className="result-title">{t.title}</span>
@@ -90,7 +91,7 @@ function ServiceDown() {
       <b>音乐服务未启动</b>
       <span>搜索下载由本机的 music-service 提供，在新终端运行：</span>
       <code>cd music-service &amp;&amp; npm start</code>
-      <button className="btn" style={{ justifySelf: 'start' }} onClick={init}>
+      <button className="btn service-retry" onClick={init}>
         重新检测
       </button>
     </div>
@@ -102,14 +103,27 @@ export function SearchDrawer() {
   const music = useMusic();
   const role = useSession((s) => s.role);
   const input = useRef(null);
+  const panel = useRef(null);
 
   useEffect(() => {
-    if (!open) return;
-    input.current?.focus();
-    const onKey = (e) => e.key === 'Escape' && !useMusic.getState().queueOpen && music.setDrawer(false);
+    if (!open || role !== 'host') return;
+    const previous = document.activeElement;
+    (input.current || panel.current?.querySelector('button:not(:disabled)'))?.focus();
+    const onKey = (e) => {
+      if (useMusic.getState().queueOpen) return;
+      if (e.key === 'Escape') { e.preventDefault(); music.setDrawer(false); }
+      if (e.key !== 'Tab') return;
+      const controls = [...panel.current.querySelectorAll('button:not(:disabled), input:not(:disabled), select:not(:disabled), a[href]')];
+      const first = controls[0], last = controls[controls.length - 1];
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last?.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first?.focus(); }
+    };
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [open]);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      if (previous?.isConnected) previous.focus();
+    };
+  }, [open, role]);
 
   if (!open || role !== 'host') return null;
   const { result, health } = music;
@@ -120,7 +134,7 @@ export function SearchDrawer() {
   return (
     <>
       <div className="scrim" onClick={() => music.setDrawer(false)} />
-      <aside className="drawer" role="dialog" aria-label="搜索与下载">
+      <aside ref={panel} className="drawer" role="dialog" aria-modal={!music.queueOpen ? 'true' : undefined} inert={music.queueOpen ? '' : undefined} aria-label="搜索与下载">
         <div className="panel-head">
           <h2>搜索与下载</h2>
           <DownloadQueueButton />
@@ -134,14 +148,15 @@ export function SearchDrawer() {
             <ServiceDown />
           ) : (
             <>
+              <label className="search-label" htmlFor="music-search">搜索音乐</label>
               <form
-                className="search-form"
+                className="search-form" aria-busy={music.searching}
                 onSubmit={(e) => {
                   e.preventDefault();
                   music.search();
                 }}
               >
-                <input ref={input} className="input" placeholder="歌名，可加歌手：晴天 周杰伦" value={music.query} onChange={(e) => music.setQuery(e.target.value)} />
+                <input id="music-search" ref={input} className="input" placeholder="歌名，可加歌手：晴天 周杰伦" value={music.query} onChange={(e) => music.setQuery(e.target.value)} />
                 <button className="btn primary" disabled={music.searching || !music.query.trim()}>
                   {music.searching ? '搜索中…' : '搜索'}
                 </button>
@@ -153,7 +168,7 @@ export function SearchDrawer() {
                     {p.label}
                   </button>
                 ))}
-                <span style={{ flex: 1 }} />
+                <span className="spacer" />
                 <span className="seg" role="group" aria-label="版本筛选">
                   <button aria-pressed={music.versions === 'original'} onClick={() => music.setVersions('original')}>
                     只看原版{counts ? ` ${counts.original}` : ''}
@@ -162,7 +177,7 @@ export function SearchDrawer() {
                     全部{counts ? ` ${Object.values(counts).reduce((a, b) => a + b, 0)}` : ''}
                   </button>
                 </span>
-                <select className="input" style={{ height: 30, fontSize: 12 }} value={music.format} onChange={(e) => music.setFormat(e.target.value)} aria-label="下载格式">
+                <select className="input" value={music.format} onChange={(e) => music.setFormat(e.target.value)} aria-label="下载格式">
                   <option value="mp3" disabled={!health?.ffmpeg}>
                     MP3{health?.ffmpeg ? '' : '（需 ffmpeg）'}
                   </option>
@@ -171,7 +186,7 @@ export function SearchDrawer() {
                 </select>
               </div>
 
-              {music.error && <div className="tag err" style={{ height: 'auto', padding: '6px 10px' }}>{music.error}</div>}
+              {music.error && <div className="tag err search-error">{music.error}</div>}
 
               {result && (
                 <>
@@ -198,7 +213,7 @@ export function SearchDrawer() {
                       </span>
                     ))}
                   </div>
-                  <div style={{ display: 'grid', gap: 2 }}>
+                  <div className="search-results">
                     {result.results.map((t) => (
                       <ResultItem key={t.id} t={t} />
                     ))}
@@ -215,6 +230,7 @@ export function SearchDrawer() {
             </>
           )}
         </div>
+        {!music.queueOpen && <AudioUnlock />}
       </aside>
     </>
   );

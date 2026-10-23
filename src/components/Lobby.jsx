@@ -11,9 +11,10 @@ export function Lobby() {
 
   return (
     <div className="lobby">
+      <span className="lobby-pattern" aria-hidden="true" />
       <div className="lobby-inner">
         <div className="brand">
-          <span className="brand-mark" />
+          <span className="brand-mark" aria-hidden="true" />
           Half&amp;Half Music Player
         </div>
         <div>
@@ -25,13 +26,13 @@ export function Lobby() {
 
         <div className="card profile-row">
           <Avatar profile={me} size={44} />
-          <label className="sr-only" htmlFor="nickname">
+          <label className="nickname-field" htmlFor="nickname">
             昵称
+            <input id="nickname" className="input" value={me.name} onChange={(e) => setName(e.target.value)} placeholder="你的昵称" />
           </label>
-          <input id="nickname" className="input" value={me.name} onChange={(e) => setName(e.target.value)} placeholder="你的昵称" style={{ flex: '1 1 160px' }} />
           <div className="swatches" role="group" aria-label="头像颜色">
-            {PALETTE.map((c) => (
-              <button key={c} className="swatch" style={{ background: c }} aria-pressed={me.color === c} aria-label={`颜色 ${c}`} onClick={() => engine.setProfile({ ...me, color: c })} />
+            {PALETTE.map((c, i) => (
+              <button key={c} className="swatch" aria-pressed={me.color === c} aria-label={['珊瑚', '靛蓝', '翠绿', '玫红', '金黄', '天蓝', '紫罗兰'][i]} onClick={() => engine.setProfile({ ...me, color: c })}><span className="swatch-dot" style={{ '--swatch-color': c }} aria-hidden="true" /></button>
             ))}
           </div>
         </div>
