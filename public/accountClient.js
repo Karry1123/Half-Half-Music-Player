@@ -1,5 +1,46 @@
 import { nativePlugin } from './nativeBridge.js';
 export class AccountClient {
+  friendsCache = new Map();
+  friendsListeners = new Set();
+  getCachedFriends() { return this.friendsCache.get(this.user?.id)?.value || []; }
+  subscribeFriends(listener) { this.friendsListeners.add(listener); return () => this.friendsListeners.delete(listener); }
+  async loadFriends({ force = false } = {}) {
+    const id = this.user?.id, token = this.token;
+    if (!id || !this.user.isActivated) return [];
+    let entry = this.friendsCache.get(id);
+    if (!entry) {
+      entry = { value: [], at: 0 };
+      this.friendsCache.set(id, entry);
+      // Disk reads happen outside React render; never hold up the network refresh.
+      entry.cached = this.read(`${this.key}.friends.${id}`).then(raw => {
+        const value = JSON.parse(raw || 'null');
+        if (!entry.at && Array.isArray(value)) {
+          entry.value = value;
+          entry.signature = JSON.stringify(value);
+          if (this.user?.id === id && this.token === token) this.friendsListeners.forEach(fn => fn(value));
+        }
+      }).catch(() => {});
+    }
+    if (entry.running) {
+      if (!force) return entry.running;
+      await entry.running.catch(() => {});
+      if (this.user?.id !== id || this.token !== token) return [];
+    } else if (!force && entry.at && Date.now() - entry.at < 15000) return entry.value;
+    entry.running = this.request('/account/friends').then(data => {
+      const value = data.friends || data;
+      if (!Array.isArray(value)) throw new Error('Invalid friends response');
+      if (this.user?.id !== id || this.token !== token) return [];
+      const signature = JSON.stringify(value);
+      entry.at = Date.now();
+      if (signature !== entry.signature) {
+        entry.value = value; entry.signature = signature;
+        this.friendsListeners.forEach(fn => fn(value));
+        this.store(`${this.key}.friends.${id}`, signature).catch(() => {});
+      }
+      return entry.value;
+    }).finally(() => { entry.running = null; });
+    return entry.running;
+  }
   constructor(base) { this.base = base; this.token = ''; this.user = null; this.required = true; this.revision = 0; this.playlists = []; }
   get key() { return `hh.account.${this.base}`; }
   async read(key) {
@@ -23,6 +64,7 @@ export class AccountClient {
     } else if (token) localStorage.setItem(this.key, token); else localStorage.removeItem(this.key);
     this.token = token;
     if (!token) {
+      this.friendsCache.clear();
       await this.store(`${this.key}.user`, '');
       await this.store(`${this.key}.lastUserId`, '');
     }

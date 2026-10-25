@@ -180,13 +180,16 @@ export class CloudSync {
   schedule(delay = 2000) {
     if (!this.enabled) return;
     clearTimeout(this.#timer);
-    this.#timer = setTimeout(() => this.sync().catch(() => {}), delay);
+    this.#timer = setTimeout(() => {
+      this.#timer = null;
+      if (!globalThis.document?.hidden) this.sync({ changed: true }).catch(() => {});
+    }, delay);
   }
 
-  sync() {
+  sync({ changed = false } = {}) {
     if (!this.enabled) return Promise.resolve(null);
     if (this.#running) {
-      this.#again = true;
+      this.#again ||= changed;
       return this.#running;
     }
     this.#running = (async () => {

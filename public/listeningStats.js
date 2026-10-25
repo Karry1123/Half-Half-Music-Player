@@ -76,6 +76,7 @@ export class ListeningStats {
       this.changed = true;
     }
     this.loaded = true;
+    this.completionIndex = null;
     this.scheduleSave();
     for (const sample of this.pendingSamples.splice(0)) this.sample(sample);
     this.notify();
@@ -101,7 +102,7 @@ export class ListeningStats {
     };
     if (!this.loaded) { this.pendingSamples.push(sample); return; }
     if (!this.userId) return;
-    this.rememberTrack(sample);
+    const metadataChanged = this.rememberTrack(sample);
     const previous = this.previous;
     if (!sample.trackId) { this.previous = null; this.session = null; return; }
     const sameTrack = previous?.trackId === sample.trackId;
@@ -111,7 +112,7 @@ export class ListeningStats {
       && sample.currentTime < previous.currentTime && sample.currentTime <= 1;
     if (!sameTrack || replay || loop || !this.session) this.start(sample);
     const session = this.session;
-    let gained = 0;
+    let gained = 0, completed = false;
     if (sameTrack && !replay && !loop && !session.ended) {
       const wall = Math.max(0, (sample.now - previous.now) / 1000);
       const delta = sample.currentTime - previous.currentTime;
@@ -152,13 +153,15 @@ export class ListeningStats {
     const naturalEnd = sample.ended && !session.skipped && session.played > 0;
     if (!session.completed && (reachedThreshold || naturalEnd)) {
       this.stats.completedPlayCount[sample.trackId] = (this.stats.completedPlayCount[sample.trackId] || 0) + 1;
+      this.completionIndex = null;
       session.completed = true;
+      completed = true;
       this.changed = true;
       for (const listener of this.completionListeners) listener(this);
     }
     if (sample.ended) session.ended = true;
     this.previous = sample;
-    if (gained || this.changed) {
+    if (gained || completed || metadataChanged) {
       this.changed = true;
       this.scheduleSave();
       this.notify();
@@ -167,7 +170,7 @@ export class ListeningStats {
 
   scheduleSave() {
     if (!this.persistence || this.timer) return;
-    this.timer = setTimeout(() => { this.timer = null; this.flush().catch(() => {}); }, 1000);
+    this.timer = setTimeout(() => { this.timer = null; this.flush().catch(() => {}); }, 30000);
     this.timer.unref?.();
   }
 
@@ -200,7 +203,9 @@ export class ListeningStats {
       sourceId: sourceId || old?.sourceId || '', hash: hash || old?.hash || '' };
     if (JSON.stringify(old) !== JSON.stringify(meta)) {
       this.stats.trackMetadata[trackId] = meta;
+      this.completionIndex = null;
       this.changed = true;
+      return true;
     }
   }
 
@@ -222,15 +227,30 @@ export class ListeningStats {
     const meta = this.stats.trackMetadata[trackId];
     return meta && (meta.sourceId || (meta.hash && `hash:${meta.hash}`) || songKey(meta));
   }
-  mergeCloud(data) { this.cloud = data; this.changed = true; this.scheduleSave(); this.notify(); }
+  mergeCloud(data) { this.cloud = data; this.completionIndex = null; this.changed = true; this.scheduleSave(); this.notify(); }
+  indexCompletions() {
+    if (this.completionIndex) return this.completionIndex;
+    const keys = new Map(), names = new Map(), pairs = new Map(), remoteKeys = new Map(), remoteNames = new Map();
+    const add = (map, key, count) => map.set(key, (map.get(key) || 0) + count);
+    for (const [id, count] of Object.entries(this.stats.completedPlayCount)) {
+      const key = this.trackKey(id), name = songKey(this.stats.trackMetadata[id]);
+      add(keys, key, count); add(names, name, count); add(pairs, JSON.stringify([key, name]), count);
+    }
+    for (const row of this.cloud?.completed || []) {
+      if (!remoteKeys.has(row.key)) remoteKeys.set(row.key, row);
+      const name = row.completionKey || row.key;
+      if (!remoteNames.has(name)) remoteNames.set(name, row);
+    }
+    return this.completionIndex = { keys, names, pairs, remoteKeys, remoteNames };
+  }
   completedCount(trackId) {
     const meta = this.stats.trackMetadata[trackId];
     if (!meta) return this.stats.completedPlayCount[trackId] || 0;
     const key = songKey(meta);
-    const local = Object.entries(this.stats.completedPlayCount).reduce((sum, [id, count]) =>
-      sum + (this.trackKey(id) === this.trackKey(trackId) || songKey(this.stats.trackMetadata[id]) === key ? count : 0), 0);
-    const remote = this.cloud?.completed?.find(row => row.key === this.trackKey(trackId)) ||
-      this.cloud?.completed?.find(row => (row.completionKey || row.key) === key);
+    const index = this.indexCompletions(), trackKey = this.trackKey(trackId);
+    const local = (index.keys.get(trackKey) || 0) + (index.names.get(key) || 0) -
+      (index.pairs.get(JSON.stringify([trackKey, key])) || 0);
+    const remote = index.remoteKeys.get(trackKey) || index.remoteNames.get(key);
     return local + Number(remote?.completed || 0);
   }
   coListeningSeconds(friendId) {
@@ -247,10 +267,13 @@ export class ListeningStats {
     else if (period === 'month') start.setDate(1);
     else if (period === 'year') start.setMonth(0, 1);
     else throw new RangeError('Unknown listening statistics period');
+    const startDay = calendarDay(+start), endDay = calendarDay(now);
     const remote = (this.cloud?.daily || []).reduce((total, row) => total +
-      (row.day >= calendarDay(+start) && row.day <= calendarDay(now) ? Number(row.seconds) : 0), 0);
-    return this.records.reduce((total, record) => total +
-      (recordDay(record) >= calendarDay(+start) && recordDay(record) <= calendarDay(now) && record.timestamp <= now ? record.durationPlayed : 0), remote);
+      (row.day >= startDay && row.day <= endDay ? Number(row.seconds) : 0), 0);
+    return this.records.reduce((total, record) => {
+      const day = recordDay(record);
+      return total + (day >= startDay && day <= endDay && record.timestamp <= now ? record.durationPlayed : 0);
+    }, remote);
   }
 }
 
@@ -308,16 +331,17 @@ export function createCompletedPlayUploader({ stats, client, listTracks, onUploa
 // Cloud responses exclude this device for time AND completions. Local counters remain
 // authoritative and are never replaced by cloud totals (including during playback).
 // Signatures only acknowledge successful snapshots; restarting safely backfills all records.
-export function createListeningSync({ stats, client, listTracks, uploadPlays = async () => {}, now = Date.now }) {
+export function createListeningSync({ stats, client, listTracks, uploadPlays = async () => {}, now = Date.now,
+  shouldSync = () => !globalThis.document?.hidden }) {
   let running, timer, stopped = false, queued = false;
   const sent = new Map();
   const active = () => !stopped && client.user?.isActivated && client.user.id === stats.userId;
-  const sync = () => {
+  const sync = ({ changed = false } = {}) => {
     if (!active()) return Promise.resolve();
     clearTimeout(timer);
     timer = null;
+    if (running) { queued ||= changed; return running; }
     queued = true;
-    if (running) return running;
     running = (async () => {
       try {
         while (queued && active()) {
@@ -356,9 +380,9 @@ export function createListeningSync({ stats, client, listTracks, uploadPlays = a
   // Bounded debounce also works during continuous playback. Failed snapshots retry
   // on the next change, online/foreground event or the dashboard's minute timer.
   const schedule = () => {
-    if (!active() || timer || running) return;
+    if (!active() || !shouldSync() || timer || running) return;
     // Share the account service's 15 requests/minute budget with play uploads.
-    timer = setTimeout(() => { timer = null; sync().catch(() => {}); }, 30000);
+    timer = setTimeout(() => { timer = null; if (shouldSync()) sync().catch(() => {}); }, 60000);
     timer.unref?.();
   };
   const unsubscribe = stats.subscribe(schedule);

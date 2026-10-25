@@ -107,8 +107,18 @@ class SessionEngine {
     this.graph.onStateChange = (state) => this.onAudioState(state);
     this.bufferPlayer.onEnded = () => this.onEnded();
     this.receiver = this.createReceiver();
-    setInterval(() => this.heartbeat(), HEARTBEAT_MS);
-    setInterval(() => this.publishStats(), 500);
+    let heartbeatTimer, statsTimer;
+    const updateTimers = () => {
+      const s = get();
+      const heartbeat = s.role === 'host' && s.channelOpen;
+      if (heartbeat && !heartbeatTimer) heartbeatTimer = setInterval(() => this.heartbeat(), HEARTBEAT_MS);
+      else if (!heartbeat && heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
+      const showStats = !document.hidden && (s.channelOpen || s.streaming || s.bufferedAhead != null);
+      if (showStats && !statsTimer) statsTimer = setInterval(() => this.publishStats(), 500);
+      else if (!showStats && statsTimer) { clearInterval(statsTimer); statsTimer = null; }
+    };
+    useSession.subscribe(updateTimers);
+    updateTimers();
     // Signaling starts only after the account gate admits the user (src/main.jsx).
     // 曲库变化（下载完成）→ 合并进 Host 播放列表
     useMusic.subscribe((s, prev) => {
@@ -120,6 +130,7 @@ class SessionEngine {
     }
     // 标签页切回前台：移动端可能挂起了 AudioContext，后台定时器也被节流过，重新对齐
     document.addEventListener('visibilitychange', () => {
+      updateTimers();
       if (document.visibilityState === 'visible') this.onVisible();
     });
     if (this.netsim) console.info('[netsim] 已启用', this.netsim);

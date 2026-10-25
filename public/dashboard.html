@@ -180,7 +180,7 @@ import { installAndroidBack, pushBackLayer } from './mobileRuntime.js';
 import { nativePlugin } from './nativeBridge.js';
 import { observeAudio } from './audioState.js';
 import { installAudioGuard } from './audioGuard.js';
-import { FriendsPanel } from './friendsUI.js';
+import { FriendsPanel, useFriends } from './friendsUI.js';
 const isAndroid = window.Capacitor?.getPlatform?.() === 'android';
 function useBackLayer(open, close) {
   const ref = useRef(close); ref.current = close;
@@ -906,7 +906,11 @@ class Session {
       console.warn('音频播放失败', e);
       toast(`音频播放失败：${e.message}`, 'warn');
     };
-    setInterval(() => this.tick(), HEARTBEAT_MS);
+    let heartbeat;
+    store.subscribe(() => {
+      if (this.conn?.open && !heartbeat) heartbeat = setInterval(() => this.tick(), HEARTBEAT_MS);
+      else if (!this.conn?.open && heartbeat) { clearInterval(heartbeat); heartbeat = null; }
+    });
     // 自动播放策略：页面上的第一次（以及之后每次）点击都顺手解锁音频
     for (const ev of ['pointerdown', 'keydown']) document.addEventListener(ev, () => this.out.unlock(), { capture: true });
     // 切后台 / 锁屏后回来：重新测时钟、硬对齐进度、恢复被系统打断的播放
@@ -2290,7 +2294,7 @@ const cloudSync = new CloudSync({
   saveBase: async (uid, base) => { try { localStorage.setItem(syncBaseKey(uid), JSON.stringify(base)); } catch {} },
   onStatus: (status) => {
     set({ cloudSync: status });
-    LocalLib.listTracks().then(repairLibraryCovers).catch(() => {});
+    if (status.state === 'ok' && !document.hidden) LocalLib.listTracks().then(repairLibraryCovers).catch(() => {});
   },
 });
 playlistStore.subscribe((_list, source) => { if (source !== 'remote' && playlistStore.ready) cloudSync.schedule(); });
@@ -3234,7 +3238,7 @@ function MiniWave({ active }) {
     const draw = () => {
       const c = canvas.current;
       const an = session.out.analyser;
-      const animate = active && !media.matches;
+      const animate = active && !media.matches && !document.hidden;
       if (c) {
         const ctx = c.getContext('2d');
         ctx.clearRect(0, 0, c.width, c.height);
@@ -3254,8 +3258,9 @@ function MiniWave({ active }) {
     };
     const update = () => { cancelAnimationFrame(raf); draw(); };
     media.addEventListener('change', update);
+    document.addEventListener('visibilitychange', update);
     draw();
-    return () => { cancelAnimationFrame(raf); media.removeEventListener('change', update); };
+    return () => { cancelAnimationFrame(raf); media.removeEventListener('change', update); document.removeEventListener('visibilitychange', update); };
   }, [active]);
   return html`<canvas ref=${canvas} width="80" height="22" class="h-[22px] w-20" aria-hidden="true" />`;
 }
@@ -3291,9 +3296,10 @@ function SyncStatus() {
   const drift = useStore((s) => s.drift);
   const [, force] = useState(0);
   useEffect(() => {
-    const t = setInterval(() => force((x) => x + 1), 1000);
-    return () => clearInterval(t);
-  }, []);
+    if (!syncNote) return;
+    const t = setTimeout(() => force((x) => x + 1), Math.max(0, syncNote.at + 6000 - Date.now()));
+    return () => clearTimeout(t);
+  }, [syncNote]);
   const fresh = syncNote && Date.now() - syncNote.at < 6000;
   let icon = Activity;
   let text = peer ? `已与 ${peer.name} 同步${drift != null ? ` · 偏差 ${drift}ms` : ''}` : '单机播放';
@@ -4612,8 +4618,7 @@ function trackCompletedCount(track) { return listeningStats?.completedCount(trac
 function StatsPanel() {
   useStore(s => s.statsRevision);
   const tracks = useStore(s => s.library), me = useStore(s => s.me);
-  const [friends, setFriends] = useState([]);
-  useEffect(() => { if (account.user?.isActivated) account.request('/account/friends').then(data => setFriends(data.friends || data)).catch(() => {}); }, []);
+  const friends = useFriends(account, undefined, 0);
   return html`<${ListeningStatsCards} stats=${listeningStats} tracks=${tracks} me=${me} friends=${friends} count=${trackCompletedCount} />`;
 }
 
@@ -4737,10 +4742,11 @@ function NativePlayer({ open, close, expand }) {
 }
 
 function App() {
-  useStore(s => s.statsRevision);
   useEffect(() => {
     const stats = listeningStats = new ListeningStats({ userId: account.user?.id || 'local' });
-    const unsubscribe = stats.subscribe(() => set({ statsRevision: (get().statsRevision || 0) + 1 }));
+    let revisionTimer;
+    const revise = () => { clearTimeout(revisionTimer); revisionTimer = null; if (!document.hidden) set({ statsRevision: (get().statsRevision || 0) + 1 }); };
+    const unsubscribe = stats.subscribe(() => { if (!revisionTimer && !document.hidden) revisionTimer = setTimeout(revise, 1000); });
     stats.ready().then(() => set({ statsRevision: (get().statsRevision || 0) + 1 })).catch(console.warn);
     const audio = session.out.audio;
     const sample = () => sampleListening();
@@ -4748,23 +4754,28 @@ function App() {
     const events = ['playing', 'pause', 'seeking', 'seeked', 'waiting', 'timeupdate'];
     for (const event of events) audio.addEventListener(event, sample);
     audio.addEventListener('ended', ended, true);
-    const timer = setInterval(sample, 1000);
+    // Audio timeupdate and transport events account for playback, including in background.
+    // A second sampling timer was redundant and kept waking the idle WebView.
     const syncPlays = createCompletedPlayUploader({ stats, client: account, listTracks: () => LocalLib.listTracks(),
       onUploaded: () => window.dispatchEvent(new Event('hh:plays-synced')) });
-    const listeningSync = createListeningSync({ stats, client: account, listTracks: () => LocalLib.listTracks(), uploadPlays: syncPlays });
-    const upload = () => listeningSync.sync().catch(() => {});
-    const unsubscribeCompleted = stats.subscribeCompleted(upload);
+    const listeningSync = createListeningSync({ stats, client: account, listTracks: () => LocalLib.listTracks(), uploadPlays: syncPlays, shouldSync: () => active && !document.hidden });
+    let active = !document.hidden;
+    const upload = (changed = false) => { if (active && !document.hidden) return listeningSync.sync({ changed: changed === true }).catch(() => {}); };
+    account.loadFriends().catch(() => {});
+    const unsubscribeCompleted = stats.subscribeCompleted(() => upload(true));
     upload();
     const uploadTimer = setInterval(upload, 60000);
     window.addEventListener('online', upload);
-    const foreground = () => { if (!document.hidden) upload(); else { sample(); stats.flush().catch(() => {}); } };
-    document.addEventListener('visibilitychange', foreground);
+    const foreground = (isActive = !document.hidden) => { active = isActive; if (active) { revise(); upload(); } else { clearTimeout(revisionTimer); revisionTimer = null; sample(); stats.flush().catch(() => {}); } };
+    const visibility = () => foreground(!document.hidden);
+    document.addEventListener('visibilitychange', visibility);
     const nativeResume = window.Capacitor?.isNativePlatform?.()
-      ? nativePlugin('App').addListener('appStateChange', ({ isActive }) => { if (isActive) upload(); else { sample(); stats.flush().catch(() => {}); } }).catch(console.warn) : null;
+      ? nativePlugin('App').addListener('appStateChange', ({ isActive }) => foreground(isActive)).catch(console.warn) : null;
     const flush = () => { sample(); stats.flush().catch(console.warn); };
+    audio.addEventListener('pause', flush);
     window.addEventListener('pagehide', flush);
     const unstore = store.subscribe(sample);
-    return () => { sample(); stats.flush().catch(console.warn); listeningSync.stop(); if (listeningStats === stats) listeningStats = null; document.removeEventListener('visibilitychange', foreground); nativeResume?.then(handle => handle?.remove()); unsubscribe(); unsubscribeCompleted(); unstore(); clearInterval(timer); clearInterval(uploadTimer); window.removeEventListener('online', upload); for (const event of events) audio.removeEventListener(event, sample); audio.removeEventListener('ended', ended, true); window.removeEventListener('pagehide', flush); };
+    return () => { sample(); stats.flush().catch(console.warn); listeningSync.stop(); if (listeningStats === stats) listeningStats = null; document.removeEventListener('visibilitychange', visibility); audio.removeEventListener('pause', flush); clearTimeout(revisionTimer); nativeResume?.then(handle => handle?.remove()); unsubscribe(); unsubscribeCompleted(); unstore(); clearInterval(uploadTimer); window.removeEventListener('online', upload); for (const event of events) audio.removeEventListener(event, sample); audio.removeEventListener('ended', ended, true); window.removeEventListener('pagehide', flush); };
   }, []);
   const [tab, setTab] = useState('discover'), [playerOpen, setPlayerOpen] = useState(false);
   const [presence, setPresence] = useState({}), [invitation, setInvitation] = useState(null);
@@ -4774,14 +4785,16 @@ function App() {
   const sendSocial = msg => { if (social.current?.readyState === WebSocket.OPEN) social.current.send(JSON.stringify(msg)); else toast('好友服务尚未连接，请稍后重试', 'warn'); };
   useEffect(() => {
     if (!account.required || !account.user?.isActivated) return;
-    let stopped = false, timer;
+    let stopped = false, timer, failures = 0;
     const connect = () => {
+      clearTimeout(timer);
+      if (stopped || navigator.onLine === false || (document.hidden && !get().playing && !session.conn?.open)) return;
       const url = new URL(HH.signalUrl || HH.wsUrl || `${API_BASE}/ws`, location.href); url.protocol = ['https:', 'wss:'].includes(url.protocol) ? 'wss:' : 'ws:'; url.searchParams.set('token', accessToken());
       const ws = social.current = new WebSocket(url);
       let previousPresence = '';
       const publish = () => { const s = get(), item = s.library.find(x => x.id === s.currentId); const data = JSON.stringify({ type: 'PRESENCE_UPDATE', nowPlaying: s.playing && item ? { title: item.title, artist: item.artist, playing: true } : null }); if (ws.readyState === WebSocket.OPEN && data !== previousPresence) { previousPresence = data; ws.send(data); } };
-      ws.onopen = publish;
-      const presenceTimer = setInterval(() => { previousPresence = ''; publish(); }, 15000);
+      ws.onopen = () => { failures = 0; publish(); };
+      const presenceTimer = setInterval(() => { if (!document.hidden || get().playing) { previousPresence = ''; publish(); } }, 60000);
       const unsubscribe = store.subscribe(publish);
       ws.onmessage = event => {
         let m; try { m = JSON.parse(event.data); } catch { return; }
@@ -4797,10 +4810,13 @@ function App() {
         }
         if (m.type === 'LISTEN_SESSION_READY') { session.invitationReady = m.sessionId; session.dialInvitation(); }
       };
-      ws.onclose = () => { clearInterval(presenceTimer); unsubscribe(); setPresence({}); if (!stopped) timer = setTimeout(connect, 3000); };
+      ws.onclose = () => { clearInterval(presenceTimer); unsubscribe(); setPresence({}); if (!stopped) timer = setTimeout(connect, Math.min(60000, 3000 * 2 ** Math.min(failures++, 5)) + Math.random() * 1000); };
     };
+    const reconnect = () => { if (!document.hidden && navigator.onLine !== false && (!social.current || social.current.readyState === WebSocket.CLOSED)) connect(); };
+    document.addEventListener('visibilitychange', reconnect);
+    window.addEventListener('online', reconnect);
     connect();
-    return () => { stopped = true; clearTimeout(timer); social.current?.close(); };
+    return () => { stopped = true; clearTimeout(timer); document.removeEventListener('visibilitychange', reconnect); window.removeEventListener('online', reconnect); social.current?.close(); };
   }, []);
   const cloudLocalPlaylists = useStore(s => s.playlists);
   const cloudOpen = useStore(s => s.cloudOpen);

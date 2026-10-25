@@ -43,7 +43,9 @@ public class AudioGuardPlugin extends Plugin {
             if (!registered) return;
             boolean active = callActive();
             if (active != inCall) { inCall = active; emit(active ? "lossTransient" : "gain"); }
-            handler.postDelayed(this, 500);
+            // Paused media is also checked on demand by getInterruption().
+            // Only a call awaiting auto-resume needs the fast polling cadence.
+            handler.postDelayed(this, inCall ? 500 : 2000);
         }
     };
     @Override public void load() {

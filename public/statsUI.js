@@ -4,17 +4,20 @@ const html = htm.bind(React.createElement);
 function CountUp({ value }) {
   const [number, setNumber] = useState(value);
   useEffect(() => {
-    if (globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches) { setNumber(value); return; }
+    if (globalThis.document?.hidden || globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches) { setNumber(value); return; }
     let frame, start;
     const step = time => { start ??= time; const progress = Math.min(1, (time - start) / 650); setNumber(Math.round(value * (1 - (1 - progress) ** 3))); if (progress < 1) frame = requestAnimationFrame(step); };
+    const visibility = () => { if (document.hidden) { cancelAnimationFrame(frame); setNumber(value); } };
+    document.addEventListener('visibilitychange', visibility);
     frame = requestAnimationFrame(step);
-    return () => cancelAnimationFrame(frame);
+    return () => { cancelAnimationFrame(frame); document.removeEventListener('visibilitychange', visibility); };
   }, [value]);
   return html`<span>${number}</span>`;
 }
 export function ListeningStatsCards({ stats, tracks = [], me = {}, friends = [], count }) {
-  const [names, setNames] = useState(friends);
-  useEffect(() => { setNames(friends); }, [friends]);
+  const names = friends;
+  const counts = new Map(tracks.map(t => [t, count(t)]));
+  count = t => counts.get(t) || 0;
   const top = [...tracks].filter(t => count(t) > 0).sort((a, b) => count(b) - count(a)).slice(0, 5);
   const max = top.length ? count(top[0]) : 1;
   const avatar = name => html`<span class="grid h-10 w-10 place-items-center rounded-full border-2 border-ink-900 bg-gradient-to-br from-host/60 to-guest/60 text-sm">${String(name || '听').slice(0, 1)}</span>`;

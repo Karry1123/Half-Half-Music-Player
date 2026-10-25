@@ -7,6 +7,8 @@ const cap = () => globalThis.Capacitor;
 const fs = () => nativePlugin('Filesystem');
 const directory = 'DATA';
 const root = 'library-v1';
+let metadataLoad;
+const invalidateMetadata = () => { metadataLoad = null; };
 const listeners = new Set();
 const pathFor = id => `${root}/${encodeURIComponent(id)}`;
 const notify = event => listeners.forEach(fn => fn(event));
@@ -34,14 +36,28 @@ async function commit(track) {
   const path = `${pathFor(track.id)}.json`;
   await fs().writeFile({ path: `${path}.tmp`, directory, encoding: 'utf8', data: JSON.stringify(track), recursive: true });
   await fs().rename({ from: `${path}.tmp`, to: path, directory, toDirectory: directory });
+  invalidateMetadata();
 }
 export const isSupported = () => true;
 export const subscribe = fn => { listeners.add(fn); return () => listeners.delete(fn); };
 export async function listTracks({ sort = 'addedAt', order = 'desc' } = {}) {
-  let files;
-  try { files = (await fs().readdir({ path: root, directory })).files; }
-  catch (e) { if (missing(e)) return []; throw e; }
-  const tracks = (await Promise.all(files.filter(f => f.name.endsWith('.json')).map(f => readJson(`${root}/${f.name}`)))).filter(Boolean);
+  if (!metadataLoad) {
+    const loading = (async () => {
+      let files;
+      try { files = (await fs().readdir({ path: root, directory })).files; }
+      catch (e) { if (missing(e)) return []; throw e; }
+      const paths = files.filter(f => f.name.endsWith('.json'));
+      const tracks = [];
+      // Bound bridge/JSON work on first load instead of flooding the WebView.
+      for (let i = 0; i < paths.length; i += 8) {
+        tracks.push(...await Promise.all(paths.slice(i, i + 8).map(f => readJson(`${root}/${f.name}`))));
+      }
+      return tracks.filter(Boolean);
+    })();
+    metadataLoad = loading;
+    loading.catch(() => { if (metadataLoad === loading) invalidateMetadata(); });
+  }
+  const tracks = (await metadataLoad).map(track => ({ ...track }));
   return tracks.sort((a, b) => (typeof a[sort] === 'string' ? a[sort].localeCompare(b[sort] || '', 'zh-Hans-CN') : (a[sort] || 0) - (b[sort] || 0)) * (order === 'asc' ? 1 : -1));
 }
 export const getTrack = id => readJson(`${pathFor(id)}.json`);
@@ -128,6 +144,7 @@ export const markPlayed = async id => {
 export function deleteTrack(id) {
   return serial(async () => {
     await remove(`${pathFor(id)}.json`);
+    invalidateMetadata();
     await Promise.all(['.audio', '.cover'].map(ext => remove(pathFor(id) + ext)));
     notify({ type: 'deleted', id });
   });

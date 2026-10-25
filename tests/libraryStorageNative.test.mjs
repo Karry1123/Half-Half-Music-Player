@@ -24,6 +24,30 @@ globalThis.Capacitor = {
 globalThis.BroadcastChannel = undefined;
 const storage = await import('../public/libraryStorageNative.js');
 
+test('native metadata reads share a cache and refresh after writes', async () => {
+  let scans = 0;
+  const readdir = plugin.readdir;
+  plugin.readdir = async options => { scans++; return readdir(options); };
+  try {
+    const [a, b] = await Promise.all([storage.listTracks(), storage.listTracks()]);
+    assert.deepEqual(a, b);
+    const initial = scans;
+    await storage.listTracks();
+    assert.equal(scans, initial);
+    const { track } = await storage.saveTrack(new Blob(['cache song']), { title: 'Before' });
+    assert.equal((await storage.listTracks())[0].title, 'Before');
+    const afterSave = scans;
+    await storage.updateTrack(track.id, { title: 'After' });
+    const list = await storage.listTracks();
+    assert.equal(scans, afterSave + 1);
+    assert.equal(list[0].title, 'After');
+    list[0].title = 'mutated copy';
+    assert.equal((await storage.listTracks())[0].title, 'After');
+    await storage.deleteTrack(track.id);
+    assert.deepEqual(await storage.listTracks(), []);
+  } finally { plugin.readdir = readdir; }
+});
+
 test('native storage chunk round-trip, concurrent deduplication, metadata preservation and delete', async () => {
   const data = new Uint8Array(400003).map((_, i) => i % 251);
   const blob = new Blob([data], { type: 'audio/mpeg' });

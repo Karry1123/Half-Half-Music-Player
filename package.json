@@ -1,6 +1,6 @@
 {
   "name": "half-half-music-player",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "private": true,
   "description": "Half&Half Music Player：双人 P2P 同步播放（React + Vite + Zustand + WebRTC）",
   "type": "module",

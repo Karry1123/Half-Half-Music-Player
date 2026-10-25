@@ -17,6 +17,39 @@ async function tracker() {
 const cloud = () => ({ daily: [{ day, seconds: 30 }], completed: [{ key: 'source:123', completionKey, completed: 3 }],
   coListening: [{ friendId: 'bob', seconds: 40 }, { friendId: 'charlie', seconds: 50 }] });
 
+test('automatic listening sync defers hidden work and coalesces foreground triggers', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const stats = await tracker();
+  let visible = true, requests = 0, release;
+  const client = { user: { id: 'alice', isActivated: true }, request: async path => {
+    requests++;
+    if (path.includes('?')) return new Promise(resolve => { release = resolve; });
+    return {};
+  } };
+  const sync = createListeningSync({ stats, client, listTracks: async () => [], shouldSync: () => visible });
+  try {
+    stats.notify(); // queue while visible, then hide before it fires
+    visible = false; t.mock.timers.tick(60000);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(requests, 0);
+    stats.notify(); t.mock.timers.tick(60000);
+    assert.equal(requests, 0);
+    visible = true;
+    const first = sync.sync();
+    while (!release) await new Promise(resolve => setImmediate(resolve));
+    const duplicate = sync.sync();
+    release(cloud()); await Promise.all([first, duplicate]);
+    assert.equal(requests, 2, 'one upload and one pull for simultaneous resume events');
+    const saved = stats.records[0].durationPlayed;
+    stats.records[0].durationPlayed += 5;
+    const next = sync.sync();
+    await new Promise(resolve => setImmediate(resolve));
+    release(cloud()); await next;
+    assert.equal(stats.records[0].durationPlayed, saved + 5);
+    assert.equal(requests, 4, 'later local changes still upload');
+  } finally { sync.stop(); }
+});
+
 test('other-device totals merge once while local playback and completion uploads stay local', async () => {
   const stats = await tracker();
   stats.mergeCloud(cloud()); stats.mergeCloud(cloud());
@@ -89,4 +122,24 @@ test('logout during a request prevents applying its cloud snapshot', async () =>
   while (!release) await new Promise(resolve => setImmediate(resolve));
   sync.stop(); client.user = null; release(); await running;
   assert.equal(stats.cloud, undefined);
+});
+
+test('a completion during an in-flight listening pull queues its changed snapshot', async () => {
+  const stats = await tracker(), uploads = [];
+  let release, pulls = 0;
+  const client = { user: { id: 'alice', isActivated: true }, request: async (path, body) => {
+    if (body) { uploads.push(structuredClone(body)); return {}; }
+    if (++pulls === 1) return new Promise(resolve => { release = resolve; });
+    return cloud();
+  } };
+  const sync = createListeningSync({ stats, client, listTracks: async () => [] });
+  try {
+    const first = sync.sync();
+    while (!release) await new Promise(resolve => setImmediate(resolve));
+    stats.records[0].durationPlayed += 5;
+    const completion = sync.sync({ changed: true });
+    release(cloud()); await Promise.all([first, completion]);
+    assert.deepEqual(uploads.map(body => body.records[0].seconds), [20, 25]);
+    assert.equal(pulls, 2);
+  } finally { sync.stop(); }
 });

@@ -87,6 +87,33 @@ function device(server, tracks) {
   return { store, sync, tracks };
 }
 
+test('cloud sync coalesces duplicate triggers but reruns after edits and defers hidden schedules', async t => {
+  const server = fakeServer(), d = device(server, []);
+  await d.store.load([]);
+  let release, pulls = 0;
+  d.sync.deps.client.pull = async () => { pulls++; await new Promise(resolve => { release = resolve; }); return []; };
+  const first = d.sync.sync();
+  while (!release) await new Promise(resolve => setImmediate(resolve));
+  const duplicate = d.sync.sync();
+  release(); await Promise.all([first, duplicate]);
+  assert.equal(pulls, 1);
+  release = null;
+  const changed = d.sync.sync();
+  while (!release) await new Promise(resolve => setImmediate(resolve));
+  const edit = d.sync.sync({ changed: true });
+  const finish = release; release = null; finish();
+  while (!release) await new Promise(resolve => setImmediate(resolve));
+  release(); await Promise.all([changed, edit]);
+  assert.equal(pulls, 3);
+  const original = globalThis.document;
+  globalThis.document = { hidden: true };
+  t.after(() => { if (original) globalThis.document = original; else delete globalThis.document; });
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  d.sync.schedule(); t.mock.timers.tick(2000);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(pulls, 3);
+});
+
 test('phone adds a song to a playlist → web sees it as not downloaded → downloads it → becomes playable', async () => {
   const server = fakeServer();
   const phone = device(server, [{ id: 'ph1', sourceId: 'bilibili:BV1', hash: 'h1', title: '晴天', artist: '周杰伦' }]);

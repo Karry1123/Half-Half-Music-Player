@@ -1,11 +1,24 @@
 import { useEffect, useRef, useState } from 'react';
 import { engine } from '../engine/session.js';
 
+function usePageVisible() {
+  const [visible, setVisible] = useState(() => !document.hidden);
+  useEffect(() => {
+    const update = () => setVisible(!document.hidden);
+    document.addEventListener('visibilitychange', update);
+    return () => document.removeEventListener('visibilitychange', update);
+  }, []);
+  return visible;
+}
+
 /** 每帧读取播放位置（秒）。只让调用它的小组件重渲染，而不是整棵树。 */
 export function usePlaybackPosition() {
   const reducedMotion = useReducedMotion();
+  const visible = usePageVisible();
   const [pos, setPos] = useState(() => engine.position());
   useEffect(() => {
+    if (!visible) return;
+    setPos(engine.position());
     if (reducedMotion) {
       const timer = setInterval(() => setPos(engine.position()), 1000);
       return () => clearInterval(timer);
@@ -23,16 +36,17 @@ export function usePlaybackPosition() {
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [reducedMotion]);
+  }, [reducedMotion, visible]);
   return pos;
 }
 
 /** requestAnimationFrame 循环（可视化用），回调拿到 AnalyserNode */
 export function useAnimationFrame(callback, active = true) {
+  const visible = usePageVisible();
   const cb = useRef(callback);
   cb.current = callback;
   useEffect(() => {
-    if (!active) return;
+    if (!active || !visible) return;
     let raf;
     const loop = () => {
       cb.current();
@@ -40,7 +54,7 @@ export function useAnimationFrame(callback, active = true) {
     };
     raf = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(raf);
-  }, [active]);
+  }, [active, visible]);
 }
 
 /** Decorative animations follow the live accessibility preference. */

@@ -3,6 +3,47 @@ import assert from 'node:assert/strict';
 import { ListeningStats, createCompletedPlayUploader } from '../public/listeningStats.js';
 
 const base = new Date(2026, 9, 15, 12).getTime();
+test('continuous samples coalesce persistence; explicit lifecycle flush saves immediately', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const saved = [];
+  const stats = new ListeningStats({ userId: 'alice', persistence: { load: async () => null, save: async value => saved.push(value) } });
+  await stats.ready();
+  for (let i = 0; i < 30; i++) {
+    stats.sample({ trackId: 'song', title: 'Song', duration: 100, currentTime: i, now: base + i * 1000, playing: true });
+    t.mock.timers.tick(1000);
+  }
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(saved.length, 1);
+  assert.equal(saved[0].records[0].durationPlayed, 29);
+  stats.sample({ trackId: 'song', currentTime: 30, now: base + 30000, playing: false });
+  await stats.flush();
+  assert.equal(saved.length, 2);
+  assert.equal(saved[1].records[0].durationPlayed, 30);
+});
+test('completion index preserves source/name union semantics and avoids rescanning per track', async () => {
+  const stats = new ListeningStats({ userId: 'alice', indexedDB: null });
+  await stats.ready();
+  for (let i = 0; i < 1000; i++) {
+    stats.rememberTrack({ trackId: String(i), title: `Song ${i}`, sourceId: `source:${i}` });
+    stats.stats.completedPlayCount[i] = 1;
+  }
+  stats.rememberTrack({ trackId: 'alias', title: 'Song 0', sourceId: 'different-source' });
+  stats.stats.completedPlayCount.alias = 2;
+  stats.rememberTrack({ trackId: 'same-source', title: 'Renamed', sourceId: 'source:0' });
+  stats.stats.completedPlayCount['same-source'] = 3;
+  let lookups = 0;
+  const trackKey = stats.trackKey.bind(stats);
+  stats.trackKey = id => { lookups++; return trackKey(id); };
+  for (let i = 0; i < 1000; i++) assert.equal(stats.completedCount(String(i)), i === 0 ? 6 : 1);
+  assert.ok(lookups < 3000, 'all lookups share one linear index build');
+  stats.mergeCloud({ completed: [{ key: 'source:0', completed: 4 }] });
+  assert.equal(stats.completedCount('0'), 10);
+  stats.rememberTrack({ trackId: 'alias', title: 'Another song', sourceId: 'different-source' });
+  assert.equal(stats.completedCount('0'), 8, 'metadata changes invalidate the index');
+  stats.sample({ trackId: '0', title: 'Song 0', currentTime: 0, playing: true, duration: 10, now: base });
+  stats.sample({ trackId: '0', currentTime: 10, playing: false, ended: true, duration: 10, now: base + 10000 });
+  assert.equal(stats.completedCount('0'), 9, 'new completion invalidates the index');
+});
 async function tracker(options = {}) {
   const stats = new ListeningStats({ userId: 'alice', indexedDB: null, ...options });
   await stats.ready();

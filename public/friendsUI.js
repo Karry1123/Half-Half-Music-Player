@@ -3,6 +3,29 @@ import htm from 'htm';
 import { coverSrc, coverError } from './coverUrl.js';
 const html = htm.bind(React.createElement);
 const button = 'shrink-0 rounded-xl border border-ink-600 px-3 py-2 text-sm hover:text-host disabled:opacity-40';
+export function useFriends(client, onError = () => {}, interval = 15000) {
+  const id = client.user?.id;
+  const [snapshot, setSnapshot] = useState(() => ({ id, friends: client.getCachedFriends() }));
+  useEffect(() => {
+    const setFriends = friends => setSnapshot({ id, friends });
+    setFriends(client.getCachedFriends());
+    if (!client.required || !client.user?.isActivated) return;
+    let stopped = false, timer;
+    const unsubscribe = client.subscribeFriends(setFriends);
+    const refresh = async () => {
+      clearTimeout(timer);
+      if (document.hidden || stopped) return;
+      try { await client.loadFriends(); } catch (e) { if (!stopped) onError(e.message); }
+      clearTimeout(timer);
+      if (!stopped && !document.hidden && interval > 0) timer = setTimeout(refresh, interval);
+    };
+    const visibility = () => { clearTimeout(timer); if (!document.hidden) refresh(); };
+    document.addEventListener('visibilitychange', visibility);
+    refresh();
+    return () => { stopped = true; clearTimeout(timer); unsubscribe(); document.removeEventListener('visibilitychange', visibility); };
+  }, [client, client.user?.id, client.user?.isActivated, interval]);
+  return snapshot.id === id ? snapshot.friends : client.getCachedFriends();
+}
 // Identity comes exclusively from this account's server response, never hh.name
 // (which can still belong to a different account on a shared device).
 export function FriendIdentity({ friend }) {
@@ -13,7 +36,16 @@ export function coListeningLabel(username, seconds = 0) {
   return `与 @${username} 已共同收听 ${Math.floor(minutes / 60)}小时${minutes % 60}分`;
 }
 export function FriendsPanel({ client, presence = {}, invite, history = [], stats, onPreview, onCollect }) {
-  const [friends, setFriends] = useState([]), [query, setQuery] = useState(''), [results, setResults] = useState([]), [error, setError] = useState('');
+  const [query, setQuery] = useState(''), [results, setResults] = useState([]), [error, setError] = useState('');
+  const friends = useFriends(client, setError);
+  const [, revise] = useState(0);
+  useEffect(() => {
+    let timer;
+    const unsubscribe = stats?.subscribe(() => {
+      if (!timer && !document.hidden) timer = setTimeout(() => { timer = null; revise(n => n + 1); }, 1000);
+    });
+    return () => { unsubscribe?.(); clearTimeout(timer); };
+  }, [stats]);
   const [publicLibrary, setPublicLibrary] = useState(null), [publicPlaylist, setPublicPlaylist] = useState(null), [publicLoading, setPublicLoading] = useState(false), [collected, setCollected] = useState('');
   const openPublic = async (id, friend) => {
     setError(''); setPublicLoading(true); setPublicPlaylist(null); setCollected('');
@@ -21,9 +53,8 @@ export function FriendsPanel({ client, presence = {}, invite, history = [], stat
     catch (e) { setError(e.message); } finally { setPublicLoading(false); }
   };
   const publicAction = async fn => { try { setError(''); await fn(); } catch (e) { setError(e.message); } };
-  const refresh = async () => { const data = await client.request('/account/friends'); setFriends(data.friends || data); };
+  const refresh = () => client.loadFriends({ force: true });
   const run = async fn => { try { setError(''); await fn(); await refresh(); } catch (e) { setError(e.message); } };
-  useEffect(() => { if (!client.required || !client.user?.isActivated) return; run(async () => {}); const timer = setInterval(() => run(async () => {}), 15000); return () => clearInterval(timer); }, [client.user?.id]);
   if (!client.required) return html`<p>好友功能需要登录并激活账号。</p>`;
   return html`<section class="friends-panel space-y-5">
     <h1 class="text-2xl font-bold">好友 / 动态</h1>
