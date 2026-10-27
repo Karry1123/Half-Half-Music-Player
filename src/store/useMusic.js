@@ -4,6 +4,7 @@ import { musicApi } from '../engine/musicApi.js';
 import { toast } from './useToast.js';
 
 let unsubscribeEvents = null;
+let searchEpoch = 0;
 export const ACTIVE_DOWNLOADS = ['queued', 'downloading', 'processing'];
 const QUEUE_KEY = 'hh.downloadQueue';
 function loadQueue() {
@@ -32,6 +33,7 @@ export const useMusic = create((set, get) => ({
   versions: 'original', // 'original' | 'all'
   format: 'm4a',
   searching: false,
+  resultKey: null,
   result: null, // /api/search 的响应
   error: null,
 
@@ -100,25 +102,27 @@ export const useMusic = create((set, get) => ({
     const current = get().sources.length ? get().sources : all;
     const next = current.includes(name) ? current.filter((s) => s !== name) : [...current, name];
     set({ sources: next.length === all.length ? [] : next });
-    if (get().result) get().search();
+    if (get().result || get().searching) get().search();
   },
 
   setVersions(versions) {
     set({ versions });
-    if (get().result) get().search(); // 服务端有缓存，切换不会重新请求各平台
+    if (get().result || get().searching) get().search(); // 服务端有缓存，切换不会重新请求各平台
   },
 
   async search() {
     const q = get().query.trim();
     if (!q) return;
-    set({ searching: true, error: null });
+    const key = JSON.stringify([q, [...get().sources].sort(), get().versions]);
+    const epoch = ++searchEpoch;
+    set({ searching: true, error: null, ...(get().resultKey !== key ? { result: null } : {}) });
     try {
       const result = await musicApi.search({ q, sources: get().sources, versions: get().versions });
-      if (get().query.trim() === q) set({ result });
+      if (epoch === searchEpoch && get().query.trim() === q) set({ result, resultKey: key });
     } catch (e) {
-      set({ error: e.message });
+      if (epoch === searchEpoch) set({ error: e.message });
     } finally {
-      set({ searching: false });
+      if (epoch === searchEpoch) set({ searching: false });
     }
   },
 

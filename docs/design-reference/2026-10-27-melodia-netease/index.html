@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>设计参考索引 · Half&amp;Half Reference</title>
+<style>
+/* Inline copies of the existing warm-light semantic tokens; no external dependencies. */
+:root {
+  color-scheme: light;
+  --color-bg-canvas:#f7f0e8; --color-bg-surface:#ffffff; --color-bg-subtle:#f4eee7;
+  --color-text-primary:#221d19; --color-text-secondary:#6b594a; --color-border-subtle:#dccdbe;
+  --color-brand-host:#f2a65a; --color-brand-guest:#ec7a96;
+  --color-role-host:#8a460c; --color-role-host-bg:#fff1df;
+  --color-role-guest:#a32f55; --color-role-guest-bg:#fdebf1;
+  --color-action-primary-bg:#8a460c; --color-action-primary-fg:#ffffff;
+  --color-status-success-fg:#146c43; --color-status-success-bg:#e8f5ed;
+  --color-focus:#a32f55; --radius-card:16px; --radius-control:12px; --size-touch-target:44px;
+  --gradient-together:linear-gradient(90deg,var(--color-brand-host),var(--color-brand-guest));
+  --font-sans:system-ui,-apple-system,"Segoe UI","Noto Sans SC","Microsoft YaHei",sans-serif;
+}
+* { box-sizing:border-box; }
+body { margin:0; background:var(--color-bg-canvas); color:var(--color-text-primary); font:15px/1.6 var(--font-sans); }
+a { color:inherit; text-decoration:none; }
+button,input,summary { font:inherit; }
+button,.btn { min-height:44px; min-width:44px; padding:10px 16px; border:1px solid var(--color-border-subtle); border-radius:12px; background:var(--color-bg-surface); color:inherit; display:inline-flex; align-items:center; justify-content:center; gap:8px; }
+button:disabled { cursor:default; }
+button { cursor:default; white-space:nowrap; flex-shrink:0; }
+a.btn,summary { cursor:pointer; }
+a:hover { text-decoration:underline; }
+:focus-visible { outline:3px solid var(--color-focus); outline-offset:3px; }
+.primary { background:var(--color-action-primary-bg); color:var(--color-action-primary-fg); border-color:transparent; }
+h1,h2,h3,p { margin:0; }
+h1 { font-size:clamp(28px,3.5vw,44px); line-height:1.2; letter-spacing:-1px; }
+h2 { font-size:21px; line-height:1.4; } h3 { font-size:16px; }
+small,.muted { color:var(--color-text-secondary); } small { font-size:12px; }
+.eyebrow { color:var(--color-role-host); font-size:11px; font-weight:750; letter-spacing:2px; text-transform:uppercase; }
+.row { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+.between { justify-content:space-between; }
+.stack { display:grid; gap:16px; }
+.badge { display:inline-block; border-radius:999px; padding:3px 9px; font-size:12px; background:var(--color-bg-subtle); color:var(--color-text-secondary); }
+.host { background:var(--color-role-host-bg); color:var(--color-role-host); }
+.guest { background:var(--color-role-guest-bg); color:var(--color-role-guest); }
+.online { background:var(--color-status-success-bg); color:var(--color-status-success-fg); }
+.mark { display:inline-grid; place-items:center; width:23px; height:23px; border:1px solid var(--color-role-host); border-radius:50%; font-size:12px; background:var(--color-role-host-bg); color:var(--color-role-host); vertical-align:middle; flex:none; }
+.brand { display:flex; gap:10px; align-items:center; font-weight:800; letter-spacing:-.5px; }
+.logo { width:29px; height:29px; border-radius:50%; background:linear-gradient(90deg,#f2a65a 50%,#ec7a96 50%); display:inline-block; flex:none; }
+.reference { background:var(--color-text-primary); color:var(--color-bg-canvas); padding:8px 24px; font-size:12px; display:flex; gap:16px; justify-content:space-between; flex-wrap:wrap; }
+.reference a { text-decoration:underline; }
+.shell { display:grid; grid-template-columns:190px minmax(0,1fr); max-width:1600px; margin:auto; min-height:calc(100dvh - 36px); }
+.sidebar { padding:32px 20px; border-right:1px solid var(--color-border-subtle); }
+.sidebar nav { display:grid; gap:8px; margin:40px 0; }
+.sidebar nav a { padding:12px; border-radius:12px; color:var(--color-text-secondary); }
+.sidebar nav a.active { background:var(--color-role-guest-bg); color:var(--color-role-guest); font-weight:700; }
+.side-note { border-top:1px solid var(--color-border-subtle); padding-top:24px; font-size:12px; color:var(--color-text-secondary); }
+.workspace { min-width:0; padding:26px 32px 154px; }
+.topbar { display:flex; justify-content:space-between; gap:16px; align-items:center; margin-bottom:28px; flex-wrap:wrap; }
+.topbar a { min-height:44px; display:inline-flex; align-items:center; }
+.card { background:var(--color-bg-surface); border:1px solid var(--color-border-subtle); border-radius:var(--radius-card); padding:24px; }
+.cover { width:100%; aspect-ratio:1; border-radius:12px; background:radial-gradient(ellipse at 65% 30%,#fdebf1 0,transparent 38%),linear-gradient(145deg,#f2a65a,#ec7a96 55%,#8a460c); position:relative; overflow:hidden; display:grid; place-items:center; }
+.cover::before { content:""; width:72%; height:72%; border:1px solid #fff1df; border-radius:50%; box-shadow:0 0 0 18px #fff1df33,0 0 0 36px #fff1df22; }
+.cover::after { content:"HALF / HALF"; position:absolute; bottom:12%; left:12%; font-size:11px; letter-spacing:3px; font-weight:800; color:#221d19; }
+.cover.alt { background:radial-gradient(circle at 20% 60%,#fff1df,transparent 60%),linear-gradient(135deg,#ec7a96,#dccdbe,#f2a65a); }
+.cover.tiny { width:44px; border-radius:8px; flex:none; }
+.cover.tiny::after,.cover.tiny::before { display:none; }
+.avatar { width:36px; height:36px; display:inline-grid; place-items:center; border-radius:50%; background:var(--color-role-host-bg); color:var(--color-role-host); border:1px solid var(--color-brand-host); font-weight:700; flex:none; }
+.avatar.rose { background:var(--color-role-guest-bg); border-color:var(--color-brand-guest); color:var(--color-role-guest); }
+.link { width:30px; height:2px; background:var(--gradient-together); }
+.duo { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.section-head { display:flex; justify-content:space-between; gap:12px; align-items:center; margin:24px 0 16px; flex-wrap:wrap; }
+.song { display:grid; grid-template-columns:26px 44px minmax(0,1fr) auto; gap:12px; align-items:center; min-height:76px; padding:12px 8px; border-bottom:1px solid var(--color-border-subtle); }
+.song:last-child { border-bottom:0; }
+.song.current { background:var(--color-role-guest-bg); border-radius:12px; }
+.song strong,.song small { display:block; overflow-wrap:anywhere; }
+.song strong { font-size:14px; } .song small { margin-top:3px; }
+.song .num { color:var(--color-text-secondary); font-size:12px; }
+.notes { margin-top:32px; border-top:1px solid var(--color-border-subtle); padding-top:20px; color:var(--color-text-secondary); font-size:12px; }
+.notes ol { padding-left:20px; display:grid; gap:8px; }
+.bottom { position:fixed; z-index:5; bottom:0; left:0; right:0; background:var(--color-bg-surface); border-top:1px solid var(--color-border-subtle); padding:12px 24px calc(12px + env(safe-area-inset-bottom,0px)); }
+.bottom-inner { max-width:1450px; margin:auto; display:grid; grid-template-columns:1fr 1.2fr 1fr; align-items:center; gap:24px; }
+.track { display:flex; align-items:center; gap:12px; min-width:0; } .track strong { font-size:14px; } .track small { display:block; }
+.transport { display:flex; justify-content:center; align-items:center; gap:8px; }
+.play { background:var(--color-action-primary-bg); color:white; border-radius:50%; width:48px; padding:0; }
+.timeline { display:flex; align-items:center; gap:10px; font-size:11px; color:var(--color-text-secondary); margin-top:8px; }
+.progress { height:4px; border-radius:4px; background:var(--color-border-subtle); flex:1; overflow:hidden; } .progress i { display:block; height:100%; width:42%; background:var(--gradient-together); }
+.tools { display:flex; justify-content:flex-end; gap:8px; flex-wrap:wrap; }
+.tabs { display:flex; gap:8px; flex-wrap:wrap; border-bottom:1px solid var(--color-border-subtle); padding-bottom:12px; }
+.tabs span { display:inline-flex; min-height:44px; padding:8px 16px; align-items:center; }
+.tabs .selected { border-bottom:3px solid var(--color-role-guest); font-weight:700; color:var(--color-role-guest); }
+@media(min-width:1100px) { .workspace { padding-top:28px; } }
+@media(max-width:900px) {
+  .shell { grid-template-columns:1fr; } .sidebar { padding:16px; border-right:0; border-bottom:1px solid var(--color-border-subtle); }
+  .sidebar nav { display:flex; margin:12px 0 0; gap:4px; flex-wrap:wrap; } .sidebar nav a { padding:8px 12px; }
+  .side-note { display:none; } .workspace { padding:22px 20px 192px; }
+  .bottom-inner { grid-template-columns:1fr auto; gap:10px; } .bottom .tools { grid-column:1/-1; justify-content:center; }
+  .bottom .timeline { display:none; }
+}
+@media(max-width:430px) {
+  body { font-size:14px; } .reference { padding:8px 16px; gap:4px; } .reference span { font-size:11px; }
+  .workspace { padding:20px 16px 200px; } .topbar { margin-bottom:20px; gap:8px; }
+  .card { padding:18px; } .song { gap:8px; grid-template-columns:18px 40px minmax(0,1fr) auto; }
+  .cover.tiny { width:40px; } .song small { font-size:11px; } .bottom { padding:10px 12px calc(10px + env(safe-area-inset-bottom,0px)); }
+  .bottom .transport { gap:2px; } .bottom .transport .secondary { display:none; }
+  .bottom .track small { font-size:11px; } .bottom .tools .desktop-only { display:none; }
+  .tabs { gap:0; } .tabs span { padding:8px 10px; } .notes { margin-top:24px; }
+}
+
+.index-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:24px; }
+.index-grid a { border-top:3px solid var(--color-brand-host); min-height:190px; align-content:center; }
+.index-grid a:nth-child(even) { border-top-color:var(--color-brand-guest); }
+@media(max-width:600px) { .index-grid { grid-template-columns:1fr; gap:16px; } }
+
+</style>
+</head>
+
+<body>
+  <div class="reference">
+    <a href="index.html">
+      ← 设计参考 / Reference studies · 27 OCT 2026
+    </a>
+    <span>
+      静态示意 · 全部内容为样例 · 播放及数据操作未接入
+    </span>
+  </div>
+  <div class="shell">
+    <aside class="sidebar">
+      <a class="brand" href="index.html">
+        <i class="logo" aria-hidden="true">
+        </i>
+        Half
+        &amp;
+        Half
+      </a>
+      <nav aria-label="示意图导航">
+        <a href="mockup-player.html">
+          ◒ 一起听
+        </a>
+        <a href="mockup-dashboard.html">
+          ▦ 我的音乐
+        </a>
+        <a href="mockup-search.html">
+          ⌕ 搜索音乐
+        </a>
+        <a href="mockup-nowplaying-lyrics.html">
+          ♫ 歌词视图
+        </a>
+      </nav>
+      <div class="side-note">
+        两个人，一张歌单。
+        <br>
+        Warm light, shared time.
+        <br>
+        <br>
+        房间 H7K2 · 房主视角
+        <br>
+        下载队列与播放队列分离
+      </div>
+    </aside>
+    <main class="workspace">
+      <header class="topbar">
+        <div class="stack">
+          <div class="eyebrow">
+            DESIGN REFERENCE / 示意图
+          </div>
+          <h1>
+            暖光同频，下一种可能。
+          </h1>
+          <p class="muted">
+            Melodia × netease-music-gpui → Half
+            &amp;
+            Half
+            <br>
+            以两个人的房间为中心，让浏览、点歌与聆听各就其位。
+          </p>
+        </div>
+      </header>
+      <div class="index-grid">
+        <a class="card stack" href="mockup-player.html">
+          <span class="eyebrow">
+            01 / THE ROOM
+          </span>
+          <h2>
+            主播放器 ↗
+          </h2>
+          <p class="muted">
+            侧栏、共享列表、正在播放、常驻播放条与队列侧面板。
+          </p>
+        </a>
+        <a class="card stack" href="mockup-nowplaying-lyrics.html">
+          <span class="eyebrow">
+            02 / THE MOMENT
+          </span>
+          <h2>
+            同频歌词 ↗
+          </h2>
+          <p class="muted">
+            展开封面与双语歌词，始终看见彼此的在线状态。
+          </p>
+        </a>
+        <a class="card stack" href="mockup-dashboard.html">
+          <span class="eyebrow">
+            03 / THE COLLECTION
+          </span>
+          <h2>
+            我的音乐 ↗
+          </h2>
+          <p class="muted">
+            分类带、原位详情横幅与好友／统计／发现卡片。
+          </p>
+        </a>
+        <a class="card stack" href="mockup-search.html">
+          <span class="eyebrow">
+            04 / THE NEXT SONG
+          </span>
+          <h2>
+            搜索音乐 ↗
+          </h2>
+          <p class="muted">
+            最佳匹配卡片与分组结果，区分版本、来源与加入状态。
+          </p>
+        </a>
+      </div>
+      <section class="notes stack">
+        <h2>
+          如何查看 / How to review
+        </h2>
+        <p>
+          直接双击 HTML 文件，无需构建、服务器、网络或登录。样式内联，使用现有暖纸、白色表面、琥珀房主、玫瑰房客令牌。宽屏建议 1440 × 1000，手机建议 390 × 844；1100px 以上为桌面，430px 以下为移动布局。
+        </p>
+        <p>
+          Static reference only. Buttons and data are illustrative; links navigate between studies. Audio, search, room connection and lyric synchronization are not implemented. 展开说明使用原生 details，可用键盘操作。
+        </p>
+        <p>
+          封面为 CSS 渐变；人名、统计、曲名与原创歌词均为样例。主播放器页底部有编号批注。
+        </p>
+        <a class="btn" href="README.md">
+          阅读双语模式比较与 P0 / P1 / P2 建议 →
+        </a>
+      </section>
+    </main>
+  </div>
+</body>
+</html>

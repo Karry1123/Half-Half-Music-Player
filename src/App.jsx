@@ -4,6 +4,7 @@ import { ConnectionBar } from './components/ConnectionBar.jsx';
 import { DebugPanel } from './components/DebugPanel.jsx';
 import { Lobby } from './components/Lobby.jsx';
 import { NowPlaying } from './components/NowPlaying.jsx';
+import { PlayerBar } from './components/PlayerBar.jsx';
 import { Playlist } from './components/Playlist.jsx';
 import { SearchDrawer } from './components/SearchDrawer.jsx';
 import { Toasts } from './components/Toasts.jsx';
@@ -88,6 +89,7 @@ export function App() {
         <NowPlaying />
         <Playlist />
       </main>
+      <PlayerBar />
       <SearchDrawer />
       <DownloadQueue />
       <Toasts />

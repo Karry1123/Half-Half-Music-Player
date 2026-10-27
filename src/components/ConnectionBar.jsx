@@ -2,6 +2,7 @@ import { engine } from '../engine/session.js';
 import { useMusic } from '../store/useMusic.js';
 import { useSession } from '../store/useSession.js';
 import { Icon } from './Icon.jsx';
+import { DuoAvatars } from './NowPlaying.jsx';
 import { DownloadQueueButton } from './DownloadQueue.jsx';
 
 const PATH = { host: '局域网直连', srflx: 'STUN 打洞', prflx: 'STUN 打洞', relay: 'TURN 中继' };
@@ -40,6 +41,7 @@ function PingMeter() {
 
 export function ConnectionBar() {
   const role = useSession((s) => s.role);
+  const roomCode = useSession(s => s.roomCode);
   const link = useLinkState();
   const modalOpen = useMusic((s) => s.drawerOpen || s.queueOpen);
   const openDrawer = useMusic((s) => s.setDrawer);
@@ -58,6 +60,8 @@ export function ConnectionBar() {
         <span className="light-label">{link.label}</span>
         <PingMeter />
       </span>
+      <DuoAvatars />
+      <span className="tag">房间 · {roomCode}</span><a className="btn room-invite" href="./dashboard.html">邀请好友一起听</a>
       <div className="topbar-actions" role="group" aria-label="房间操作">
         {role === 'host' && (
           <><DownloadQueueButton />

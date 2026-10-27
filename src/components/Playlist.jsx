@@ -1,4 +1,5 @@
 import { useRef } from 'react';
+import { upNextTracks } from '../../public/playerPresentation.js';
 import { engine, fmtTime } from '../engine/session.js';
 import { useMusic } from '../store/useMusic.js';
 import { useSession } from '../store/useSession.js';
@@ -102,4 +103,18 @@ export function Playlist() {
       {!isHost && playlist.length > 0 && <div className="muted playlist-note">点击歌曲会请求房主切换播放</div>}
     </section>
   );
+}
+
+export function UpNext() {
+  const playlist = useSession(s => s.playlist);
+  const currentId = useSession(s => s.currentId);
+  const role = useSession(s => s.role);
+  const tracks = upNextTracks(playlist, currentId);
+  return <section aria-label="接下来" className="up-next"><h2>接下来 <small>{tracks.length} 首</small></h2>
+    <p className="muted">共享列表中的后续曲目 · 实际下一首遵循房主的播放模式</p>
+    {tracks.map(track => <button className="up-next-row" key={track.id} onClick={() => engine.act('select', { itemId: track.id })}>
+      <span><strong>{track.title}</strong><small>{track.artist || '未知歌手'}</small></span><span>{role === 'guest' ? '请求播放' : '播放'}</span>
+    </button>)}
+    {!tracks.length && <p className="empty">已到列表末尾，可搜索或导入更多歌曲</p>}
+  </section>;
 }

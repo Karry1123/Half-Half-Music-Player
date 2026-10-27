@@ -161,6 +161,7 @@
 <div id="root"><div id="boot">正在加载 Half&amp;Half…</div></div>
 
 <script type="module">
+import { songResults, upNextTracks } from './playerPresentation.js';
 import React, { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { createRoot } from 'react-dom/client';
 import htm from 'htm';
@@ -249,7 +250,7 @@ async function buildIce(settings = loadIceSettings()) {
   let source = '内置 STUN';
   if (location.protocol.startsWith('http') || HH.iceUrl) {
     try {
-      const r = await fetch(HH.iceUrl || `${API_BASE}/ice.json`, { headers: authHeaders(), signal: AbortSignal.timeout(HH.iceUrl ? 8000 : 3000), cache: 'no-store' }); // 后端在 Render 上时可能要冷启动
+      const r = await fetch(HH.iceUrl || (API_BASE === '/music-api' ? './ice.json' : `${API_BASE}/ice.json`), { headers: authHeaders(), signal: AbortSignal.timeout(HH.iceUrl ? 8000 : 3000), cache: 'no-store' }); // 后端在 Render 上时可能要冷启动
       const list = r.ok ? await r.json() : null;
       if (Array.isArray(list) && list.length) [servers, source] = [list, '服务器下发'];
     } catch {}
@@ -379,6 +380,8 @@ const store = createStore({
   searching: false,
   results: [],
   searchMeta: null,
+  searchKey: null,
+  searchError: null,
   downloads: restoreDownloads(globalThis.localStorage), // resultId → { status, progress, error }
   // 曲库 / 播放
   library: [], // [{ id, title, artist, duration, size, source, sourceLabel, quality, cover, addedBy }]
@@ -2849,7 +2852,7 @@ function PlaylistStrip({ view }) {
     toast('已恢复：下载 / 导入时会询问放进哪个歌单');
   };
   const chips = [{ id: ALL_ID, name: '全部', count: libraryCount }, ...playlists.map((p) => ({ id: p.id, name: p.name, count: p.trackIds.length, system: p.system }))];
-  return html`<div class="border-b border-ink-700/60 px-3 py-2.5">
+  return html`<div class="hh-library-tabs border-b border-ink-700/60 px-3 py-2.5">
     ${!asking && html`<div class="mb-2 flex items-center gap-2 px-1 text-xs text-sand-500">
       下载 / 导入的歌直接进「默认曲库」<button class="text-host hover:underline" onClick=${restoreAsking}>恢复询问歌单</button>
     </div>`}
@@ -2912,7 +2915,7 @@ function PlaylistHeader({ view, items }) {
     }
   };
 
-  return html`<div class="flex flex-wrap items-center gap-x-3 gap-y-2.5 border-b border-ink-700/60 px-4 py-3">
+  return html`<div class="hh-library-hero flex flex-wrap items-center gap-x-3 gap-y-2.5 border-b border-ink-700/60 px-4 py-3">
     <${PlaylistCover} playlist=${playlist || { id: ALL_ID }} size=${52} />
     <div class="min-w-0 flex-1 basis-[calc(100%-64px)] sm:basis-0">
       ${renaming
@@ -2935,14 +2938,16 @@ function PlaylistHeader({ view, items }) {
       ${custom && !renaming && html`<button class="grid h-9 w-9 shrink-0 place-items-center rounded-full text-sand-500 hover:bg-guest/10 hover:text-guest" onClick=${remove} aria-label="删除歌单" title="删除歌单（歌曲保留）"><${Trash2} size=${15} /></button>`}
       <button class="inline-flex flex-1 items-center justify-center gap-1.5 rounded-full hh-primary px-3.5 py-2 text-xs font-semibold   disabled:opacity-40 sm:flex-none"
         disabled=${!items.length} onClick=${() => session.playPlaylist(view, { orderedIds: items.map(x => x.id) })}
-        title=${inRoom ? '加载这个歌单，和对方一起听' : '用这个歌单替换播放队列'}>
-        <${inRoom ? Users : Play} size=${14} fill=${inRoom ? 'none' : 'currentColor'} /> ${inRoom ? '在房间中播放' : '播放全部'}
+        title="替换现有播放范围，从本歌单开始">
+        <${inRoom ? Users : Play} size=${14} fill=${inRoom ? 'none' : 'currentColor'} /> ${inRoom ? '替换房间队列并播放' : '替换队列并播放'}
       </button>
+      <button class="hh-append-button rounded-xl border border-ink-600 p-3 text-xs" disabled=${!items.length || role === 'guest'} onClick=${() => appendRoomItems(items)}>追加到当前队列</button>
       <${ZipExport} variant="icon" storage=${LocalLib} name=${title} trackIds=${playlist?.trackIds} />
     </div>
   </div>`;
 }
 
+const libraryScrollPositions = new Map();
 function LibraryPanel() {
   const library = useStore((s) => s.library);
   const currentId = useStore((s) => s.currentId);
@@ -2954,6 +2959,11 @@ function LibraryPanel() {
   const offline = useStore((s) => s.offline);
   const isGuest = role === 'guest';
   const [sort, setSort] = useState('default');
+  const listRef = useRef(null);
+  useEffect(() => {
+    const node = listRef.current;
+    if (node) node.scrollTop = libraryScrollPositions.get(view) || 0;
+  }, [view]);
   useStore(s => s.statsRevision);
 
   // Guest：看房主的曲库，房主在播歌单时只显示歌单里的歌（与房主队列一致）
@@ -2970,7 +2980,7 @@ function LibraryPanel() {
     session.playPlaylist(view, { startItemId: x.id, orderedIds: items.map(t => t.id) }); // 歌单里点任意一首：队列换成整个歌单，从这首开始
   };
 
-  return html`<${Panel} title=${isGuest ? '房间曲库 · 播放队列' : '我的歌单 · 播放队列'} icon=${Disc3} stackedHeader=${true} className="lg:max-h-[calc(100vh-190px)]"
+  return html`<${Panel} title=${isGuest ? '共享播放列表' : '我的曲库与歌单'} icon=${Disc3} stackedHeader=${true} className="hh-library-panel"
     right=${html`<span class="flex flex-wrap items-center gap-2">
       ${!isGuest && html`<select aria-label="排序方式" class="rounded-lg bg-ink-800 px-2 py-2 text-xs" value=${sort} onChange=${e => setSort(e.target.value)}>${[['default', '添加时间'], ['count', '收听次数'], ['name', '歌名 A-Z'], ['duration', '时长']].map(([id, label]) => html`<option key=${id} value=${id}>${label}</option>`)}</select>`}
       <span class="hidden text-xs text-sand-500 tabular sm:inline">${items.length} 首 · ${fmtSize(totalSize)}</span>
@@ -2986,7 +2996,7 @@ function LibraryPanel() {
     <div class="hidden grid-cols-[32px_minmax(0,1fr)_88px_72px_56px_76px] gap-3 border-b border-ink-700/60 px-5 py-2 text-xs uppercase tracking-wider text-sand-500 md:grid">
       <span>#</span><span>标题</span><span>来源</span><span class="text-right">大小</span><span class="text-right">时长</span><span />
     </div>
-    <div class="scroll-thin min-h-[200px] flex-1 overflow-y-auto p-2" role="list">
+    <div ref=${listRef} onScroll=${e => libraryScrollPositions.set(view, e.currentTarget.scrollTop)} class="hh-library-list scroll-thin min-h-[200px] flex-1 overflow-y-auto p-2" role="list">
       ${!items.length && !pending.length && html`<div class="hh-empty m-3 grid place-items-center gap-2 rounded-2xl border-2 border-dashed border-ink-700 px-6 py-14 text-center text-sm text-sand-500">
         <${FileAudio} size=${26} class="text-guest/70" />
         ${isGuest
@@ -3001,7 +3011,7 @@ function LibraryPanel() {
         return html`<div key=${x.id} role="listitem"
           class=${cx('hh-playlist-row group grid cursor-default grid-cols-[32px_minmax(0,1fr)_auto] items-center gap-3 rounded-xl px-3 py-2 md:grid-cols-[32px_minmax(0,1fr)_88px_72px_56px_76px]', cur ? 'hh-selected' : 'hover:bg-ink-800')}
           onDblClick=${() => play(x)}
-          title=${isGuest ? '双击请求房主切到这首' : playlist ? '双击：播放这个歌单，从这首开始' : '双击播放'}>
+          title=${isGuest ? '双击请求房主切到这首' : playlist ? '双击：替换队列并播放这个歌单，从这首开始' : '双击：替换为全部曲库并播放'}>
           <span class="text-center text-xs text-sand-500 tabular">
             ${cur ? html`<span class=${cx('eq inline-flex h-3 items-end', !playing && 'eq-paused')} aria-hidden="true"><i /><i /><i /></span>` : i + 1}
           </span>
@@ -3020,7 +3030,7 @@ function LibraryPanel() {
           <span class="hidden text-right text-xs text-sand-400 tabular md:block">${x.duration ? fmtTime(x.duration) : '–'}</span>
           <span class="flex justify-end gap-1">
             <button class="grid h-8 w-8 place-items-center rounded-full text-sand-200 opacity-80 hover:bg-primary hover:text-primary-fg group-hover:opacity-100"
-              onClick=${() => play(x)} aria-label=${cur && playing ? '暂停' : `播放 ${x.title}`}>
+              onClick=${() => play(x)} aria-label=${cur && playing ? '暂停' : isGuest ? `请求房主播放 ${x.title}` : `替换队列并播放 ${x.title}`}>
               <${cur && playing ? Pause : Play} size=${15} />
             </button>
             ${isGuest
@@ -3912,7 +3922,8 @@ async function homeSearch(query, platformKey) {
   const q = query.trim();
   if (!q) return;
   const epoch = ++searchEpoch;
-  set({ searching: true, query: q });
+  const key = JSON.stringify([q, platformKey || 'all']);
+  set({ searching: true, query: q, searchError: null, searchKey: key, ...(get().searchKey !== key ? { results: [], searchMeta: null } : {}) });
   try {
     const link = parseLink(q);
     if (link) {
@@ -3930,6 +3941,7 @@ async function homeSearch(query, platformKey) {
           }
         } catch (e) {
       if (epoch !== searchEpoch) return;
+          set({ searchError: `链接解析失败：${e.message}` });
           toast(`链接解析失败：${e.message}`, 'warn');
           return set({ results: [], searchMeta: { link: true } });
         }
@@ -3944,6 +3956,7 @@ async function homeSearch(query, platformKey) {
     set({ results: r.results, searchMeta: r.meta });
   } catch (e) {
       if (epoch !== searchEpoch) return;
+    set({ searchError: e.message });
     toast(`搜索失败：${e.message}`, 'warn');
   } finally {
     if (epoch === searchEpoch) set({ searching: false });
@@ -4229,7 +4242,7 @@ function LinkCard({ r, onSelectTrack }) {
               const on = String(x.id) === String(q?.id);
               return html`<button key=${x.id} role="radio" aria-checked=${on} onClick=${() => setQid(x.id)}
                 class=${cx('rounded-xl border px-3 py-2 text-left text-xs transition', on ? 'border-host bg-host/15 text-sand-50' : 'border-white/10 text-sand-300 hover:border-white/30')}>
-                <div class="flex items-center gap-1.5 font-semibold">${x.label}${x.lossless ? html`<span class="rounded bg-host/20 px-1 text-xs text-host">无损</span>` : ''}${x.vip ? html`<span class="rounded bg-guest/20 px-1 text-xs text-guest">大会员</span>` : ''}</div>
+                <div class="flex items-center gap-1.5 font-semibold">${x.label}${x.lossless ? html`<span class="rounded bg-host/20 px-1 text-xs text-host">无损</span>` : ''}</div>
                 <div class="mt-0.5 tabular text-sand-500">${x.bitrate ? `${x.bitrate}kbps · ` : ''}${x.size ? `≈${fmtSize(x.size)}` : ''}</div>
               </button>`;
             })}
@@ -4237,13 +4250,7 @@ function LinkCard({ r, onSelectTrack }) {
           ${r.hint && html`<p class="mt-2 text-xs text-sand-500">${r.hint}</p>`}
         </div>`}
         <div class="mt-5 flex flex-wrap items-center gap-3">
-          ${dl?.status === 'downloading'
-            ? html`<div class="w-56"><div class="h-2 overflow-hidden rounded-full bg-white/10"><i class="block h-full bg-gradient-to-r from-host to-guest transition-all" style=${{ width: `${pct}%` }} /></div><span class="text-xs text-sand-400 tabular">下载中 ${pct}%</span></div>`
-            : dl?.status === 'done'
-              ? html`<span class="inline-flex items-center gap-1.5 rounded-xl bg-sync/15 px-4 py-2.5 text-sm font-medium text-sync"><${Check} size=${16} /> 已加入歌单并缓存到本机</span>`
-              : html`<button data-role=${get().role} class="inline-flex items-center gap-2 rounded-xl hh-primary px-5 py-2.5 text-sm font-semibold shadow-lg" onClick=${choose}>
-                  ${dl?.status === 'error' ? html`<${RefreshCw} size=${16} /> 重试` : html`<${Download} size=${16} /> 提取音频并加入歌单`}
-                </button>`}
+          <${SearchDownloadActions} r=${{ ...r, qualityId: q && String(q.id) !== String(r.qualityId) ? q.id : null, quality: q ? (q.lossless ? 'FLAC' : `${q.bitrate}k`) : r.quality, size: q?.size ?? r.size }} />
           ${q?.size ? html`<span class="text-xs text-sand-500">${q.label} · ≈${fmtSize(q.size)}</span>` : ''}
         </div>
       </div>
@@ -4323,6 +4330,31 @@ function PreviewDock() {
   </div>`;
 }
 
+async function appendRoomItems(items) {
+  if (get().role === 'guest') return toast('同听歌单由房主管理；点击曲目可以请求房主播放', 'warn');
+  const ids = items.map(t => t.id);
+  if (get().activePlaylistId) {
+    await addItemsToPlaylists([get().activePlaylistId], ids);
+    session.broadcastLibrary();
+    session.announcePlaylist();
+  } else toast('当前队列播放整个曲库，这些歌曲已在其中');
+}
+
+function SearchDownloadActions({ r }) {
+  const state = useStore(s => s);
+  const dl = state.downloads[r.id];
+  const item = state.library.find(t => t.sourceId === r.id);
+  const scope = state.role === 'guest' ? state.roomPlaylist?.ids || state.library.map(t => t.id) : session.scopeIds();
+  const included = item && scope.includes(item.id);
+  return html`<div class="hh-search-actions">
+    ${dl?.status === 'downloading' ? html`<span role="status">下载中 ${Math.round((dl.progress || 0) * 100)}%</span>`
+      : item || dl?.status === 'done' ? html`<span class="text-xs text-sync">已下载到曲库</span>`
+      : html`<button class="rounded-xl border border-ink-600 px-3 py-2 text-xs" onClick=${() => downloadResult(r)}>${dl?.status === 'error' ? '重试下载' : '下载到曲库'}</button>`}
+    ${item && html`<button class="rounded-xl hh-primary px-3 py-2 text-xs" disabled=${included || state.role === 'guest'} onClick=${() => appendRoomItems([item])}>${included ? '已在当前队列' : state.role === 'guest' ? '由房主加入队列' : '追加到当前队列'}</button>`}
+    ${dl?.status === 'error' && html`<small role="alert">${dl.error}</small>`}
+  </div>`;
+}
+
 function ResultCard({ r, i, onSelectTrack }) {
   const dl = useStore((s) => s.downloads[r.id]);
   const previewing = useStore((s) => s.preview?.id === r.id);
@@ -4348,19 +4380,7 @@ function ResultCard({ r, i, onSelectTrack }) {
         ${r.size ? html`<span class="text-xs text-sand-500 tabular" title=${r.fromLink ? '按实际音轨码率计算' : '按码率与时长估算'}>≈${fmtSize(r.size)}</span>` : ''}
       </div>
     </div>
-    <div class="flex shrink-0 flex-col items-end gap-1.5">
-      ${dl?.status === 'downloading'
-        ? html`<div class="w-24 text-right">
-            <div class="h-1.5 overflow-hidden rounded-full bg-white/10"><i class="block h-full bg-gradient-to-r from-host to-guest transition-all" style=${{ width: `${pct}%` }} /></div>
-            <span class="text-xs text-sand-400 tabular">下载中 ${pct}%</span>
-          </div>`
-        : dl?.status === 'done'
-          ? html`<span class="inline-flex items-center gap-1 rounded-xl bg-sync/15 px-3 py-2 text-xs font-medium text-sync"><${Check} size=${14} /> 已加入歌单</span>`
-          : html`<button class="inline-flex items-center gap-1.5 rounded-xl bg-white/10 px-3 py-2 text-xs font-medium transition hover:bg-primary hover:text-primary-fg"
-              onClick=${() => onSelectTrack(r)} title=${role === 'guest' ? '下载后分享给房主' : '下载并加入同听歌单'}>
-              ${dl?.status === 'error' ? html`<${RefreshCw} size=${14} /> 重试` : html`<${Download} size=${14} /> <span class="hidden sm:inline">下载并</span>加入歌单`}
-            </button>`}
-    </div>
+    <${SearchDownloadActions} r=${r} />
   </article>`;
 }
 
@@ -4388,12 +4408,14 @@ function SearchDiscovery({ onSearch, onSelectTrack }) {
   const apiMode = useStore((s) => s.apiMode);
   const conn = useStore((s) => s.conn);
   const [keyword, setKeyword] = useState(query);
+  const error = useStore(s => s.searchError);
+  const { best, groups } = songResults(results, query);
   const isLink = !!parseLink(keyword);
   const linkInfo = detectLink(keyword);
   const run = (q = keyword, p = platform) => q.trim() && onSearch(q, p);
 
   return html`<section class="relative z-10 mx-auto mt-4 max-w-7xl px-4 sm:mt-6" aria-labelledby="search-title">
-    <div class="text-center">
+    <div class="hh-search-hero text-center">
       <h2 id="search-title" class="text-xl font-bold">想听什么？</h2>
       <div class="mt-3 flex justify-center"><${DownloadQueueButton} /></div>
       <p class="mt-1 text-xs leading-relaxed text-sand-400">搜歌名、歌手，或粘贴 B 站 / YouTube 链接</p>
@@ -4432,19 +4454,21 @@ function SearchDiscovery({ onSearch, onSelectTrack }) {
     </div>
 
     <div class="mt-8 pb-10">
-      ${searching
+      ${error && html`<div role="alert" class="hh-search-error p-4">${error}<button class="p-3 underline" onClick=${() => run()}>重试搜索</button><button class="p-3 underline" onClick=${() => api.init()}>重新检测服务</button></div>`}
+      ${meta?.sources?.filter(source => !source.ok).map(source => html`<p key=${source.source} role="status" class="p-3 text-sm text-error">${source.label || source.source}：${source.error || source.code || '暂时不可用'} · 其余来源仍可查看</p>`)}
+      ${searching && results.length > 0 && html`<p role="status" class="p-3 text-sm text-sand-400">正在刷新，保留本次查询结果…</p>`}
+      ${searching && !results.length
         ? html`<${SkeletonGrid} n=${6} />`
         : results.length
           ? html`<div>
               <div class="mb-3 flex flex-wrap items-center justify-between gap-2 text-xs text-sand-500">
                 <span>${meta?.link ? '已解析链接' : `找到 ${results.length} 条`}${meta?.originals?.length ? ` · 原唱 ${meta.originals.join('、')}` : ''}${meta?.mock ? ' · 演示数据' : ''}</span>
-                <button class="hover:text-sand-50" onClick=${() => { set({ results: [], searchMeta: null }); setKeyword(''); }}>清空结果</button>
+                <button class="hover:text-sand-50" onClick=${() => { searchEpoch++; set({ results: [], searchMeta: null, searchKey: null, searchError: null, searching: false }); setKeyword(''); }}>清空结果</button>
               </div>
               ${meta?.link && results.length === 1 && results[0].qualities
                 ? html`<${LinkCard} key=${results[0].id} r=${results[0]} onSelectTrack=${onSelectTrack} />`
-                : html`<div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                    ${results.map((r, i) => html`<${ResultCard} key=${r.id} r=${r} i=${i} onSelectTrack=${onSelectTrack} />`)}
-                  </div>`}
+                : html`<section class="hh-best-result"><h3 class="mb-3 font-semibold">最佳匹配</h3><${ResultCard} r=${best} i=${0} onSelectTrack=${onSelectTrack} /></section>
+                    ${groups.map(group => html`<section key=${group.key} class="mt-6"><h3 class="mb-3 text-sm text-sand-400">${group.label} · ${group.tracks.length} 首</h3><div class="hh-song-results grid gap-3">${group.tracks.map((r, i) => html`<${ResultCard} key=${r.id} r=${r} i=${i} onSelectTrack=${onSelectTrack} />`)}</div></section>`)}` }
             </div>`
           : meta?.unsupported
             ? html`<div class="glass mx-auto max-w-md rounded-2xl p-6 text-center text-sm text-sand-400">当前音乐服务未接入「${meta.unsupported}」，换个平台试试</div>`
@@ -4699,6 +4723,18 @@ function QueueSheet() {
   </div>`;
 }
 
+function UpNextPanel() {
+  const state = useStore(s => s);
+  const ids = state.role === 'guest' ? state.roomPlaylist?.ids || state.library.map(t => t.id) : session.scopeIds();
+  const byId = new Map(state.library.map(t => [t.id, t]));
+  const tracks = upNextTracks(ids.map(id => byId.get(id)).filter(Boolean), state.currentId);
+  return html`<section class="hh-up-next w-full" aria-label="接下来"><h3>接下来 · ${tracks.length} 首</h3><p class="text-xs text-sand-400">当前共享列表的后续曲目 · 实际顺序遵循房主播放模式</p>
+    ${tracks.map(t => html`<button key=${t.id} class="hh-up-next-row" onClick=${() => session.act('select', { itemId: t.id })}><${Cover} item=${t} size=${44} /><span><strong>${t.title}</strong><small>${t.artist || '未知歌手'}</small></span><span>${state.role === 'guest' ? '请求播放' : '播放'}</span></button>`)}
+    ${!tracks.length && html`<p class="p-4 text-sm text-sand-400">已到列表末尾，可从曲库添加歌曲</p>`}
+    <div class="flex flex-wrap gap-2 mt-3"><${DownloadQueueButton} /><button class="rounded-xl border border-ink-600 p-3 text-sm" disabled=${state.role === 'guest'} onClick=${() => set({ queueSheetOpen: true })}>替换播放歌单</button></div>
+  </section>`;
+}
+
 function NativePlayer({ open, close, expand }) {
   const s = useStore(s => s), item = s.library.find(x => x.id === s.currentId);
   const [dy, setDy] = useState(0), start = useRef(null);
@@ -4706,10 +4742,10 @@ function NativePlayer({ open, close, expand }) {
   useEffect(() => {
     if (!open) return;
     setDy(0);
-    const overflow = document.body.style.overflow; document.body.style.overflow = 'hidden';
+    const overflow = document.body.style.overflow, rootOverflow = document.documentElement.style.overflow; document.body.style.overflow = 'hidden'; document.documentElement.style.overflow = 'hidden';
     const onKey = e => { if (e.key === 'Escape') close(); };
     document.addEventListener('keydown', onKey);
-    return () => { document.body.style.overflow = overflow; document.removeEventListener('keydown', onKey); };
+    return () => { document.body.style.overflow = overflow; document.documentElement.style.overflow = rootOverflow; document.removeEventListener('keydown', onKey); };
   }, [open]);
   const can = !!item && s.loaded && (s.role !== 'guest' || s.conn === 'open');
   const receiving = item && s.role === 'guest' && !s.loaded;
@@ -4727,15 +4763,17 @@ function NativePlayer({ open, close, expand }) {
       onTouchStart=${e => { if (e.target.closest('button,input') || e.currentTarget.scrollTop > 0) return; start.current = e.touches[0].clientY; }}
       onTouchMove=${e => { if (start.current !== null) setDy(Math.max(0, e.touches[0].clientY - start.current)); }}
       onTouchEnd=${() => { start.current = null; if (dy > 100 && window.matchMedia('(prefers-reduced-motion: reduce)').matches) { close(); setDy(0); } else if (dy > 100) { setDy(window.innerHeight); setTimeout(() => { close(); setDy(0); }, 220); } else setDy(0); }} onTouchCancel=${() => { start.current = null; setDy(0); }}>
+      <div class="hh-presence row" role="status"><span class="hh-person host">${s.me?.name || '你'} · ${s.role === 'guest' ? '房客' : '房主 / 本机'}</span><span class="hh-person guest">${s.peer?.name || '等待好友加入'}</span><span>${s.waitingPeer ? '等待对方缓冲…' : receiving ? '正在接收音频…' : s.conn === 'open' ? '已连接' : s.conn === 'reconnecting' ? '正在重连…' : s.role ? '等待连接' : '本机收听'}</span></div>
       <${CoListenPill} />
       <button class="mx-auto p-3 text-sand-400" onClick=${close} aria-label="收起播放器"><${ChevronDown} size=${28} /></button>
-      <div class="mx-auto flex w-full max-w-md flex-1 flex-col items-center justify-center gap-7">
+      <div class="hh-expanded-main mx-auto flex w-full max-w-md flex-1 flex-col items-center justify-center gap-7">
         <div class=${cx('vinyl grid h-64 w-64 shrink-0 place-items-center rounded-full animate-spin-slow shadow-2xl', !(s.playing && s.loaded) && 'paused-anim')}><${Cover} item=${item} size=${170} round="rounded-full" /></div>
         <div class="w-full text-center"><h2 class="text-xl font-bold">${item?.title || '未在播放'}</h2><p class="mt-2 text-sand-400">${item?.artist || '选择喜欢的音乐'}</p>${receiving && html`<p role="status" class="mt-2 text-sm text-sand-400">正在从好友获取音频…</p>`}<p class="mt-2 text-xs text-sand-400">已完整聆听 ${trackCompletedCount(item)} 次</p></div>
         <${SeekBar} />
         <div class="hh-player-transport w-full"><${PlayModeButton} /><button disabled=${!can} onClick=${() => session.act('prev')} aria-label="上一首"><${SkipBack} size=${28} /></button><button data-role=${s.role} class="player-primary rounded-full hh-primary disabled:opacity-30" disabled=${!can} onClick=${() => session.act('toggle')} aria-label=${s.playing ? '暂停' : '播放'}><${s.playing ? Pause : Play} size=${30} /></button><button disabled=${!can || !s.canNext} onClick=${() => session.act('next')} aria-label="下一首"><${SkipForward} size=${28} /></button><button disabled=${s.role === 'guest'} onClick=${() => set({ queueSheetOpen: true })} aria-label="切换歌单" title="切换歌单"><${ListMusic} size=${24} /></button></div>
         <div class="flex w-full items-center gap-3 text-sand-400"><${s.volume ? Volume2 : VolumeX} size=${20} /><input type="range" class="hh flex-1" min="0" max="1" step="0.01" value=${s.volume} style=${{ '--fill': `${s.volume * 100}%` }} aria-label="音量" onInput=${e => session.setVolume(Number(e.target.value))} /></div>
         <${SyncStatus} />
+        <${UpNextPanel} />
       </div>
     </section>`}
   </div>`;
@@ -4778,6 +4816,8 @@ function App() {
     return () => { sample(); stats.flush().catch(console.warn); listeningSync.stop(); if (listeningStats === stats) listeningStats = null; document.removeEventListener('visibilitychange', visibility); audio.removeEventListener('pause', flush); clearTimeout(revisionTimer); nativeResume?.then(handle => handle?.remove()); unsubscribe(); unsubscribeCompleted(); unstore(); clearInterval(uploadTimer); window.removeEventListener('online', upload); for (const event of events) audio.removeEventListener(event, sample); audio.removeEventListener('ended', ended, true); window.removeEventListener('pagehide', flush); };
   }, []);
   const [tab, setTab] = useState('discover'), [playerOpen, setPlayerOpen] = useState(false);
+  const tabScroll = useRef({});
+  useEffect(() => { window.scrollTo(0, tabScroll.current[tab] || 0); }, [tab]);
   const [presence, setPresence] = useState({}), [invitation, setInvitation] = useState(null);
   const historyKey = `hh.listenHistory.${account.user?.id || 'legacy'}`;
   const [history, setHistory] = useState(() => { try { const value = JSON.parse(stored(historyKey)); return Array.isArray(value) ? value.slice(0, 30) : []; } catch { return []; } });
@@ -4838,15 +4878,16 @@ function App() {
   return html`
     <${CloudSheet} open=${cloudOpen} onClose=${() => set({ cloudOpen: false })} client=${account} status=${cloudStatus} playlists=${cloudLocalPlaylists}
       onSync=${() => cloudSync.sync().catch((e) => toast(`同步失败：${e.message}`, 'warn'))} onDownload=${(id) => downloadPending(id)} onOpen=${(id) => set({ cloudOpen: false, viewPlaylistId: id, screen: 'deck' })} />
+    <${ConnectionBar} />
     <main class="mx-auto max-w-5xl px-4 pt-5" style=${{ paddingBottom: `calc(${keyboardOpen ? 16 : playerVisible ? 170 : 80}px + var(--safe-bottom, 0px))` }}>
       ${tab === 'discover' && html`<${SearchDiscovery} onSearch=${homeSearch} onSelectTrack=${track => { stopPreview(); downloadWithPicker(track); }} />`}
       ${tab === 'library' && html`<div class="mb-4 flex flex-wrap justify-end gap-2"><${DownloadQueueButton} /><button class="inline-flex items-center gap-2 rounded-xl border border-ink-600 px-4 py-3 text-sm" title=${cloudStatus?.error ? `${cloudLabel}：${cloudStatus.error}` : cloudLabel} aria-label=${cloudLabel} onClick=${() => set({ cloudOpen: true })}><${Cloud} size=${18} /> ${cloudLabel}</button></div><${RoomPlaylistBanner} /><${LibraryPanel} />`}
       ${tab === 'friends' && html`<${FriendsPanel} onPreview=${previewPublicTrack} onCollect=${async p => { await playlistStore.copyPublic(p); toast('已收藏到我的歌单'); }} stats=${listeningStats} client=${account} presence=${presence} invite=${userId => sendSocial({ type: 'INVITE_LISTEN_REQUEST', userId })} history=${history} />`}
-      ${tab === 'settings' && html`<${StatsPanel} /><${AccountCard} client=${account} className="space-y-4 rounded-2xl border border-ink-700 p-5" /><button class="mt-5 flex w-full items-center gap-3 rounded-xl border border-ink-600 p-4 text-left" onClick=${() => set({ connSettingsOpen: true })}><${Settings} size=${18} class="shrink-0" /> 网络诊断 / 连接与播放设置</button><${ConnectionBar} />`}
+      ${tab === 'settings' && html`<${StatsPanel} /><${AccountCard} client=${account} className="space-y-4 rounded-2xl border border-ink-700 p-5" /><button class="mt-5 flex w-full items-center gap-3 rounded-xl border border-ink-600 p-4 text-left" onClick=${() => set({ connSettingsOpen: true })}><${Settings} size=${18} class="shrink-0" /> 网络诊断 / 连接与播放设置</button>`}
     </main>
     ${!keyboardOpen && html`<${NativePlayer} open=${playerOpen} close=${() => setPlayerOpen(false)} expand=${() => setPlayerOpen(true)} />
       <nav hidden=${playerOpen} aria-label="主导航" class="fixed inset-x-0 bottom-0 z-40 border-t border-ink-700 bg-ink-950/95 backdrop-blur-xl" style=${{ paddingBottom: 'var(--safe-bottom, 0px)', paddingLeft: 'var(--safe-left)', paddingRight: 'var(--safe-right)' }}>
-        <div class="mx-auto grid h-16 max-w-5xl grid-cols-4">${[['discover', '发现/检索', Search], ['library', '曲库/歌单', Library], ['friends', '好友/动态', Users], ['settings', '设置/账号', Settings]].map(([id, label, Icon]) => html`<button key=${id} aria-current=${tab === id ? 'page' : undefined} class=${cx('flex flex-col items-center justify-center gap-1 text-xs', tab === id ? 'text-host' : 'text-sand-400')} onClick=${() => setTab(id)}><${Icon} size=${21} />${label}</button>`)}</div>
+        <div class="mx-auto grid h-16 max-w-5xl grid-cols-4">${[['discover', '发现/检索', Search], ['library', '曲库/歌单', Library], ['friends', '好友/动态', Users], ['settings', '设置/账号', Settings]].map(([id, label, Icon]) => html`<button key=${id} aria-current=${tab === id ? 'page' : undefined} class=${cx('flex flex-col items-center justify-center gap-1 text-xs', tab === id ? 'text-host' : 'text-sand-400')} onClick=${() => { tabScroll.current[tab] = window.scrollY; setTab(id); }}><${Icon} size=${21} />${label}</button>`)}</div>
       </nav>`}
     ${invitation && html`<div class="fixed inset-0 z-[90] grid place-items-center bg-black/70 p-5"><section role="dialog" aria-modal="true" aria-label="一起听邀请" class="w-full max-w-sm space-y-5 rounded-3xl bg-ink-900 p-6"><p>${invitation.nickname} 邀请你一起听歌，是否加入？</p><div class="flex justify-end gap-4">${[false, true].map(accept => html`<button class="rounded-xl border border-ink-600 px-5 py-3" onClick=${() => { session.out.unlock(); sendSocial({ type: 'INVITE_LISTEN_RESPONSE', inviteId: invitation.inviteId, accept }); setInvitation(null); }}>${accept ? '加入' : '暂不'}</button>`)}</div></section></div>`}
     <${DailyGreeting} />

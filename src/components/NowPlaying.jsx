@@ -4,7 +4,7 @@ import { useAnimationFrame, useReducedMotion } from '../hooks/usePlayback.js';
 import { useSession } from '../store/useSession.js';
 import { Avatar } from './Avatar.jsx';
 import { Icon } from './Icon.jsx';
-import { PlayerControls } from './PlayerControls.jsx';
+import { UpNext } from './Playlist.jsx';
 
 const mb = (b) => `${(b / 1048576).toFixed(1)} MB`;
 
@@ -76,7 +76,7 @@ function Visualizer({ active }) {
 }
 
 /** 双人头像：两个人都在且已缓冲同一首时，中间的连线流动 */
-function DuoAvatars() {
+export function DuoAvatars() {
   const me = useSession((s) => s.me);
   const peer = useSession((s) => s.peer);
   const role = useSession((s) => s.role);
@@ -168,7 +168,7 @@ export function NowPlaying() {
         </div>
       </div>
       <Visualizer active={playing && loaded} />
-      <PlayerControls />
+      <details className="up-next-disclosure"><summary>接下来 · 展开播放列表</summary><UpNext /></details>
     </section>
   );
 }

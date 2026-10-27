@@ -716,13 +716,13 @@ class SessionEngine {
 
   // ═══════════════════════════════════════════════════════ 播放列表（Host）
   /** 曲库（downloads/）→ 播放列表；首次加载之后新增的标记为"新下载" */
-  syncLibrary(lib) {
+  syncLibrary(lib, appendFiles = []) {
     const { playlist } = get();
     const existing = new Set(playlist.map((x) => x.id));
     const libIds = new Set(lib.map((e) => `lib:${e.file}`));
     const added = [...lib]
       .reverse() // library.json 新的在前；播放列表按加入顺序
-      .filter((e) => !existing.has(`lib:${e.file}`))
+      .filter((e) => !existing.has(`lib:${e.file}`) && (!this.libraryReady || appendFiles.includes(e.file)))
       .map((e) => ({
         id: `lib:${e.file}`,
         title: e.title,

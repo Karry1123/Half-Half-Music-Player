@@ -58,7 +58,7 @@ test('guest mini and fullscreen players show metadata and transfer status before
   const context = {
     html: htm.bind(React.createElement), useStore: fn => fn(state), useState: () => [0, () => {}], useRef: () => ({ current: null }), useBackLayer() {}, useEffect() {},
     cx: (...args) => args.filter(Boolean).join(' '), gradient: () => 'red', coverSrc: url => url, coverCandidates, coverError, trackCompletedCount: () => 0, session: {},
-    ...Object.fromEntries(['Music2', 'CoListenPill', 'Pause', 'Play', 'SkipForward', 'ChevronDown', 'SeekBar', 'PlayModeButton', 'SkipBack', 'ListMusic', 'Volume2', 'VolumeX', 'SyncStatus'].map(name => [name, () => null])),
+    ...Object.fromEntries(['Music2', 'UpNextPanel', 'CoListenPill', 'Pause', 'Play', 'SkipForward', 'ChevronDown', 'SeekBar', 'PlayModeButton', 'SkipBack', 'ListMusic', 'Volume2', 'VolumeX', 'SyncStatus'].map(name => [name, () => null])),
   };
   const Player = vm.runInNewContext(`${between('function Cover(', 'function Panel(')};${between('function NativePlayer(', 'function App()')}; NativePlayer`, context);
   for (const open of [false, true]) {

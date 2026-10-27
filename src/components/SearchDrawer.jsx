@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { songResults } from '../../public/playerPresentation.js';
 import { engine, fmtTime } from '../engine/session.js';
 import { jobForTrack, useMusic } from '../store/useMusic.js';
 import { useSession } from '../store/useSession.js';
@@ -22,6 +23,7 @@ function qualityLabel(t) {
 }
 
 function DownloadButton({ track }) {
+  const playlist = useSession(s => s.playlist);
   const job = useMusic((s) => jobForTrack(s.jobs, track.id));
   const inLibrary = useMusic((s) => s.library.find((e) => e.trackId === track.id));
   const download = useMusic((s) => s.download);
@@ -38,17 +40,15 @@ function DownloadButton({ track }) {
   }
   if (inLibrary || job?.status === 'done') {
     const file = inLibrary?.file || job?.file;
-    return (
-      <button className="btn dl-btn" onClick={() => engine.act('select', { itemId: `lib:${file}` })} title="已在播放列表中，点击播放">
-        <Icon name="play" size={14} />
-        播放
-      </button>
-    );
+    const inRoom = playlist.some(item => item.id === `lib:${file}`);
+    return <button className="btn dl-btn" disabled={inRoom || !inLibrary || !file} onClick={() => {
+      engine.syncLibrary(useMusic.getState().library, [file]);
+    }} title="追加到共享列表，不打断当前播放">{inRoom ? '已在房间' : '追加到房间'}</button>;
   }
   return (
     <button className="btn dl-btn" onClick={() => download(track.id)} title={job?.status === 'error' ? `上次失败：${job.error}` : '下载到本机曲库'}>
       <Icon name="download" size={15} />
-      {job?.status === 'error' ? '重试' : '下载'}
+      {job?.status === 'error' ? '重试下载' : '下载到曲库'}
     </button>
   );
 }
@@ -130,6 +130,7 @@ export function SearchDrawer() {
   const providers = health?.providers ?? [];
   const selected = music.sources.length ? music.sources : providers.map((p) => p.name);
   const counts = result?.counts;
+  const { best, groups } = songResults(result?.results || [], music.query);
 
   return (
     <>
@@ -186,6 +187,8 @@ export function SearchDrawer() {
                 </select>
               </div>
 
+              {music.searching && <p role="status">{result ? '正在刷新，保留本次查询结果…' : '正在搜索…'}</p>}
+              <p className="muted">先下载到曲库，再追加到共享房间；不会替换当前歌曲。</p>
               {music.error && <div className="tag err search-error">{music.error}</div>}
 
               {result && (
@@ -214,9 +217,8 @@ export function SearchDrawer() {
                     ))}
                   </div>
                   <div className="search-results">
-                    {result.results.map((t) => (
-                      <ResultItem key={t.id} t={t} />
-                    ))}
+                    {best && <section className="best-result"><h3>最佳匹配</h3><ResultItem t={best} /></section>}
+                    {groups.map(group => <section key={group.key}><h3>{group.label} · {group.tracks.length} 首</h3>{group.tracks.map(t => <ResultItem key={t.id} t={t} />)}</section>)}
                     {!result.results.length && (
                       <div className="empty">
                         没有{music.versions === 'original' ? '原版' : ''}结果
