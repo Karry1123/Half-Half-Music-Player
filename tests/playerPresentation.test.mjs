@@ -64,3 +64,24 @@ test('React downloads stay in library until explicitly appended without disturbi
   engine.syncLibrary(library, ['download.mp3']); assert.equal(state.playlist.length, 1); assert.equal(state.currentId, 'keep');
   engine.syncLibrary(library, ['download.mp3']); assert.equal(state.playlist.length, 1);
 });
+
+
+test('Up Next respects sequential, list repeat and manual next in single repeat', () => {
+  const tracks = ['a', 'b', 'c', 'd'].map(id => ({ id }));
+  const ids = (current, mode) => upNextTracks(tracks, current, { mode }).map(t => t.id);
+  assert.deepEqual(ids('c', 'order'), ['d']);
+  assert.deepEqual(ids('d', 'order'), []);
+  assert.deepEqual(ids('c', 'loopAll'), ['d', 'a', 'b']);
+  assert.deepEqual(ids('c', 'loopOne'), ['d', 'a', 'b']);
+  assert.deepEqual(upNextTracks([{ id: 'a' }], 'a', { mode: 'loopOne' }), []);
+});
+
+test('Up Next uses the existing shuffled bag and forward stack without mutation or rerolling', () => {
+  const tracks = ['a', 'b', 'c', 'd'].map(id => ({ id }));
+  const queue = { mode: 'shuffle', forward: ['b', 'c'], bag: ['d', 'b'] };
+  const before = structuredClone(queue);
+  assert.deepEqual(upNextTracks(tracks, 'a', queue).map(t => t.id), ['c', 'b', 'd']);
+  assert.deepEqual(queue, before);
+  assert.deepEqual(upNextTracks(tracks, 'a', { mode: 'shuffle', bag: [] }), []);
+  assert.deepEqual(upNextTracks(tracks, 'c', { mode: 'shuffle', bag: ['b', 'a', 'd'] }).map(t => t.id), ['b', 'a', 'd']);
+});

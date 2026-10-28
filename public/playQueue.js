@@ -34,6 +34,18 @@ export function shuffleInPlace(arr, random = Math.random) {
   return arr;
 }
 
+// Shared manual/automatic next-track decision. Shuffle rounds are prepared by the engine.
+export function nextTrackId({ ids = [], current, mode = 'order', forward = [], bag = [] }, { auto = false } = {}) {
+  if (!ids.length) return null;
+  if (auto && mode === 'loopOne' && current) return current;
+  if (forward.length) return forward[forward.length - 1];
+  const index = ids.indexOf(current);
+  if (mode === 'shuffle') return bag[0] ?? null;
+  if (index < 0) return ids[0];
+  if (mode === 'order') return ids[index + 1] ?? null;
+  return ids[(index + 1) % ids.length];
+}
+
 export class PlayQueue {
   ids = [];
   current = null;
@@ -122,25 +134,11 @@ export class PlayQueue {
    * @returns {string|null} null 表示应该停止
    */
   peekNext({ auto = false } = {}) {
-    const n = this.ids.length;
-    if (!n) return null;
-    if (auto && this.mode === 'loopOne' && this.current) return this.current;
-    if (this.forward.length) return this.forward[this.forward.length - 1];
-    const i = this.ids.indexOf(this.current);
-    switch (this.mode) {
-      case 'order':
-        return i < 0 ? this.ids[0] : (this.ids[i + 1] ?? null);
-      case 'loopAll':
-      case 'loopOne':
-        return i < 0 ? this.ids[0] : this.ids[(i + 1) % n];
-      case 'shuffle':
-        if (!this.bag.length) {
-          if (n === 1) return this.current ?? this.ids[0];
-          this.newRound();
-        }
-        return this.bag[0] ?? null;
+    if (this.mode === 'shuffle' && !this.forward.length && !this.bag.length && this.ids.length) {
+      if (this.ids.length === 1) return this.current ?? this.ids[0];
+      this.newRound();
     }
-    return null;
+    return nextTrackId(this, { auto });
   }
 
   /** 上一首（不提交）。随机模式下是真正听过的上一首；没有历史时返回 null */

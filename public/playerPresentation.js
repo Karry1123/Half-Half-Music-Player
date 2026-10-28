@@ -1,7 +1,23 @@
-// Read-only presentation of existing tracks; never maintains a second queue.
-export function upNextTracks(tracks, currentId) {
-  const index = tracks.findIndex(track => track.id === currentId);
-  return tracks.slice(index < 0 ? 0 : index + 1);
+import { nextTrackId } from './playQueue.js';
+
+// Read the engine snapshot without advancing its queue or generating a new shuffle round.
+export function upNextTracks(tracks, currentId, queue = {}) {
+  const byId = new Map(tracks.map(track => [track.id, track]));
+  const state = { ids: tracks.map(track => track.id), current: currentId, mode: queue.mode || 'order',
+    forward: [...(queue.forward || [])].filter(id => byId.has(id)),
+    bag: [...(queue.bag || [])].filter(id => byId.has(id)) };
+  const seen = new Set(currentId ? [currentId] : []), result = [];
+  for (let i = 0; i < tracks.length; i++) {
+    const id = nextTrackId(state); // Manual next also advances in single-track repeat mode.
+    if (!id || seen.has(id)) break;
+    seen.add(id);
+    result.push(byId.get(id));
+    if (state.forward.at(-1) === id) state.forward.pop();
+    else state.forward = [];
+    state.bag = state.bag.filter(next => next !== id);
+    state.current = id;
+  }
+  return result;
 }
 const normalize = value => String(value || '').normalize('NFKC').toLocaleLowerCase().replace(/\s+/g, ' ').trim();
 export function songResults(tracks, query) {
