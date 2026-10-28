@@ -2924,7 +2924,7 @@ function PlaylistHeader({ view, items, back }) {
     }
   };
 
-  return html`<div class="hh-library-hero flex flex-wrap items-center gap-x-3 gap-y-2.5 border-b border-ink-700/60 px-4 py-3">
+  return html`<div class="hh-library-hero border-b border-ink-700/60">
     <button class="hh-playlist-back" onClick=${back} aria-label="返回歌单">← 返回歌单</button><${PlaylistCover} playlist=${playlist || { id: ALL_ID }} size=${160} />
     <div class="hh-playlist-info">
       ${renaming
@@ -2936,13 +2936,14 @@ function PlaylistHeader({ view, items, back }) {
             <button type="button" class="rounded-lg px-2 py-1.5 text-xs text-sand-400" onClick=${() => setRenaming(false)}>取消</button>
           </form>`
         : html`<div class="flex items-center gap-1.5">
-            <h3 class="truncate text-sm font-semibold">${title}</h3>
+            <h3 class="font-semibold">${title}</h3>
             ${playlist && html`<span class="shrink-0 rounded bg-white/5 px-1.5 text-xs text-sand-400">${playlist.system ? '稍后整理' : playlist.isPublic ? '公开歌单' : '我的歌单'}</span>`}
             ${custom && html`<button class="grid h-7 w-7 shrink-0 place-items-center rounded-full text-sand-500 hover:text-sand-50" onClick=${() => (setName(playlist.name), setRenaming(true))} aria-label="重命名歌单" title="重命名"><${Pencil} size=${13} /></button>`}
       ${custom && !renaming && html`<button class="grid h-9 w-9 shrink-0 place-items-center rounded-full text-sand-500 hover:bg-guest/10 hover:text-guest" onClick=${remove} aria-label="删除歌单" title="删除歌单（歌曲保留）"><${Trash2} size=${15} /></button>`}
           </div>`}
       <div class="mt-0.5 text-xs text-sand-500 tabular">${items.length} 首${playlist?.pending?.length ? ` · ${playlist.pending.length} 首未下载` : ''}${total ? ` · ${fmtTime(total)}` : ''}${isActive && items.length ? ' · 正在播放' : ''}</div>
 
+    </div>
     <div class="hh-playlist-actions">
 
       <button class="inline-flex flex-1 items-center justify-center gap-1.5 rounded-full hh-primary px-3.5 py-2 text-xs font-semibold   disabled:opacity-40 sm:flex-none"
@@ -2950,12 +2951,11 @@ function PlaylistHeader({ view, items, back }) {
         title="替换现有播放范围，从本歌单开始">
         <${inRoom ? Users : Play} size=${14} fill=${inRoom ? 'none' : 'currentColor'} /> 播放全部
       </button>
-      <button class="hh-append-button rounded-xl border border-ink-600 p-3 text-xs" disabled=${!items.length || role === 'guest'} onClick=${() => appendRoomItems(items)}>追加到房间</button><span class="hh-playlist-export-group"><button class="rounded-xl border border-ink-600 p-3 text-xs" disabled=${!items.length || role === 'guest'} onClick=${() => session.playPlaylist(view, { orderedIds: items.map(x => x.id) })}>替换播放歌单</button>
-      <${ZipExport} variant="icon" storage=${LocalLib} name=${title} trackIds=${playlist?.trackIds} /></span>
+      <button class="hh-append-button rounded-xl border border-ink-600 p-3 text-xs" disabled=${!items.length || role === 'guest'} onClick=${() => appendRoomItems(items)}>追加到房间</button><button class="rounded-xl border border-ink-600 p-3 text-xs" disabled=${!items.length || role === 'guest'} onClick=${() => session.playPlaylist(view, { orderedIds: items.map(x => x.id) })}>替换播放歌单</button>
       <button class="rounded-xl border border-ink-600 p-3 text-xs" disabled=${role === 'guest'} onClick=${() => set({ addSongsPlaylistId: view })}><${Plus} size=${14} /> 添加歌曲</button>
+      <${ZipExport} variant="icon" storage=${LocalLib} name=${title} trackIds=${playlist?.trackIds} />
     </div>
-      ${custom && html`<label class="playlist-public mt-2 flex cursor-pointer items-center gap-2 text-xs text-sand-400"><input type="checkbox" role="switch" aria-label="公开此歌单" checked=${!!playlist.isPublic} onChange=${e => playlistStore.setPublic(view, e.target.checked).catch(e => toast(e.message, 'warn'))} /><span><span class="block text-sand-200">公开此歌单</span><span class="block mt-0.5">好友可查看与试听</span></span></label>`}
-    </div>
+      ${custom && html`<label class="hh-playlist-public playlist-public flex cursor-pointer items-center gap-2 text-xs text-sand-400"><input type="checkbox" role="switch" aria-label="公开此歌单" checked=${!!playlist.isPublic} onChange=${e => playlistStore.setPublic(view, e.target.checked).catch(e => toast(e.message, 'warn'))} /><span><span class="block text-sand-200">公开此歌单</span><span class="block mt-0.5">好友可查看与试听</span></span></label>`}
   </div>`;
 }
 
