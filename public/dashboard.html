@@ -3032,7 +3032,7 @@ function LibraryPanel() {
           ? '房主还没有添加歌曲 · 你也可以拖入文件分享给房主'
           : playlist
             ? '这个歌单还没有歌：点上方「添加歌曲」从曲库挑选，或在歌曲右边的「⋯」里选「加入歌单」'
-            : '把 mp3 / flac / m4a 拖到这里，或到「发现/检索」搜索下载'}
+            : '点上方「导入」选择本机的 mp3 / flac / m4a（电脑上也可以拖到这里），或到「发现/检索」搜索下载'}
       </div>`}
       ${items.map((x, i) => {
         const cur = x.id === currentId;
@@ -4265,7 +4265,7 @@ function LibraryShelf() {
             </button>`;
           })}
         </div>`
-      : html`<div class="glass rounded-2xl px-5 py-6 text-center text-sm text-sand-500">还没有歌：在下面搜索下载、粘贴 B 站 / YouTube 链接，或把本地文件拖进窗口。下载过的歌会缓存在这台设备上，下次打开自动出现。</div>`}
+      : html`<div class="glass rounded-2xl px-5 py-6 text-center text-sm text-sand-500">还没有歌：去「发现」搜索下载或粘贴 B 站 / YouTube 链接，点上方「导入」选择本机文件，电脑上也可以把文件拖进窗口。下载过的歌会缓存在这台设备上，下次打开自动出现。</div>`}
   </section>`;
 }
 
@@ -4943,7 +4943,7 @@ function App() {
     <${ConnectionBar} />
     <main class="mx-auto max-w-5xl hh-workspace px-4 pt-5" style=${{ paddingBottom: `calc(${keyboardOpen ? 16 : playerVisible ? 170 : 80}px + var(--safe-bottom, 0px))` }}>
       ${tab === 'discover' && html`<${SearchDiscovery} onSearch=${homeSearch} onSelectTrack=${track => { stopPreview(); downloadWithPicker(track); }} />`}
-      ${tab === 'library' && html`<${PageHeading} eyebrow="YOUR COLLECTION" title="我的音乐" subtitle="把喜欢的旋律留在这里，下一次一起听。" /><div class="mb-4 flex flex-wrap justify-end gap-2"><${DownloadQueueButton} /><button class="inline-flex items-center gap-2 rounded-xl border border-ink-600 px-4 py-3 text-sm" title=${cloudStatus?.error ? `${cloudLabel}：${cloudStatus.error}` : cloudLabel} aria-label=${cloudLabel} onClick=${() => set({ cloudOpen: true })}><${Cloud} size=${18} /> ${cloudLabel}</button></div><${RoomPlaylistBanner} /><${LibraryPanel} />`}
+      ${tab === 'library' && html`<${PageHeading} eyebrow="YOUR COLLECTION" title="我的音乐" subtitle="把喜欢的旋律留在这里，下一次一起听。" /><div class="mb-4 flex flex-wrap justify-end gap-2"><${DownloadQueueButton} /><label class="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-ink-600 px-4 py-3 text-sm" title="从这台设备选择 mp3 / flac / m4a 导入"><${Upload} size=${18} /> 导入<input type="file" accept="audio/*,.mp3,.flac,.m4a,.wav,.ogg" multiple hidden onChange=${(e) => { importWithPicker([...e.target.files]); e.target.value = ''; }} /></label><button class="inline-flex items-center gap-2 rounded-xl border border-ink-600 px-4 py-3 text-sm" title=${cloudStatus?.error ? `${cloudLabel}：${cloudStatus.error}` : cloudLabel} aria-label=${cloudLabel} onClick=${() => set({ cloudOpen: true })}><${Cloud} size=${18} /> ${cloudLabel}</button></div><${RoomPlaylistBanner} /><${LibraryPanel} />`}
       ${tab === 'friends' && html`<${FriendsPanel} onPreview=${previewPublicTrack} onCollect=${async p => { await playlistStore.copyPublic(p); toast('已收藏到我的歌单'); }} stats=${listeningStats} client=${account} presence=${presence} invite=${userId => sendSocial({ type: 'INVITE_LISTEN_REQUEST', userId })} history=${history} />`}
       ${tab === 'settings' && html`<${StatsPanel} /><${AccountCard} client=${account} className="space-y-4 rounded-2xl border border-ink-700 p-5" /><button class="mt-5 flex w-full items-center gap-3 rounded-xl border border-ink-600 p-4 text-left" onClick=${() => set({ connSettingsOpen: true })}><${Settings} size=${18} class="shrink-0" /> 网络诊断 / 连接与播放设置</button>`}
     </main>

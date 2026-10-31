@@ -4,13 +4,27 @@
     {
       "name": "half-half",
       "runtimeExecutable": "node",
-      "runtimeArgs": ["node_modules/vite/bin/vite.js"],
+      "runtimeArgs": [
+        "node_modules/vite/bin/vite.js"
+      ],
       "port": 8080
     },
     {
       "name": "music-service",
       "runtimeExecutable": "node",
-      "runtimeArgs": ["music-service/src/server.js"],
+      "runtimeArgs": [
+        "music-service/src/server.js"
+      ],
+      "port": 8090
+    },
+    {
+      "name": "music-service-legacy",
+      "runtimeExecutable": "powershell",
+      "runtimeArgs": [
+        "-NoProfile",
+        "-Command",
+        "$env:AUTH_MODE='legacy'; node music-service/src/server.js"
+      ],
       "port": 8090
     }
   ]
