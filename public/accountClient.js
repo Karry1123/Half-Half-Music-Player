@@ -113,7 +113,8 @@ export class AccountClient {
 }
 
 export const SOURCE_EXPIRED = '原音源已失效，无法下载，建议重新搜索源替换';
-export async function cacheCloudTrack(track, { storage, download }) {
+export const LOCAL_FILE_MISSING = '此曲目来自本地文件，云端没有它的音频，请在原设备打开应用让它上传，或在此设备导入原文件';
+export async function cacheCloudTrack(track, { storage, download, downloadFile }) {
   let existing = track.sourceId ? await storage.findBySource(track.sourceId) : null;
   if (!existing && track.hash) existing = await storage.findByHash(track.hash);
   if (existing && await storage.getBlob(existing.id)) {
@@ -124,10 +125,12 @@ export async function cacheCloudTrack(track, { storage, download }) {
     }
     return existing;
   }
-  if (!track.sourceId && !track.pageUrl) throw new Error('此曲目来自本地文件，请在此设备导入原文件');
-  const result = await download(track);
+  // 本地导入的歌没有平台音源：原设备把文件传到了账号云端的话，按指纹直接拉下来
+  const result = !track.sourceId && !track.pageUrl
+    ? await (track.hash && downloadFile ? downloadFile(track) : Promise.reject(new Error(LOCAL_FILE_MISSING)))
+    : await download(track);
   // The cloud hash was computed on another device; a fresh download may be a different encode, so let storage re-hash it.
-  const saved = await storage.saveTrack(result.blob, { ...track, id: undefined, hash: undefined, fileName: result.fileName, source: track.sourceId?.split(':')[0] || 'local', sourceLabel: '云端歌单' });
+  const saved = await storage.saveTrack(result.blob, { ...track, id: undefined, hash: undefined, fileName: result.fileName, cover: result.cover || track.coverUrl || track.cover, source: track.sourceId?.split(':')[0] || 'local', sourceLabel: '云端歌单' });
   return saved.track;
 }
 
@@ -153,4 +156,55 @@ export async function downloadCloudTrack(client, track, onProgress = () => {}) {
     if (e.code === 'UNAVAILABLE' || /视频不存在|已删除|不可用|unavailable|not found|removed|deleted/i.test(e.message)) throw new Error(SOURCE_EXPIRED);
     throw e;
   }
+}
+
+// ───────────────────────── 账号云端音频（本地导入的歌在设备间传递；服务端见 music-service/src/trackFiles.js）
+
+/** 这些指纹里哪些已经在云端 → { present: string[], used, quota, maxFile, chunkSize } */
+export function checkCloudFiles(client, hashes) {
+  return client.request('/account/files/check', { hashes });
+}
+
+/** 分块上传一个本机文件；onProgress 0..1。已在云端的文件直接返回 { skipped: true } */
+export async function uploadLocalFile(client, blob, { hash, fileName, mime }, onProgress = () => {}) {
+  const begin = await client.request(`/account/files/${encodeURIComponent(hash)}`, { size: blob.size, mime: mime || blob.type || 'audio/mp4', fileName: fileName || '' });
+  if (begin.complete) { onProgress(1); return { skipped: true }; }
+  const chunkSize = begin.chunkSize || 1024 * 1024;
+  for (let seq = 0; seq * chunkSize < blob.size; seq++) {
+    const r = await fetch(`${client.base}/account/files/${encodeURIComponent(hash)}/${seq}`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/octet-stream', Authorization: `Bearer ${client.token}` },
+      body: blob.slice(seq * chunkSize, (seq + 1) * chunkSize), signal: AbortSignal.timeout(60000),
+    });
+    if (!r.ok) { const data = await r.json().catch(() => ({})); throw Object.assign(new Error(data.error || `上传失败 (${r.status})`), { code: data.code, status: r.status }); }
+    onProgress(Math.min(0.99, ((seq + 1) * chunkSize) / blob.size));
+  }
+  await client.request(`/account/files/${encodeURIComponent(hash)}/complete`, {});
+  onProgress(1);
+  return { skipped: false };
+}
+
+/** 按指纹下载云端音频 → { blob, fileName }；没有时抛 NOT_FOUND */
+export async function downloadCloudFile(client, track, onProgress = () => {}) {
+  const r = await fetch(`${client.base}/account/files/${encodeURIComponent(track.hash)}`, { headers: { Authorization: `Bearer ${client.token}` }, signal: AbortSignal.timeout(300000) });
+  if (!r.ok) {
+    const data = await r.json().catch(() => ({}));
+    throw Object.assign(new Error(r.status === 404 ? LOCAL_FILE_MISSING : data.error || `音频读取失败 (${r.status})`), { code: data.code || (r.status === 404 ? 'NOT_FOUND' : undefined), status: r.status });
+  }
+  const total = Number(r.headers.get('Content-Length')) || 0;
+  const type = r.headers.get('Content-Type') || 'audio/mp4';
+  const name = /filename\*=UTF-8''([^;]+)/.exec(r.headers.get('Content-Disposition') || '')?.[1];
+  let blob;
+  if (r.body?.getReader && total) {
+    const reader = r.body.getReader(), parts = [];
+    let got = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      parts.push(value); got += value.length;
+      onProgress(Math.min(0.99, got / total));
+    }
+    blob = new Blob(parts, { type });
+  } else blob = new Blob([await r.arrayBuffer()], { type });
+  onProgress(1);
+  return { blob, fileName: name ? decodeURIComponent(name) : `${track.hash}.m4a` };
 }

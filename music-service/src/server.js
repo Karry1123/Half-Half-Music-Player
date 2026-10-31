@@ -15,6 +15,7 @@ import { parseTrackId, providers, timeoutFor } from './providers/index.js';
 import { makeTrack } from './providers/track.js';
 import { aggregateSearch, trackCache } from './search.js';
 import { Accounts, mountAccounts } from './accounts.js';
+import { TrackFiles, mountTrackFiles } from './trackFiles.js';
 import { ChartsCache, mountCharts } from './lib/charts.js';
 import { mountCoverProxy } from './lib/coverProxy.js';
 import { createAuthenticatedPeerWebSocket } from '../../server/peerAuth.js';
@@ -38,6 +39,13 @@ app.use(cors);
 const accounts = process.env.AUTH_MODE === 'legacy' ? null : await Accounts.open({ root: config.root });
 if (accounts) console.log(`账号数据库: ${accounts.db.dialect === 'postgres' ? 'PostgreSQL（DATABASE_URL）' : 'SQLite'}`);
 const accountGuard = accounts ? mountAccounts(app, accounts, rateLimit({ perMinute: 15, name: 'account' })) : null;
+// 账号云端音频：本机导入的歌上传到账号数据库，其他设备直接下载
+const trackFiles = accounts ? new TrackFiles(accounts.db) : null;
+if (trackFiles) {
+  mountTrackFiles(app, accountGuard, trackFiles, { limiter: rateLimit({ perMinute: 300, name: 'files' }) });
+  accounts.onLibrarySaved = (userId, playlists) => trackFiles.prune(userId, playlists);
+  console.log(`云端音频: 每账号 ${Math.round(trackFiles.quotaBytes / 1048576)} MB，单文件 ${Math.round(trackFiles.maxFileBytes / 1048576)} MB`);
+}
 const charts = new ChartsCache({ dataDir: config.dataDir });
 // Disk loading and remote refresh run in the background; requests always have a fallback.
 void charts.init().catch(e => console.error('[discover]', e.message));

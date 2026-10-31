@@ -190,7 +190,8 @@ function useBackLayer(open, close) {
 }
 import { MODE_LABEL, PLAY_MODES, PlayQueue } from './playQueue.js';
 import { ALL_ID, ALL_NAME, INBOX_ID, PlaylistStore, missingFromLibrary, playlistsOf, resolveScope } from './playlists.js';
-import { AccountClient, SOURCE_EXPIRED, cacheCloudTrack, downloadCloudTrack } from './accountClient.js';
+import { AccountClient, SOURCE_EXPIRED, cacheCloudTrack, downloadCloudTrack, downloadCloudFile } from './accountClient.js';
+import { createCloudUploader } from './cloudFiles.js';
 import { coverSrc, setCoverProxy, coverCandidates, coverError } from './coverUrl.js';
 import { readAudioTags } from './audioTags.js';
 import { createAppToast, restoreDownloads, persistDownloads, orderedDownloads } from './dashboardFeedback.js';
@@ -2305,9 +2306,14 @@ const cloudSync = new CloudSync({
   saveBase: async (uid, base) => { try { localStorage.setItem(syncBaseKey(uid), JSON.stringify(base)); } catch {} },
   onStatus: (status) => {
     set({ cloudSync: status });
-    if (status.state === 'ok' && !document.hidden) LocalLib.listTracks().then(repairLibraryCovers).catch(() => {});
+    if (status.state === 'ok' && !document.hidden) {
+      LocalLib.listTracks().then(repairLibraryCovers).catch(() => {});
+      cloudUploader.run().catch(() => {});
+    }
   },
 });
+// 本机导入的歌（没有平台音源）上传到账号云端，其他设备的歌单里就能直接下载；每次同步成功后补传缺的
+const cloudUploader = createCloudUploader({ client: account, storage: LocalLib, notify: toast, fileNameOf: (t) => t.fileName || `${t.artist ? `${t.artist} - ` : ''}${t.title}.m4a` });
 playlistStore.subscribe((_list, source) => { if (source !== 'remote' && playlistStore.ready) cloudSync.schedule(); });
 setInterval(() => { if (!document.hidden && playlistStore.ready) (cloudSync.sync().catch(() => {}), syncProfile()); }, 60000);
 document.addEventListener('visibilitychange', () => { if (!document.hidden && playlistStore.ready) (cloudSync.sync().catch(() => {}), syncProfile()); });
@@ -2333,7 +2339,16 @@ async function downloadPending(playlistId, keys, retryTrack) {
         track = { ...t, id: match.id, sourceId: match.id, pageUrl: match.pageUrl || '', hash: '' };
         updateDownload(queueId, { result: track });
       }
-      await cacheCloudTrack(track, { storage: LocalLib, download: (x) => downloadCloudTrack(account, x, p => updateDownload(queueId, { progress: p })) });
+      await cacheCloudTrack(track, {
+        storage: LocalLib,
+        download: (x) => downloadCloudTrack(account, x, p => updateDownload(queueId, { progress: p })),
+        // 本地导入的歌：从账号云端按指纹下载，封面从文件内嵌标签里读
+        downloadFile: async (x) => {
+          const r = await downloadCloudFile(account, x, p => updateDownload(queueId, { progress: p }));
+          const tags = await readAudioTags(r.blob).catch(() => null);
+          return { ...r, cover: tags?.cover || null };
+        },
+      });
       if (track !== t) await playlistStore.replacePending(playlistId, t.id, track);
       job(t.id, null);
       updateDownload(queueId, { status: 'done', progress: 1 });

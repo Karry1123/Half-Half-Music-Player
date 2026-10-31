@@ -30,3 +30,18 @@ test('cloud artwork repairs a cached local track without downloading audio again
   });
   assert.equal(result.hasCover, true);
 });
+
+test('cloud cache downloads a local-import track from the account cloud by fingerprint and keeps its embedded cover', async () => {
+  let meta;
+  const cover = new Blob(['jpg'], { type: 'image/jpeg' });
+  const storage = { findByHash: async () => null, findBySource: async () => null, saveTrack: async (_blob, m) => { meta = m; return { track: { ...m, id: 'phone' }, existed: false }; } };
+  const result = await cacheCloudTrack({ id: 'hash:abc', hash: 'abc', title: 'Hong Kong', artist: 'The Weeknd' }, {
+    storage,
+    download: () => assert.fail('no platform source to download from'),
+    downloadFile: async (t) => { assert.equal(t.hash, 'abc'); return { blob: new Blob(['audio']), fileName: 'The Weeknd - Hong Kong.m4a', cover }; },
+  });
+  assert.equal(result.id, 'phone');
+  assert.equal(meta.cover, cover);
+  assert.equal(meta.source, 'local');
+  assert.equal(meta.fileName, 'The Weeknd - Hong Kong.m4a');
+});

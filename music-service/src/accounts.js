@@ -3,6 +3,7 @@ import { promisify } from 'node:util';
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { isTrendingSong, validatePlays, songKey } from './lib/discover.js';
+import { FILE_SCHEMA } from './trackFiles.js';
 const scrypt = promisify(scryptCallback);
 const hash = value => createHash('sha256').update(value).digest('hex');
 const fail = (status, code, message) => { throw Object.assign(new Error(message), { status, code }); };
@@ -137,7 +138,7 @@ export class Accounts {
   static memory() { return Accounts.open({ url: '', file: ':memory:' }); }
   async migrate() {
     await this.db.tx(async db => {
-      for (const sql of SCHEMA) await db.exec(sql);
+      for (const sql of [...SCHEMA, ...FILE_SCHEMA]) await db.exec(sql);
       // Serialize concurrent deploys before inspecting/altering existing production tables.
       if (db.dialect === 'postgres') await db.exec('LOCK TABLE users, profiles IN ACCESS EXCLUSIVE MODE');
       const columns = async table => db.dialect === 'postgres'
@@ -341,6 +342,8 @@ export class Accounts {
       ? await this.db.run('INSERT INTO libraries VALUES($1,1,$2,$3) ON CONFLICT(user_id) DO NOTHING', [userId, json, now])
       : await this.db.run('UPDATE libraries SET revision=revision+1, metadata=$1, updated_at=$2 WHERE user_id=$3 AND revision=$4', [json, now, userId, revision]);
     if (!changed) fail(409, 'CONFLICT', '其他设备已修改歌单，请刷新后重试');
+    // 云端音频清理（trackFiles.prune）挂在这里：歌单不再引用的文件可以删了
+    if (this.onLibrarySaved) this.onLibrarySaved(userId, clean).catch(e => console.error('Library save hook:', e.message));
     return { revision: revision + 1, playlists: clean };
   }
   async profile(userId) {
