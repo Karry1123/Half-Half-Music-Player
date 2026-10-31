@@ -192,6 +192,7 @@ import { MODE_LABEL, PLAY_MODES, PlayQueue } from './playQueue.js';
 import { ALL_ID, ALL_NAME, INBOX_ID, PlaylistStore, missingFromLibrary, playlistsOf, resolveScope } from './playlists.js';
 import { AccountClient, SOURCE_EXPIRED, cacheCloudTrack, downloadCloudTrack } from './accountClient.js';
 import { coverSrc, setCoverProxy, coverCandidates, coverError } from './coverUrl.js';
+import { readAudioTags } from './audioTags.js';
 import { createAppToast, restoreDownloads, persistDownloads, orderedDownloads } from './dashboardFeedback.js';
 import { createCoverBackfill } from './libraryCoverBackfill.js';
 import { CloudSync, toCloudTrack } from './cloudSync.js';
@@ -1952,7 +1953,11 @@ class Session {
     let added = 0;
     const itemIds = [];
     for (const f of files) {
-      const r = await this.addToLibrary(f, { ...parseFileName(f.name), fileName: f.name, source: 'local', sourceLabel: '本地导入' }, { persist });
+      // 文件里内嵌的标签（标题 / 歌手 / 封面）优先，没有再按 "歌手 - 歌名" 的文件名拆
+      const tags = await readAudioTags(f).catch(() => null);
+      const named = parseFileName(f.name);
+      const cover = tags?.cover ? URL.createObjectURL(tags.cover) : null;
+      const r = await this.addToLibrary(f, { title: tags?.title || named.title, artist: tags?.artist || named.artist, cover, fileName: f.name, source: 'local', sourceLabel: '本地导入' }, { persist });
       if (r?.id) itemIds.push(r.id);
       if (r && !r.duplicate) added++;
     }
