@@ -42,7 +42,7 @@ const accountGuard = accounts ? mountAccounts(app, accounts, rateLimit({ perMinu
 // 账号云端音频：本机导入的歌上传到账号数据库，其他设备直接下载
 const trackFiles = accounts ? new TrackFiles(accounts.db) : null;
 if (trackFiles) {
-  mountTrackFiles(app, accountGuard, trackFiles, { limiter: rateLimit({ perMinute: 300, name: 'files' }) });
+  mountTrackFiles(app, accountGuard, trackFiles, { express, limiter: rateLimit({ perMinute: 300, name: 'files' }) });
   accounts.onLibrarySaved = (userId, playlists) => trackFiles.prune(userId, playlists);
   console.log(`云端音频: 每账号 ${Math.round(trackFiles.quotaBytes / 1048576)} MB，单文件 ${Math.round(trackFiles.maxFileBytes / 1048576)} MB`);
 }

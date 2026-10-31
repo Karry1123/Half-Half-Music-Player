@@ -21,7 +21,7 @@ async function boot(engine, options) {
   app.use(express.json());
   const guard = mountAccounts(app, accounts, (_req, _res, next) => next());
   const files = new TrackFiles(accounts.db, options);
-  mountTrackFiles(app, guard, files);
+  mountTrackFiles(app, guard, files, { express });
   accounts.onLibrarySaved = (userId, playlists) => files.prune(userId, playlists, { graceMs: 0 });
   const server = app.listen(0, '127.0.0.1'); await new Promise(r => server.once('listening', r));
   const base = `http://127.0.0.1:${server.address().port}`;

@@ -3,8 +3,8 @@
 //     256 MB 的小容器也不会把整首歌读进内存。
 //   - 每个账号有配额（ACCOUNT_FILE_QUOTA_MB，默认 1024）和单文件上限（ACCOUNT_FILE_MAX_MB，默认 60）。
 //   - 歌单保存后，不再被任何歌单引用且上传超过一天的文件会被清掉（prune），避免删掉的歌一直占空间。
+// 不在顶层 import express：根目录的 CI 只装前端依赖，而 tests/accountSignaling.test.mjs 会经 accounts.js 加载本文件
 import { once } from 'node:events';
-import express from 'express';
 
 export const CHUNK_SIZE = 1024 * 1024;
 const HASH = /^[0-9a-z]{1,16}-[0-9a-f]{16}$/; // libraryStorageWeb.fingerprint 的格式：<size base36>-<64 位十六进制>
@@ -130,10 +130,11 @@ function mb(value, fallback) {
 }
 
 /**
- * 路由都挂在账号守卫后面（req.account 已是激活用户）。
+ * 路由都挂在账号守卫后面（req.account 已是激活用户）。express 模块由调用方传入（见文件头的说明）。
  * 分块上传走自己的限流：一首歌十几个请求，账号接口每分钟 15 次的限额不够用。
  */
-export function mountTrackFiles(app, guard, files, { limiter = (_req, _res, next) => next() } = {}) {
+export function mountTrackFiles(app, guard, files, { express, limiter = (_req, _res, next) => next() }) {
+  if (!express?.raw) throw new Error('mountTrackFiles 需要传入 express 模块（分块上传用 express.raw）');
   const route = fn => async (req, res) => {
     try { res.set('Cache-Control', 'no-store'); res.json(await fn(req)); }
     catch (e) {
