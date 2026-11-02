@@ -3061,9 +3061,9 @@ function LibraryPanel() {
           </span>
           <div class="flex min-w-0 items-center gap-3">
             <${Cover} item=${x} size=${38} />
-            <div class="min-w-0">
-              <div class="flex items-center gap-1.5">
-                <span class=${cx('truncate text-sm font-medium', cur && 'text-guest')}>${x.title}</span>
+            <div class="min-w-0 flex-1">
+              <div class="flex min-w-0 items-center gap-1.5">
+                <span class=${cx('min-w-0 truncate text-sm font-medium', cur && 'text-guest')}>${x.title}</span>
                 ${saved ? html`<${HardDrive} size=${12} class="shrink-0 text-sync" aria-label="已存本机" title="已保存在这台设备上，离线也能播放" />` : ''}
               </div>
               <div class="truncate text-xs text-sand-400">${x.artist}${trackCompletedCount(x) > 0 && html`<span class="ml-1 text-host/80">· 已听 ${trackCompletedCount(x)} 次</span>`}${x.addedBy && x.addedBy !== get().me.name ? html` · <span class="text-guest/80">${x.addedBy} 添加</span>` : ''}</div>
@@ -3107,8 +3107,8 @@ function PendingRows({ playlistId, pending, start }) {
           <span class="text-center text-xs text-sand-600 tabular">${start + i + 1}</span>
           <div class="flex min-w-0 items-center gap-3 opacity-70">
             <span class="grid h-[38px] w-[38px] shrink-0 place-items-center rounded-lg bg-ink-800 text-sand-500"><${Cloud} size=${16} /></span>
-            <div class="min-w-0">
-              <div class="flex items-center gap-1.5"><span class="truncate text-sm font-medium">${t.title || '未命名'}</span>
+            <div class="min-w-0 flex-1">
+              <div class="flex min-w-0 items-center gap-1.5"><span class="truncate text-sm font-medium">${t.title || '未命名'}</span>
                 <span class="shrink-0 rounded bg-white/5 px-1.5 text-xs text-sand-400">未下载</span></div>
               <div class="truncate text-xs text-sand-400">${t.artist || '未知歌手'}</div>
             </div>
@@ -3706,7 +3706,7 @@ function LocalLibraryModal() {
           <${HardDrive} size=${24} class="text-sync/70" />
           还没有保存任何歌曲<br />搜索下载、或导入时勾选"同时缓存"，歌曲就会存在这里
         </div>`}
-        ${list.map((t) => html`<div key=${t.id} role="listitem" class="group flex items-center gap-3 rounded-xl px-2 py-2 hover:bg-ink-800">
+        ${list.map((t) => html`<div key=${t.id} role="listitem" class="hh-local-song-row group flex items-center gap-3 rounded-xl px-2 py-2 hover:bg-ink-800">
           <${Cover} item=${{ title: t.title, cover: covers[t.id] }} size=${40} />
           <div class="min-w-0 flex-1">
             <div class="truncate text-sm font-medium">${t.title}</div>
@@ -4421,32 +4421,30 @@ function SearchDownloadActions({ r }) {
   const item = state.library.find(t => t.sourceId === r.id || t.id === dl?.itemId);
   const scope = state.role === 'guest' ? state.roomPlaylist?.ids || state.library.map(t => t.id) : session.scopeIds();
   const included = item && scope.includes(item.id);
-  return html`<div class="hh-search-actions">
-    ${dl?.status === 'downloading' ? html`<span role="status">下载中 ${Math.round((dl.progress || 0) * 100)}%</span>`
-      : item || dl?.status === 'done' ? html`<span class="text-xs text-sync">已下载到曲库</span>`
-      : html`<button class="rounded-xl border border-ink-600 px-3 py-2 text-xs" onClick=${() => downloadResult(r)}>${dl?.status === 'error' ? '重试下载' : '下载到曲库'}</button>`}
-    ${item && html`<button class="rounded-xl hh-primary px-3 py-2 text-xs" disabled=${included || state.role === 'guest'} onClick=${() => appendRoomItems([item])}>${included ? '已在当前队列' : state.role === 'guest' ? '由房主加入队列' : '追加到房间'}</button><button class="rounded-xl border border-ink-600 px-3 py-2 text-xs" disabled=${state.role === 'guest'} onClick=${() => addTrackToPlaylists(item)}>加入歌单</button>`}
-    ${dl?.status === 'error' && html`<small role="alert">${dl.error}</small>`}
+  return html`<div class="hh-search-actions" onClick=${e => e.stopPropagation()}>
+    ${item ? html`<button class="rounded-xl hh-primary px-3 py-2 text-xs" disabled=${included || state.role === 'guest'} onClick=${e => { e.stopPropagation(); appendRoomItems([item]); }}>${included ? '已在当前队列' : state.role === 'guest' ? '由房主加入队列' : '追加到房间'}</button>`
+      : dl?.status === 'downloading' ? html`<span role="status" class="rounded-xl border border-ink-600 px-3 py-2 text-xs">下载中 ${Math.round((dl.progress || 0) * 100)}%</span>`
+      : dl?.status === 'done' ? html`<span class="rounded-xl border border-ink-600 px-3 py-2 text-xs text-sync">已下载到曲库</span>`
+      : html`<button class="rounded-xl border border-ink-600 px-3 py-2 text-xs" onClick=${e => { e.stopPropagation(); downloadResult(r); }}>${dl?.status === 'error' ? '重试下载' : '下载到曲库'}</button>`}
+    <button class="rounded-xl border border-ink-600 px-3 py-2 text-xs" disabled=${state.role === 'guest' || dl?.status === 'downloading' || (!item && dl?.status === 'done')} onClick=${e => { e.stopPropagation(); item ? addTrackToPlaylists(item) : downloadWithPicker(r); }}>加入歌单</button>
   </div>`;
 }
 
 function ResultCard({ r, i, onSelectTrack }) {
   const dl = useStore((s) => s.downloads[r.id]);
   const previewing = useStore((s) => s.preview?.id === r.id);
-  const role = useStore((s) => s.role);
-  const pct = Math.round((dl?.progress || 0) * 100);
-  return html`<article class="search-result-card glass rise group flex items-center gap-3 rounded-2xl p-3 transition hover:-translate-y-0.5 hover:border-white/20" style=${{ animationDelay: `${Math.min(i, 12) * 35}ms` }}>
-    <div class="relative">
+  const [expanded, setExpanded] = useState(false);
+  const toggle = () => setExpanded(value => !value);
+  return html`<article class=${cx('search-result-card glass rise group gap-3 rounded-2xl p-3 transition hover:-translate-y-0.5 hover:border-white/20', expanded && 'is-expanded')} style=${{ animationDelay: `${Math.min(i, 12) * 35}ms` }} onClick=${toggle}>
+    <div class="relative h-14 w-14 shrink-0">
       <${Cover} item=${r} size=${56} round="rounded-xl" />
       <button class=${cx('absolute inset-0 grid place-items-center rounded-xl bg-black/50 transition', previewing ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 focus:opacity-100')}
-        onClick=${() => startPreview(r)} aria-label=${previewing ? '停止试听' : `试听 ${r.title}`}>
+        onClick=${e => { e.stopPropagation(); startPreview(r); }} aria-label=${previewing ? '停止试听' : `试听 ${r.title}`}>
         <${previewing ? Square : Play} size=${18} fill="currentColor" />
       </button>
     </div>
-    <div class="min-w-0 flex-1">
-      ${r.pageUrl
-        ? html`<a href=${r.pageUrl} target="_blank" rel="noopener noreferrer" class="block truncate text-sm font-semibold hover:text-host" title="打开原页面核对版本">${r.title}</a>`
-        : html`<div class="truncate text-sm font-semibold">${r.title}</div>`}
+    <div class="min-w-0 cursor-pointer" role="button" tabIndex=${0} aria-expanded=${expanded} onKeyDown=${e => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); toggle(); } }}>
+      <div class="truncate text-sm font-semibold">${r.title}</div>
       <div class="result-artist mt-0.5 truncate text-xs text-sand-400">${r.artist || '未知歌手'}${r.version ? html` · <span class="text-sync">${r.version}</span>` : ''}</div>
       <div class="result-metadata mt-1.5 flex items-center gap-1.5">
         <${PlatformBadge} source=${r.source} label=${r.sourceLabel} />
@@ -4456,6 +4454,12 @@ function ResultCard({ r, i, onSelectTrack }) {
       </div>
     </div>
     <${SearchDownloadActions} r=${r} />
+    ${expanded && html`<div class="hh-result-details min-w-0 border-t border-ink-700 pt-3 text-xs text-sand-400">
+      ${r.pageUrl ? html`<a href=${r.pageUrl} target="_blank" rel="noopener noreferrer" class="block text-sm font-semibold hover:text-host" title="打开原页面核对版本" onClick=${e => e.stopPropagation()}>${r.title}</a>` : html`<div class="text-sm font-semibold">${r.title}</div>`}
+      <div class="mt-1">${r.artist || '未知歌手'}${r.version ? html` · <span class="text-sync">${r.version}</span>` : ''}</div>
+      <div class="result-metadata mt-2 flex items-center gap-1.5"><${PlatformBadge} source=${r.source} label=${r.sourceLabel} /><${QualityBadge} q=${r.quality} />${r.duration ? html`<span>${fmtTime(r.duration)}</span>` : ''}${r.size ? html`<span title=${r.fromLink ? '按实际音轨码率计算' : '按码率与时长估算'}>≈${fmtSize(r.size)}</span>` : ''}</div>
+      ${dl?.status === 'error' && html`<small role="alert">${dl.error}</small>`}
+    </div>`}
   </article>`;
 }
 
@@ -4779,13 +4783,13 @@ function QueueSheet() {
             ${error && html`<p role="alert" class="queue-sheet-text p-3 text-sm text-error">${error}</p>`}
             ${!loading && !items.length && !pending.length && html`<p class="p-3 text-sm text-sand-400">歌单里还没有歌</p>`}
             ${items.map(t => html`<button key=${t.id} aria-current=${s.currentId === t.id ? 'true' : undefined} disabled=${loading} onClick=${() => play({ startItemId: t.id })} class=${cx('queue-sheet-row hh-playlist-row flex w-full items-center gap-3 rounded-xl p-3 text-left', s.currentId === t.id ? 'hh-selected text-guest' : 'hover:bg-ink-800')}>
-              <${Cover} item=${t} size=${40} /><span class="min-w-0 flex-1"><span class="queue-sheet-text block text-sm font-medium">${t.title}</span><span class="queue-sheet-text mt-1 block text-xs text-sand-400">${t.artist || '未知歌手'}${trackCompletedCount(t) > 0 && html`<span class="ml-1 text-host/80">· 已听 ${trackCompletedCount(t)} 次</span>`}</span></span>
+              <${Cover} item=${t} size=${40} /><span class="min-w-0 flex-1"><span class="truncate block text-sm font-medium">${t.title}</span><span class="truncate mt-1 block text-xs text-sand-400">${t.artist || '未知歌手'}${trackCompletedCount(t) > 0 && html`<span class="ml-1 text-host/80">· 已听 ${trackCompletedCount(t)} 次</span>`}</span></span>
               ${s.currentId === t.id && html`<${Music2} size=${16} class="shrink-0" />`}
             </button>`)}
             ${pending.map(t => {
               const job = s.pendingJobs[t.id];
               return html`<button key=${t.id} disabled=${job?.state === 'loading'} onClick=${() => downloadPending(playlist.id, [t.id]).catch(e => toast(e.message, 'warn'))} class="queue-sheet-row hh-playlist-row flex w-full items-center gap-3 rounded-xl p-3 text-left opacity-60 hover:bg-ink-800">
-                <${Cover} item=${t} size=${40} /><span class="min-w-0 flex-1"><span class="queue-sheet-text block text-sm font-medium">${t.title || '未命名'}</span><span class="queue-sheet-text mt-1 block text-xs text-sand-400">${t.artist || '未知歌手'}${trackCompletedCount(t) > 0 && html`<span class="ml-1">· 已听 ${trackCompletedCount(t)} 次</span>`}</span><span class="queue-sheet-text mt-1 block text-xs text-sand-400">${job?.state === 'loading' ? '正在下载…' : job?.state === 'error' ? `${job.message} · 点击重试下载` : '未下载到这台设备 · 点击下载'}</span></span><${CloudDownload} size=${16} class="shrink-0" />
+                <${Cover} item=${t} size=${40} /><span class="min-w-0 flex-1"><span class="truncate block text-sm font-medium">${t.title || '未命名'}</span><span class="truncate mt-1 block text-xs text-sand-400">${t.artist || '未知歌手'}${trackCompletedCount(t) > 0 && html`<span class="ml-1">· 已听 ${trackCompletedCount(t)} 次</span>`}</span><span class="truncate mt-1 block text-xs text-sand-400">${job?.state === 'loading' ? '正在下载…' : job?.state === 'error' ? `${job.message} · 点击重试下载` : '未下载到这台设备 · 点击下载'}</span></span><${CloudDownload} size=${16} class="shrink-0" />
               </button>`;
             })}
           </div>` : html`<div class="scroll-thin min-h-0 flex-1 space-y-2 overflow-y-auto overscroll-contain px-4 pb-3">
@@ -4958,7 +4962,7 @@ function App() {
     <${ConnectionBar} />
     <main class="mx-auto max-w-5xl hh-workspace px-4 pt-5" style=${{ paddingBottom: `calc(${keyboardOpen ? 16 : playerVisible ? 170 : 80}px + var(--safe-bottom, 0px))` }}>
       ${tab === 'discover' && html`<${SearchDiscovery} onSearch=${homeSearch} onSelectTrack=${track => { stopPreview(); downloadWithPicker(track); }} />`}
-      ${tab === 'library' && html`<${PageHeading} eyebrow="YOUR COLLECTION" title="我的音乐" subtitle="把喜欢的旋律留在这里，下一次一起听。" /><div class="mb-4 flex flex-wrap justify-end gap-2"><${DownloadQueueButton} /><label class="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-ink-600 px-4 py-3 text-sm" title="从这台设备选择 mp3 / flac / m4a 导入"><${Upload} size=${18} /> 导入<input type="file" accept="audio/*,.mp3,.flac,.m4a,.wav,.ogg" multiple hidden onChange=${(e) => { importWithPicker([...e.target.files]); e.target.value = ''; }} /></label><button class="inline-flex items-center gap-2 rounded-xl border border-ink-600 px-4 py-3 text-sm" title=${cloudStatus?.error ? `${cloudLabel}：${cloudStatus.error}` : cloudLabel} aria-label=${cloudLabel} onClick=${() => set({ cloudOpen: true })}><${Cloud} size=${18} /> ${cloudLabel}</button></div><${RoomPlaylistBanner} /><${LibraryPanel} />`}
+      ${tab === 'library' && html`<${PageHeading} eyebrow="YOUR COLLECTION" title="我的音乐" subtitle="把喜欢的旋律留在这里，下一次一起听。" /><div class="hh-library-header-actions mb-4 flex gap-2"><${DownloadQueueButton} /><label class="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-ink-600 px-4 py-3 text-sm" title="从这台设备选择 mp3 / flac / m4a 导入"><${Upload} size=${18} /> 导入<input type="file" accept="audio/*,.mp3,.flac,.m4a,.wav,.ogg" multiple hidden onChange=${(e) => { importWithPicker([...e.target.files]); e.target.value = ''; }} /></label><button class="inline-flex items-center gap-2 rounded-xl border border-ink-600 px-4 py-3 text-sm" title=${cloudStatus?.error ? `${cloudLabel}：${cloudStatus.error}` : cloudLabel} aria-label=${cloudLabel} onClick=${() => set({ cloudOpen: true })}><${Cloud} size=${18} /><span class="truncate">${cloudLabel}</span></button></div><${RoomPlaylistBanner} /><${LibraryPanel} />`}
       ${tab === 'friends' && html`<${FriendsPanel} onPreview=${previewPublicTrack} onCollect=${async p => { await playlistStore.copyPublic(p); toast('已收藏到我的歌单'); }} stats=${listeningStats} client=${account} presence=${presence} invite=${userId => sendSocial({ type: 'INVITE_LISTEN_REQUEST', userId })} history=${history} />`}
       ${tab === 'settings' && html`<${StatsPanel} /><${AccountCard} client=${account} className="space-y-4 rounded-2xl border border-ink-700 p-5" /><button class="mt-5 flex w-full items-center gap-3 rounded-xl border border-ink-600 p-4 text-left" onClick=${() => set({ connSettingsOpen: true })}><${Settings} size=${18} class="shrink-0" /> 网络诊断 / 连接与播放设置</button>`}
     </main>

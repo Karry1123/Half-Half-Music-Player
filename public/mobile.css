@@ -61,8 +61,7 @@ body::before {
 .search-result-row { display: grid; grid-template-columns: 44px minmax(0, 1fr) 44px; align-items: start; }
 .search-result-row > :last-child { justify-self: center; align-self: center; flex-shrink: 0; }
 .result-heading { flex-wrap: wrap; }
-.result-heading > :first-child,
-.search-result-card > div:nth-child(2) > :first-child {
+.result-heading > :first-child {
   white-space: normal; overflow: visible; overflow-wrap: anywhere;
 }
 .result-metadata { flex-wrap: wrap; gap: 4px 8px; line-height: 1.6; }
@@ -122,7 +121,6 @@ body::before {
 @media (max-width: 767px) {
   .search-result-row { padding-top: 12px; padding-bottom: 12px; gap: 10px; }
   .search-result-card { display: grid; grid-template-columns: 56px minmax(0, 1fr); align-items: start; }
-  .search-result-card > :last-child { grid-column: 2; align-items: flex-start; }
   input, select, textarea { font-size: 16px !important; }
   button { min-height: 44px; }
   button[aria-label] { min-width: 44px; }
@@ -219,10 +217,10 @@ body::before {
 .hh-up-next-row > span:last-child { flex:none; font-size:12px; }
 .hh-playlist-row { min-height:72px; }
 .hh-playlist-row button,.hh-library-hero button,.hh-library-tabs button { min-height:44px; min-width:44px; }
-.hh-playlist-row .truncate,.search-result-card .truncate { white-space:normal; overflow-wrap:anywhere; }
+.hh-playlist-row .truncate,.search-result-card .truncate { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; overflow-wrap:normal; }
 .hh-library-list { max-height:60dvh; }
-.search-result-card { display:grid!important; grid-template-columns:56px minmax(0,1fr) auto; align-items:center; } /* Tailwind's .flex is injected after this sheet */
-.search-result-card .result-metadata { flex-wrap:wrap; }
+.search-result-card { display:grid!important; grid-template-columns:56px minmax(0,1fr); grid-template-rows:64px 44px; height:146px; align-items:center; } /* Tailwind's .flex is injected after this sheet */
+.search-result-card .result-metadata { flex-wrap:nowrap; overflow:hidden; white-space:nowrap; }
 .mini-player > div > button:first-child > span { overflow-wrap:anywhere; }
 @media(min-width:1100px) {
   .hh-song-results { grid-template-columns:repeat(2,minmax(0,1fr)); }
@@ -235,7 +233,7 @@ body::before {
   .connection-header > div > span[title="P2P 往返延迟"],.connection-header > div > span[title^="连接路径"] { display:none; }
   .connection-header .connection-invite { display:none; }
   .search-result-card { grid-template-columns:56px minmax(0,1fr); }
-  .search-result-card > .hh-search-actions { grid-column:2; }
+  .search-result-card > .hh-search-actions { grid-column:1 / -1; }
   .hh-library-hero,.hh-search-hero { padding:16px; }
   .hh-up-next-row { flex-wrap:wrap; }
 }
@@ -276,7 +274,18 @@ body::before {
 .hh-playlist-actions > button { display:inline-flex!important; align-items:center; justify-content:center; gap:6px; height:40px!important; min-height:40px!important; padding:0 12px!important; white-space:nowrap; flex:none!important; }
 .hh-playlist-actions > button[aria-label="打包导出歌单"] { width:40px!important; min-width:40px!important; padding:0!important; border:1px solid var(--color-border-subtle); border-radius:var(--radius-control); }
 .hh-playlist-public { grid-area:public; margin:0; justify-self:start; min-height:0!important; }
-.hh-search-actions { flex-flow:row wrap; align-items:center; }
+.hh-search-actions { flex-flow:row nowrap; align-items:center; min-width:0; grid-column:1 / -1; }
+.hh-search-actions > * { display:flex; align-items:center; justify-content:center; flex:1 1 0; min-width:0; height:44px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.search-result-card.is-expanded { height:auto; grid-template-rows:64px 44px auto; }
+.hh-result-details { grid-column:1 / -1; white-space:normal; overflow-wrap:anywhere; }
+.search-result-card .hh-result-details .result-metadata { flex-wrap:wrap; overflow:visible; white-space:normal; }
+.hh-playlist-row,.hh-local-song-row { height:72px; }
+.queue-sheet .hh-playlist-row { padding-block:4px; }
+.hh-playlist-row button,.hh-local-song-row button { width:40px; height:40px; min-width:40px; min-height:40px; flex-shrink:0; }
+.hh-playlist-row > span:last-child { gap:0; }
+.hh-playlist-row > .flex > .cover-placeholder,.hh-local-song-row > .cover-placeholder { flex-shrink:0; }
+.hh-library-header-actions > button,.hh-library-header-actions > label { display:flex; align-items:center; justify-content:center; flex:1 1 0; gap:6px; min-width:0; height:44px; min-height:44px; padding:0 8px; border:1px solid var(--color-border-subtle); border-radius:var(--radius-control); font-size:12px; white-space:nowrap; overflow:hidden; }
+.hh-library-header-actions svg { flex-shrink:0; }
 .hh-library-list { max-height:none; }
 .hh-expanded-layout { display:grid; gap:40px; width:100%; max-width:1040px; margin:24px auto; }
 .hh-player-art { width:min(340px,100%); }
