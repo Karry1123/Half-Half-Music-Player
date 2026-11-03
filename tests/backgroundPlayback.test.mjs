@@ -3,34 +3,64 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import { PlayQueue } from '../public/playQueue.js';
+import { installNativePlayback } from '../public/nativePlayback.js';
 
 const source = readFileSync(new URL('../public/dashboard.html', import.meta.url), 'utf8');
 const section = (start, end) => source.slice(source.indexOf(start), source.indexOf(end, source.indexOf(start)));
 const drain = async () => { for (let i = 0; i < 30; i++) await Promise.resolve(); };
 
-test('hidden track transitions retain the foreground service; explicit pause releases it', async () => {
-  const calls = [], listeners = [];
-  const state = { playing: true, library: [{ id: 'a' }, { id: 'b' }], currentId: 'a' };
-  const session = { out: { intent: true } };
-  vm.runInNewContext(section('if (NativeFG) {', '// ════════════════════════════════════════════════════════════ 本机离线曲库'), {
-    NativeFG: new Proxy({}, { get: (_, name) => async () => calls.push(name) }),
-    get: () => state, session, console, toast() {},
-    document: { hidden: true, addEventListener() {} },
-    store: { subscribe: fn => listeners.push(fn) },
-  });
+test('hidden track transitions keep the native service held; explicit pause releases it', async () => {
+  const updates = [], listeners = [];
+  const state = { playing: true, library: [{ id: 'a', title: 'A' }, { id: 'b', title: 'B' }], currentId: 'a' };
+  const session = { out: { intent: true }, position: () => 0, act() {} };
+  const plugin = { update: async s => updates.push(s), setArtwork: async () => {}, requestNotifications: async () => ({ granted: true }), addListener: async () => {} };
+  installNativePlayback({ plugin, store: { subscribe: fn => listeners.push(fn) }, get: () => state, session, fetchCover: async () => null, fallbackArtwork: () => 'data:image/png;base64,AA==', doc: { hidden: true, addEventListener() {} } });
   const publish = patch => { Object.assign(state, patch); listeners.forEach(fn => fn()); };
   publish({}); await drain();
   // ended -> asynchronous local load -> metadata: these are not a user pause.
   session.out.intent = false;
   publish({ playing: false, playbackPending: true, currentId: 'b' }); await drain();
-  assert.equal(calls.filter(x => x === 'stopForegroundService').length, 0);
+  assert.equal(updates.every(u => u.hold), true);
   session.out.intent = true;
   publish({ playbackPending: false }); await drain();
   publish({ playing: true }); await drain();
-  assert.equal(calls.filter(x => x === 'startForegroundService').length, 1);
+  assert.equal(updates.at(-1).hold, true);
+  assert.equal(updates.at(-1).trackId, 'b');
   session.out.intent = false;
   publish({ playing: false }); await drain();
-  assert.equal(calls.filter(x => x === 'stopForegroundService').length, 1);
+  assert.equal(updates.at(-1).hold, false);
+});
+
+test('native actions queue until the library is restored, then run once', async () => {
+  const acted = [];
+  let listener;
+  const state = { playing: false, library: [], currentId: null };
+  const session = { out: { intent: false }, position: () => 0, act: (a, o) => acted.push([a, o]) };
+  const plugin = { update: async () => {}, setArtwork: async () => {}, requestNotifications: async () => ({}), addListener: async (_, fn) => { listener = fn; } };
+  const bridge = installNativePlayback({ plugin, store: { subscribe() {} }, get: () => state, session, fetchCover: async () => null, fallbackArtwork: () => 'data:,', doc: { hidden: false, addEventListener() {} } });
+  await drain();
+  listener({ action: 'next', position: 0 });
+  listener({ action: 'seek', position: 12.5 });
+  assert.deepEqual(acted, []);
+  bridge.markReady();
+  assert.deepEqual(acted, [['next', {}], ['seek', { position: 12.5 }]]);
+  listener({ action: 'pause', position: 0 });
+  assert.equal(acted.length, 3);
+});
+
+test('artwork is pushed once per track and the newest track wins', async () => {
+  const art = [], listeners = [];
+  const state = { playing: true, library: [{ id: 'a', title: 'A', cover: 'x' }, { id: 'b', title: 'B' }], currentId: 'a' };
+  const session = { out: { intent: true }, position: () => 0, act() {} };
+  let resolveA;
+  const plugin = { update: async () => {}, setArtwork: async s => art.push(s.trackId), requestNotifications: async () => ({}), addListener: async () => {} };
+  installNativePlayback({ plugin, store: { subscribe: fn => listeners.push(fn) }, get: () => state, session, doc: { hidden: true, addEventListener() {} },
+    fetchCover: item => item.id === 'a' ? new Promise(r => { resolveA = r; }) : Promise.resolve(null), fallbackArtwork: () => 'data:image/png;base64,AA==' });
+  const publish = patch => { Object.assign(state, patch); listeners.forEach(fn => fn()); };
+  publish({}); publish({ duration: 10 }); await drain();
+  publish({ currentId: 'b' }); await drain();
+  resolveA(new Blob(['x'], { type: 'image/png' })); await drain();
+  assert.deepEqual(art, ['b']);
 });
 
 function audioHarness() {

@@ -4,6 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
 <meta name="color-scheme" content="light dark" />
+<meta name="theme-color" content="#0e0c0b" />
 <script>
   (() => {
     let theme;
@@ -180,10 +181,13 @@ import { DailyGreeting } from './dailyGreeting.js';
 import * as LocalLib from './libraryStorage.js';
 import { installAndroidBack, pushBackLayer } from './mobileRuntime.js';
 import { nativePlugin } from './nativeBridge.js';
+import { installThemeSync } from './systemUi.js';
+import { installNativePlayback } from './nativePlayback.js';
 import { observeAudio } from './audioState.js';
 import { installAudioGuard } from './audioGuard.js';
 import { FriendsPanel, useFriends } from './friendsUI.js';
 const isAndroid = window.Capacitor?.getPlatform?.() === 'android';
+installThemeSync({ systemBars: window.Capacitor?.isNativePlatform?.() ? nativePlugin('SystemBars') : null });
 function useBackLayer(open, close) {
   const ref = useRef(close); ref.current = close;
   useEffect(() => open ? pushBackLayer(() => ref.current()) : undefined, [!!open]);
@@ -192,7 +196,7 @@ import { MODE_LABEL, PLAY_MODES, PlayQueue } from './playQueue.js';
 import { ALL_ID, ALL_NAME, INBOX_ID, PlaylistStore, missingFromLibrary, playlistsOf, resolveScope } from './playlists.js';
 import { AccountClient, SOURCE_EXPIRED, cacheCloudTrack, downloadCloudTrack, downloadCloudFile } from './accountClient.js';
 import { createCloudUploader } from './cloudFiles.js';
-import { coverSrc, setCoverProxy, coverCandidates, coverError } from './coverUrl.js';
+import { coverSrc, setCoverProxy, coverCandidates, coverError, fetchCover } from './coverUrl.js';
 import { readAudioTags } from './audioTags.js';
 import { createAppToast, restoreDownloads, persistDownloads, orderedDownloads } from './dashboardFeedback.js';
 import { createCoverBackfill } from './libraryCoverBackfill.js';
@@ -2047,26 +2051,12 @@ window.__hh = { session, store, api, LocalLib }; // 调试用
 // Guest 按下这些键同样走 session.act()，会变成发给房主的请求，双方一起切。
 // 有声音在播放时，浏览器会把页面当作"正在播放媒体"，切后台通常可继续播放，但仍受系统音频焦点及进程管理限制。
 const mediaSession = globalThis.navigator?.mediaSession || null;
-if (isAndroid) {
-  const nativeMedia = nativePlugin('PlaybackSession');
-  nativeMedia.addListener('action', ({ action, position }) => session.act(action, { position })).catch(console.warn);
-  let previous = '';
-  let pending = Promise.resolve();
-  const update = () => {
-    const s = get(), item = s.library.find(x => x.id === s.currentId);
-    const state = { active: !!item, playing: s.playing, title: item?.title || '', artist: item?.artist || '',
-      duration: Number.isFinite(s.duration) ? s.duration : 0, position: Math.max(0, session.position() || 0), canNext: s.canNext };
-    pending = pending.then(() => nativeMedia.update(state)).catch(console.warn);
-  };
-  store.subscribe(() => {
-    const s = get();
-    const key = JSON.stringify([s.currentId, s.playing, s.duration, s.canNext]);
-    if (key !== previous) { previous = key; update(); }
-  });
-  session.out.audio.addEventListener('seeked', update);
-  session.out.audio.addEventListener('ratechange', update);
-  document.addEventListener('visibilitychange', update);
-}
+// Android App：通知栏 / 锁屏 / 媒体键 / 桌面小组件全部由原生 PlaybackService 承担（见 nativePlayback.js），
+// WebView 自己的 navigator.mediaSession 在这里不再使用，避免两套会话互相覆盖。
+const nativePlayback = isAndroid ? installNativePlayback({
+  plugin: nativePlugin('PlaybackSession'), store, get, session, fetchCover, toast,
+  fallbackArtwork: (title) => fallbackArtwork(title),
+}) : null;
 const artCache = new Map();
 
 /** 没有封面时画一张（系统控件里不能是空白） */
@@ -2093,13 +2083,13 @@ function fallbackArtwork(title) {
 
 function updateMediaPosition() {
   const d = get().duration;
-  if (!mediaSession?.setPositionState || !get().loaded || !d || !Number.isFinite(d)) return;
+  if (!mediaSession?.setPositionState || isAndroid || !get().loaded || !d || !Number.isFinite(d)) return;
   try {
     mediaSession.setPositionState({ duration: d, playbackRate: session.out.audio.playbackRate || 1, position: Math.min(d, Math.max(0, session.position())) });
   } catch {}
 }
 
-if (mediaSession) {
+if (mediaSession && !isAndroid) {
   const handlers = {
     play: () => session.act('play'),
     pause: () => session.act('pause'),
@@ -2151,66 +2141,6 @@ if (mediaSession) {
   });
   // 播放速率微调（同步追赶）会让系统进度条慢慢偏，定期校正
   setInterval(() => !document.hidden && updateMediaPosition(), 5000);
-}
-
-// ════════════════════════════════════════════════════════════ Android App（Capacitor）：前台服务保活
-// 套上 Capacitor 外壳后，WebView 切到后台容易被系统回收，播放会断。有歌在播时开一个"媒体播放"类型的
-// 前台服务（状态栏常驻通知），降低进程回收风险，但不保证永不被系统终止。在普通浏览器里 NativeFG 为 null，下面整段什么都不做。
-const NativeFG = (() => {
-  const C = window.Capacitor;
-  if (!C?.isNativePlatform?.() || C.getPlatform?.() !== 'android') return null;
-  try {
-    return nativePlugin('ForegroundService');
-  } catch {
-    return null;
-  }
-})();
-
-if (NativeFG) {
-  let running = false, lastKey = '', asked = false;
-  let work = Promise.resolve();
-  const sync = async () => {
-    const s = get();
-    const item = s.library.find(x => x.id === s.currentId);
-    // Read current state inside the serialized job, never a stale subscription snapshot.
-    if (!item || !(s.playing || s.playbackPending || session.out.intent || s.audioFocusTransient)) {
-      if (running) await NativeFG.stopForegroundService();
-      running = false; lastKey = ''; return;
-    }
-    const key = item.id + '|' + item.title + '|' + item.artist;
-    if (running && key === lastKey) return;
-    const opts = {
-      id: 4101, title: item.title || 'Half&Half', body: item.artist || '正在播放',
-      smallIcon: 'ic_stat_music', serviceType: 2, silent: true, notificationChannelId: 'playback',
-      buttons: [{ id: 1, title: '上一首' }, { id: 2, title: '暂停' }, { id: 3, title: '下一首' }],
-    };
-    if (!running) {
-      await NativeFG.createNotificationChannel({ id: 'playback', name: '音乐播放', importance: 2 });
-      // Start promptly while visible. Notification permission is not a prerequisite for an FGS.
-      await NativeFG.startForegroundService(opts);
-      running = true;
-      if (!asked && !document.hidden) {
-        asked = true;
-        NativeFG.requestPermissions().catch(console.warn);
-      }
-    } else await NativeFG.updateForegroundService(opts);
-    lastKey = key;
-  };
-  const enqueue = () => { work = work.then(sync).catch(e => {
-    console.warn('后台播放服务失败', e);
-    toast('后台播放服务启动失败，请返回前台重试', 'warn');
-  }); };
-  let desiredKey;
-  store.subscribe(() => {
-    const s = get(), item = s.library.find(x => x.id === s.currentId);
-    const key = JSON.stringify([s.playing || s.playbackPending || session.out.intent || s.audioFocusTransient, item?.id, item?.title, item?.artist]);
-    // A toast or progress update must not cause an endless failed-service retry loop.
-    if (key === desiredKey) return;
-    desiredKey = key;
-    enqueue();
-  });
-  NativeFG.addListener('buttonClicked', ({ buttonId }) => session.act(({ 1: 'prev', 2: 'pause', 3: 'next' })[buttonId])).catch(console.warn);
-  document.addEventListener('visibilitychange', () => { if (!document.hidden) enqueue(); });
 }
 
 // ════════════════════════════════════════════════════════════ 本机离线曲库（IndexedDB）
@@ -5004,7 +4934,7 @@ function AppShell() {
     iceReady = applyIce();
     api.init();
     // 每次打开页面：自动识别本机已保存的歌曲，然后同步账号里的昵称和歌单
-    session.restoreLocal().then(() => { syncProfile(); cloudSync.sync().catch(() => {}); });
+    session.restoreLocal().then(() => { nativePlayback?.markReady(); syncProfile(); cloudSync.sync().catch(() => {}); });
     // 空格 = 播放/暂停
     const onKey = (e) => {
       if (e.code !== 'Space' || e.repeat || e.target.closest('input, textarea, button, select')) return;

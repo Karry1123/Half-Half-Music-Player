@@ -105,7 +105,9 @@ Details, table layout and test steps: [ACCOUNT_SYNC_EXPORT.md](ACCOUNT_SYNC_EXPO
 | Capacitor config | [`capacitor.config.json`](capacitor.config.json) (package `com.halfhalf.musicplayer`, `webDir: dist`) |
 | Android project | [`android/`](android/) (committed; no need to run `cap add`) |
 | Permissions and service declarations | [`android/app/src/main/AndroidManifest.xml`](android/app/src/main/AndroidManifest.xml) |
-| Background playback (foreground service) | `NativeFG` in `public/dashboard.html`, plugin `@capawesome-team/capacitor-android-foreground-service` |
+| Background playback, media notification, lock screen | `PlaybackService` + `PlaybackSessionPlugin` in [`android/app/src/main/java/com/halfhalf/musicplayer/`](android/app/src/main/java/com/halfhalf/musicplayer/), driven by [`public/nativePlayback.js`](public/nativePlayback.js) |
+| Home-screen widgets (4×2, 2×2) | `PlayerWidgetProvider` / `PlayerWidgetSmallProvider`, layouts under `android/app/src/main/res/layout/widget_*.xml` |
+| Status bar / safe area / theme | [`public/systemUi.js`](public/systemUi.js), [`public/mobile.css`](public/mobile.css); design notes in [`docs/MOBILE_SYSTEM_UI_DESIGN.md`](docs/MOBILE_SYSTEM_UI_DESIGN.md) |
 | Cloud build | [`.github/workflows/build-apk.yml`](.github/workflows/build-apk.yml) |
 
 ### Permissions

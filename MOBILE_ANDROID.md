@@ -11,7 +11,9 @@
 - `public/mobileRuntime.js` 是唯一 Android 返回事件入口。弹层按打开顺序后进先出；随后关闭试听、搜索结果，播放台回大厅，房间等待/连接状态退出房间；根视图两秒内再按一次才退出。退出某一层会清除上次退出计时。返回搜索时使未完成请求失效，防止结果重新弹回。
 - 更新提示也可返回关闭；已开始的 APK 下载不会因关闭提示而中止。
 - Android 音频直接使用 HTMLAudioElement，避免分析器所在 AudioContext 挂起造成静音。浏览器仍保留频谱分析。Android 因此不显示真实音频频谱。
-- 复用已安装的前台服务插件，它的 Android 实现已持有 PARTIAL_WAKE_LOCK。服务启动/更新/停止按顺序串行处理，避免快速切歌产生竞态；暂停即停止服务并释放锁。通知包含上一首、暂停、下一首。HTML MediaSession 保留标题、歌手、专辑、封面、进度和播放/暂停/跳转事件。
+- 自研 `PlaybackService`（`android/app/src/main/java/com/halfhalf/musicplayer/`）同时持有 MediaSession、MediaStyle 通知和 PARTIAL_WAKE_LOCK：通知显示封面大图、歌手、同步状态、可拖动进度条和上一首 / 播放暂停 / 下一首；锁屏和耳机媒体键走同一个会话。JS 侧只有 `public/nativePlayback.js` 一条通道：订阅 store 推送状态，切歌时抓封面缩到 512px 推给原生缓存。暂停 2 秒后退出前台并释放锁但保留通知可继续；清掉曲目或从最近任务划掉才撤通知。第三方前台服务插件已移除。Android 上不再使用 WebView 自己的 `navigator.mediaSession`，避免两套会话互相覆盖。
+- 桌面小组件 `PlayerWidgetProvider`（4×2）与 `PlayerWidgetSmallProvider`（2×2）读取 `PlaybackStateStore` 的快照；服务每次状态变化和播放中每 30 秒刷新一次。服务活着时按钮直达服务；进程被杀后按钮改为带动作拉起 App，JS 在曲库恢复后执行排队的动作。Android 12+ 跟随 Material You 动态取色与系统圆角。
+- 状态栏图标颜色随主题切换（`public/systemUi.js` 调 Capacitor 核心 `SystemBars.setStyle`），`theme-color` 同步；未固定主题时跟随系统深浅色变化。横屏允许绘制到刘海 / 打孔下方（`layoutInDisplayCutoutMode=shortEdges`），固定定位的底栏和迷你播放条在两侧留出安全区；软键盘弹出时底栏下滑让位。
 - `scripts/bundle-dashboard.mjs` 在构建时打包 React、htm、PeerJS 等依赖并编译 Tailwind；APK 不再依赖 CDN 才能显示页面。音乐搜索、房间连接仍需要网络。
 
 ## 后台播放的边界
@@ -209,15 +211,18 @@ body { padding: var(--safe-top) var(--safe-right) 0 var(--safe-left); }
                 android:resource="@xml/file_paths"></meta-data>
         </provider>
 
-        <!-- Foreground service from @capawesome-team/capacitor-android-foreground-service.
-             Keeps playback alive when the app is in the background (type: media playback). -->
-        <receiver
-            android:name="io.capawesome.capacitorjs.plugins.foregroundservice.NotificationActionBroadcastReceiver"
-            android:exported="false" />
         <service
-            android:name="io.capawesome.capacitorjs.plugins.foregroundservice.AndroidForegroundService"
+            android:name=".PlaybackService"
             android:exported="false"
             android:foregroundServiceType="mediaPlayback" />
+        <receiver android:name=".PlayerWidgetProvider" android:exported="true">
+            <intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE" /></intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_player_info" />
+        </receiver>
+        <receiver android:name=".PlayerWidgetSmallProvider" android:exported="true">
+            <intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE" /></intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_player_small_info" />
+        </receiver>
     </application>
 
     <!-- Network -->
@@ -243,68 +248,23 @@ body { padding: var(--safe-top) var(--safe-right) 0 var(--safe-left); }
 
 ```
 
-## JS 前台服务核心配置
+## 系统播放 UI 的数据流
 
-```js
-const NativeFG = (() => {
-  const C = window.Capacitor;
-  if (!C?.isNativePlatform?.() || C.getPlatform?.() !== 'android') return null;
-  try {
-    return nativePlugin('ForegroundService');
-  } catch {
-    return null;
-  }
-})();
-
-if (NativeFG) {
-  let running = false, lastKey = '', asked = false;
-  let work = Promise.resolve();
-  const sync = async () => {
-    const s = get();
-    const item = s.library.find(x => x.id === s.currentId);
-    // Read current state inside the serialized job, never a stale subscription snapshot.
-    if (!item || !s.playing) {
-      if (running) await NativeFG.stopForegroundService();
-      running = false; lastKey = ''; return;
-    }
-    const key = item.id + '|' + item.title + '|' + item.artist;
-    if (running && key === lastKey) return;
-    const opts = {
-      id: 4101, title: item.title || 'Half&Half', body: item.artist || '正在播放',
-      smallIcon: 'ic_stat_music', serviceType: 2, silent: true, notificationChannelId: 'playback',
-      buttons: [{ id: 1, title: '上一首' }, { id: 2, title: '暂停' }, { id: 3, title: '下一首' }],
-    };
-    if (!running) {
-      await NativeFG.createNotificationChannel({ id: 'playback', name: '音乐播放', importance: 2 });
-      // Start promptly while visible. Notification permission is not a prerequisite for an FGS.
-      await NativeFG.startForegroundService(opts);
-      running = true;
-      if (!asked && !document.hidden) {
-        asked = true;
-        NativeFG.requestPermissions().catch(console.warn);
-      }
-    } else await NativeFG.updateForegroundService(opts);
-    lastKey = key;
-  };
-  const enqueue = () => { work = work.then(sync).catch(e => {
-    console.warn('后台播放服务失败', e);
-    toast('后台播放服务启动失败，请返回前台重试', 'warn');
-  }); };
-  let desiredKey;
-  store.subscribe(() => {
-    const s = get(), item = s.library.find(x => x.id === s.currentId);
-    const key = JSON.stringify([s.playing, item?.id, item?.title, item?.artist]);
-    // A toast or progress update must not cause an endless failed-service retry loop.
-    if (key === desiredKey) return;
-    desiredKey = key;
-    enqueue();
-  });
-  NativeFG.addListener('buttonClicked', ({ buttonId }) => session.act(({ 1: 'prev', 2: 'pause', 3: 'next' })[buttonId])).catch(console.warn);
-  document.addEventListener('visibilitychange', () => { if (!document.hidden) enqueue(); });
-}
-
-
+```text
+store ──installNativePlayback──▶ PlaybackSession.update(state) / setArtwork(id, base64)
+                                      │  PlaybackStateStore（SharedPreferences）+ cacheDir/artwork/<sha1>.jpg
+                                      ▼
+                               PlaybackService.apply()
+                                 ├─ MediaSession 元数据 / 播放状态（含封面、时长、进度）
+                                 ├─ MediaStyle 通知（hold=true 时 startForeground，否则 2 秒后 detach）
+                                 ├─ 唤醒锁（hold 时持有）
+                                 └─ PlayerWidgetProvider.refreshAll()
+通知 / 锁屏 / 媒体键 / 小组件 ──PendingIntent──▶ PlaybackService ──▶ PlaybackSessionPlugin.dispatch()
+                                                     │ 插件实例在：notifyListeners("action") → session.act()
+                                                     └ 不在：拉起 MainActivity 并带 hh.action，JS 恢复曲库后执行
 ```
+
+`hold` 的含义与旧前台服务一致：`playing || playbackPending || session.out.intent || audioFocusTransient`，切歌间隙和短暂失去焦点不会丢前台。Android 12+ 后台禁止启动前台服务时，服务退回普通通知并记录日志，页面回到前台（visibilitychange）后重推一次。
 
 ## 本次验证记录
 

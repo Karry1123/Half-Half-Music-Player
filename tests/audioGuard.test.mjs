@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { installNativePlayback } from '../public/nativePlayback.js';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import { createAudioGuardState, installAudioGuard, outputDevices, outputDisappeared } from '../public/audioGuard.js';
@@ -262,22 +263,19 @@ test('host transient pause broadcasts normally; gain resumes both; peer manual p
   host.guard.dispose(); guest.guard.dispose(); await flush();
 });
 
-test('transient focus pause retains an already running foreground service until canceled', async () => {
-  const calls = [], listeners = [];
-  const state = { playing: true, library: [{ id: 'track' }], currentId: 'track' };
-  const session = { out: { intent: true } };
-  const start = dashboard.indexOf('if (NativeFG) {');
-  const end = dashboard.indexOf('\nfunction fromLocal', start);
-  vm.runInNewContext(dashboard.slice(start, end), {
-    NativeFG: new Proxy({}, { get: (_, name) => async () => calls.push(name) }), get: () => state, session, console, toast() {},
-    document: { hidden: true, addEventListener() {} }, store: { subscribe: fn => listeners.push(fn) },
-  });
+test('transient focus pause keeps the native service held until canceled', async () => {
+  const updates = [], listeners = [];
+  const state = { playing: true, library: [{ id: 'track', title: 't' }], currentId: 'track' };
+  const session = { out: { intent: true }, position: () => 0, act() {} };
+  const plugin = { update: async s => updates.push(s), setArtwork: async () => {}, requestNotifications: async () => ({ granted: true }), addListener: async () => {} };
+  installNativePlayback({ plugin, store: { subscribe: fn => listeners.push(fn) }, get: () => state, session, fetchCover: async () => null, fallbackArtwork: () => 'data:image/png;base64,AA==', doc: { hidden: true, addEventListener() {} } });
   const publish = patch => { Object.assign(state, patch); listeners.forEach(fn => fn()); };
   publish({}); await flush();
   session.out.intent = false; publish({ playing: false, audioFocusTransient: true }); await flush();
-  assert.equal(calls.includes('stopForegroundService'), false);
+  assert.equal(updates.at(-1).hold, true);
   session.out.intent = true; publish({ playing: true, audioFocusTransient: false }); await flush();
-  assert.equal(calls.filter(x => x === 'startForegroundService').length, 1);
+  assert.equal(updates.at(-1).playing, true);
   session.out.intent = false; publish({ playing: false }); await flush();
-  assert.equal(calls.filter(x => x === 'stopForegroundService').length, 1);
+  assert.equal(updates.at(-1).hold, false);
+  assert.equal(updates.at(-1).active, true);
 });

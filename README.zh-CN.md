@@ -105,7 +105,9 @@ npm start              # http://127.0.0.1:8090
 | Capacitor 配置 | [`capacitor.config.json`](capacitor.config.json)（包名 `com.halfhalf.musicplayer`，`webDir: dist`） |
 | Android 工程 | [`android/`](android/)（已提交，不用再 `cap add`） |
 | 权限与服务声明 | [`android/app/src/main/AndroidManifest.xml`](android/app/src/main/AndroidManifest.xml) |
-| 后台播放（前台服务） | `public/dashboard.html` 里的 `NativeFG`，插件 `@capawesome-team/capacitor-android-foreground-service` |
+| 后台播放、媒体通知、锁屏控制 | [`android/app/src/main/java/com/halfhalf/musicplayer/`](android/app/src/main/java/com/halfhalf/musicplayer/) 下的 `PlaybackService` + `PlaybackSessionPlugin`，由 [`public/nativePlayback.js`](public/nativePlayback.js) 驱动 |
+| 桌面小组件（4×2、2×2） | `PlayerWidgetProvider` / `PlayerWidgetSmallProvider`，布局在 `android/app/src/main/res/layout/widget_*.xml` |
+| 状态栏 / 安全区 / 主题 | [`public/systemUi.js`](public/systemUi.js)、[`public/mobile.css`](public/mobile.css)；设计说明见 [`docs/MOBILE_SYSTEM_UI_DESIGN.md`](docs/MOBILE_SYSTEM_UI_DESIGN.md) |
 | 云端构建 | [`.github/workflows/build-apk.yml`](.github/workflows/build-apk.yml) |
 
 ### 权限清单

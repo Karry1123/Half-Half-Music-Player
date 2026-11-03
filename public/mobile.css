@@ -27,6 +27,23 @@ body::before {
   pointer-events: none;
 }
 .player-bar { padding: 0 var(--safe-right) var(--safe-bottom) var(--safe-left); }
+/* Full-screen player: let the artwork colour show through the status-bar strip (blur only). */
+body:has([role="dialog"].fullscreen-player)::before { background: rgba(var(--color-safe-area-rgb), 0.35); }
+/* Landscape on a notched / punch-hole phone: fixed bars do not inherit the body padding. */
+.mini-player, .hh-navigation {
+  padding-left: max(16px, var(--safe-left)) !important;
+  padding-right: max(16px, var(--safe-right)) !important;
+  transition: transform var(--motion-duration-normal, 200ms) var(--motion-ease-standard, ease);
+}
+/* Soft keyboard (viewport resizes-content + adjustResize): slide the bottom bars away instead of
+   letting them sit on top of the keyboard and cover the field being typed in. Touch screens only. */
+@media (hover: none) and (max-width: 767px) {
+  body:has(input:not([type="range"]):not([type="checkbox"]):not([type="radio"]):not([type="file"]):focus, textarea:focus, [contenteditable="true"]:focus) .mini-player,
+  body:has(input:not([type="range"]):not([type="checkbox"]):not([type="radio"]):not([type="file"]):focus, textarea:focus, [contenteditable="true"]:focus) .hh-navigation {
+    transform: translateY(calc(100% + var(--safe-bottom) + 80px));
+    pointer-events: none;
+  }
+}
 /* Override the generic mobile dialog height cap, including the gesture area. */
 [role="dialog"].fullscreen-player {
   position: fixed;

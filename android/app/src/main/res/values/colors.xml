@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Widget palette for Android 11 and below; values-v31 swaps in Material You dynamic colours. -->
+    <color name="widget_background">#F20E0C0B</color>
+    <color name="widget_surface">#33F7F0E8</color>
+    <color name="widget_text">#F7F0E8</color>
+    <color name="widget_text_secondary">#B3F7F0E8</color>
+    <color name="widget_accent">#D7852F</color>
+    <color name="widget_on_accent">#0E0C0B</color>
+    <color name="widget_art_placeholder">#282B35</color>
+</resources>
