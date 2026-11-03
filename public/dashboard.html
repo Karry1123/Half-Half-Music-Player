@@ -1564,9 +1564,9 @@ class Session {
         if (!host) onRpcReply(m);
         return;
       case 'audio-guard-pause':
-        if (host && m.trackId === this.loadedId && ['becomingNoisy', 'loss', 'lossTransient', 'browserPause'].includes(m.reason)) {
+        if (host && m.trackId === this.loadedId && ['becomingNoisy', 'loss', 'lossTransient', 'browserPause', 'callStart'].includes(m.reason)) {
           this.audioGuard?.cancelResume();
-          toast(m.reason === 'becomingNoisy' ? '对方耳机已断开，已自动暂停' : '对方正在处理其他音频，已自动暂停');
+          toast(m.reason === 'becomingNoisy' ? '对方耳机已断开，已自动暂停' : m.reason === 'callStart' ? '对方来电，已自动暂停' : '对方正在处理其他音频，已自动暂停');
           this.act('pause', { by: 'guest', audioGuard: true });
           this.out.stopAt(now(), this.anchor.position);
         }
@@ -2027,7 +2027,7 @@ audioGuard = installAudioGuard({
   setDucking: factor => { audioDuck = factor; session.out.setVolume(get().volume); },
   publish: () => set({ audioFocusTransient: !!audioGuard?.waiting }),
   pause: reason => {
-    toast(reason === 'becomingNoisy' ? '耳机已断开，已暂停播放' : '其他应用正在播放，已暂停');
+    toast(reason === 'becomingNoisy' ? '耳机已断开，已暂停播放' : reason === 'callStart' ? '来电，已暂停，通话结束后自动继续' : '其他应用正在播放，已暂停');
     if (session.isGuest) {
       const position = session.out.audio.currentTime;
       session.out.stopAt(now(), position);

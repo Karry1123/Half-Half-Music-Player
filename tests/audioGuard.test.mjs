@@ -135,6 +135,67 @@ test('native listeners precede monitoring; transient retains monitoring; user pa
   h.guard.dispose();
 });
 
+test('call mode: pauses on callStart, resumes on callEnded however long the call, then ends', () => {
+  let now = 0;
+  const s = createAudioGuardState({ clock: () => now });
+  assert.equal(s.decide('callStart', true), 'pause');
+  assert.equal(s.inCall, true);
+  assert.equal(s.waiting, true);
+  now = 25 * 60000; // far past the five-minute transient window
+  assert.equal(s.decide('gain', false), 'none', 'focus gain during the call does not resume');
+  assert.equal(s.waiting, true);
+  assert.equal(s.decide('callEnded', false), 'resume');
+  assert.equal(s.inCall, false);
+  assert.equal(s.blocked, false);
+  assert.equal(s.decide('callEnded', false), 'restore', 'listening ended: a second event is inert');
+  // Focus loss arrived first (WebView paused), then the call was identified: the wait becomes call mode.
+  const t = createAudioGuardState({ clock: () => now });
+  assert.equal(t.decide('lossTransient', true), 'pause');
+  assert.equal(t.decide('callStart', false), 'none');
+  assert.equal(t.inCall, true);
+  now += 40 * 60000;
+  assert.equal(t.decide('callEnded', false), 'resume');
+});
+
+test('call mode respects the setting, user actions and the safety cap', () => {
+  let enabled = false, now = 0;
+  const off = createAudioGuardState({ autoResume: () => enabled, clock: () => now });
+  assert.equal(off.decide('callStart', true), 'pause');
+  assert.equal(off.decide('callEnded', false), 'restore');
+  const cancelled = createAudioGuardState({ clock: () => now });
+  cancelled.decide('callStart', true); cancelled.interact();
+  assert.equal(cancelled.decide('callEnded', false), 'restore');
+  const capped = createAudioGuardState({ clock: () => now, callTimeout: 1000 });
+  capped.decide('callStart', true);
+  now = 1001;
+  assert.equal(capped.waiting, false);
+  assert.equal(capped.decide('callEnded', false), 'restore');
+  assert.equal(createAudioGuardState().decide('callStart', false), 'none');
+});
+
+test('native call events: pause keeps monitoring, callEnded resumes once', async () => {
+  const listeners = {}, calls = [];
+  const h = harness({ capacitor: { isNativePlatform: () => true }, nativePlugin: () => ({
+    addListener: async (event, fn) => { listeners[event] = fn; return { remove() {} }; },
+    requestFocus: async () => { calls.push('request'); return { granted: true }; },
+    abandonFocus: async () => { calls.push('abandon'); },
+  }) });
+  h.audio.dispatchEvent(new Event('play')); await flush();
+  listeners.interruption({ state: 'callStart' }); await flush();
+  assert.deepEqual(h.pauses, ['callStart']);
+  assert.equal(h.guard.inCall, true);
+  assert.equal(h.guard.waiting, true);
+  assert.equal(calls.includes('abandon'), false, 'the native call watch must stay alive');
+  listeners.interruption({ state: 'gain' }); await flush();
+  assert.equal(h.resumes, 0);
+  listeners.interruption({ state: 'callEnded' }); await flush();
+  assert.equal(h.resumes, 1);
+  assert.equal(h.guard.inCall, false);
+  listeners.interruption({ state: 'callEnded' }); await flush();
+  assert.equal(h.resumes, 1);
+  h.guard.dispose();
+});
+
 test('native external pause requires corroboration; real media and calls pause', async () => {
   for (const state of [undefined, 'loss', 'lossTransient']) {
     const h = harness({ pauseDelay: 0, capacitor: { isNativePlatform: () => true }, nativePlugin: () => ({

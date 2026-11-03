@@ -1,15 +1,32 @@
 // Pure decisions, independent of the DOM/native bridge. Time is injectable for tests.
-export function createAudioGuardState({ clock = Date.now, autoResume = () => true, timeout = 300000 } = {}) {
-  let transientAt = null, blocked = false, ducked = false;
+// Two kinds of interruption can auto-resume: a transient focus loss (within `timeout`), and a phone
+// call ("call mode"), which waits for the native callEnded event however long the call takes
+// (`callTimeout` is only a safety net).
+export function createAudioGuardState({ clock = Date.now, autoResume = () => true, timeout = 300000, callTimeout = 7200000 } = {}) {
+  let transientAt = null, callAt = null, blocked = false, ducked = false;
   return {
     get blocked() { return blocked; },
     get ducked() { return ducked; },
-    get remaining() { return transientAt === null ? 0 : Math.max(0, timeout - (clock() - transientAt)); },
-    get waiting() { return transientAt !== null && clock() - transientAt < timeout && autoResume(); },
-    cancelResume() { transientAt = null; },
-    interact() { transientAt = null; blocked = false; ducked = false; },
+    get inCall() { return callAt !== null; },
+    get remaining() {
+      if (callAt !== null) return Math.max(0, callTimeout - (clock() - callAt));
+      return transientAt === null ? 0 : Math.max(0, timeout - (clock() - transientAt));
+    },
+    get waiting() {
+      if (callAt !== null) return clock() - callAt < callTimeout && autoResume();
+      return transientAt !== null && clock() - transientAt < timeout && autoResume();
+    },
+    cancelResume() { transientAt = null; callAt = null; },
+    interact() { transientAt = null; callAt = null; blocked = false; ducked = false; },
     decide(event, playing) {
+      if (event === 'callEnded') {
+        const resume = this.waiting && callAt !== null;
+        callAt = null; transientAt = null; ducked = false;
+        if (resume) blocked = false;
+        return resume ? 'resume' : 'restore';
+      }
       if (event === 'gain') {
+        if (callAt !== null) return 'none'; // still on the phone: callEnded decides
         const resume = this.waiting;
         transientAt = null; ducked = false;
         if (resume) blocked = false;
@@ -19,12 +36,21 @@ export function createAudioGuardState({ clock = Date.now, autoResume = () => tru
         if (playing && !blocked) { ducked = true; return 'duck'; }
         return 'none';
       }
+      if (event === 'callStart') {
+        ducked = false;
+        // Already paused by the focus loss that preceded the call: upgrade that wait to call mode.
+        if (!playing) { if (transientAt !== null && autoResume()) { callAt = clock(); transientAt = null; } return 'none'; }
+        blocked = true;
+        if (callAt === null && autoResume()) callAt = clock();
+        transientAt = null;
+        return 'pause';
+      }
       if (!['loss', 'lossTransient', 'becomingNoisy', 'browserPause'].includes(event)) return 'none';
       ducked = false;
-      if (event !== 'lossTransient') transientAt = null;
+      if (event !== 'lossTransient') { transientAt = null; callAt = null; }
       if (!playing) return 'none';
       blocked = true;
-      if (event === 'lossTransient' && transientAt === null && autoResume()) transientAt = clock();
+      if (event === 'lossTransient' && transientAt === null && callAt === null && autoResume()) transientAt = clock();
       return 'pause';
     },
   };
@@ -39,9 +65,9 @@ export function outputDisappeared(before, after) {
 
 export function installAudioGuard({ audio, isPlaying, pause, resume, setDucking, publish,
   nativePlugin, capacitor = globalThis.Capacitor, navigator = globalThis.navigator,
-  autoResume, clock = Date.now, timeout = 300000, consumeAppPause = () => false,
+  autoResume, clock = Date.now, timeout = 300000, callTimeout = 7200000, consumeAppPause = () => false,
   ignorePause = () => false, pauseDelay = 500 }) {
-  const state = createAudioGuardState({ clock, autoResume, timeout });
+  const state = createAudioGuardState({ clock, autoResume, timeout, callTimeout });
   const native = !!capacitor?.isNativePlatform?.();
   let lastPlay = -Infinity, pauseTimer, generation = 0;
   let plugin, ready = Promise.resolve(), queue = Promise.resolve(), timer, focused = false, disposed = false;
@@ -127,6 +153,7 @@ export function installAudioGuard({ audio, isPlaying, pause, resume, setDucking,
   return {
     get blocked() { return state.blocked; },
     get waiting() { return state.waiting; },
+    get inCall() { return state.inCall; },
     event,
     cancelResume() { clearTimeout(timer); state.cancelResume(); changed(); if (!isPlaying()) abandon(); },
     interact() { clearTimeout(timer); state.interact(); changed(); if (!isPlaying()) abandon(); },
