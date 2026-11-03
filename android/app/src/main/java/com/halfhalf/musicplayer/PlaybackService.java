@@ -162,7 +162,11 @@ public class PlaybackService extends Service {
         handler.removeCallbacks(detach);
         handler.removeCallbacks(tick);
         if (s.hold) {
-            if (!wakeLock.isHeld()) wakeLock.acquire(6 * 60 * 60 * 1000L);
+            // The wake lock is only for audible playback. While paused for a call or a transient focus loss
+            // the foreground service alone keeps the process alive, and the system events that end the wait
+            // (mode change, focus gain) wake the main thread on their own.
+            if (s.playing && !wakeLock.isHeld()) wakeLock.acquire(6 * 60 * 60 * 1000L);
+            if (!s.playing && wakeLock.isHeld()) wakeLock.release();
             promote(notification);
             if (s.playing) handler.postDelayed(tick, WIDGET_TICK_MS);
         } else {

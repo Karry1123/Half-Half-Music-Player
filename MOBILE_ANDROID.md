@@ -264,7 +264,7 @@ store ──installNativePlayback──▶ PlaybackSession.update(state) / setAr
                                                      └ 不在：拉起 MainActivity 并带 hh.action，JS 恢复曲库后执行
 ```
 
-来电走独立的“通话监听模式”（`AudioGuardPlugin` + `public/audioGuard.js` 的 `callStart` / `callEnded`）：音乐正常播放时不再轮询。Android 12+ 用 `AudioManager.OnModeChangedListener` 事件发现来电（响铃或接通），更早的版本在 WebView 因焦点丢失暂停后由 `getInterruption()` 查到通话模式；进入通话后只监听通话结束（12+ 靠事件，旧版本每 500 毫秒查一次），一结束就发 `callEnded`，页面立即恢复播放并退出监听。通话时长不受 5 分钟瞬时焦点窗口限制（安全上限 2 小时）；用户在通话中手动操作或关闭“自动继续”设置即取消恢复。通话期间 `audioFocusTransient` 保持为真，前台服务和通知不会被撤。
+来电走独立的“通话监听模式”（`AudioGuardPlugin` + `public/audioGuard.js` 的 `callStart` / `callEnded`）：音乐正常播放时不再轮询。Android 12+ 用 `AudioManager.OnModeChangedListener` 事件发现来电（响铃或接通），更早的版本在 WebView 因焦点丢失暂停后由 `getInterruption()` 查到通话模式；进入通话后只监听通话结束（12+ 靠事件，旧版本每 500 毫秒查一次），一结束就发 `callEnded`，页面立即恢复播放并退出监听。通话时长不受 5 分钟瞬时焦点窗口限制（安全上限 2 小时）；用户在通话中手动操作或关闭“自动继续”设置即取消恢复。通话期间 `audioFocusTransient` 保持为真，前台服务和通知不会被撤，但 CPU 唤醒锁只在真正出声（`playing`）时持有，通话和等待恢复期间释放。
 
 `hold` 的含义与旧前台服务一致：`playing || playbackPending || session.out.intent || audioFocusTransient`，切歌间隙和短暂失去焦点不会丢前台。Android 12+ 后台禁止启动前台服务时，服务退回普通通知并记录日志，页面回到前台（visibilitychange）后重推一次。
 
