@@ -1,8 +1,11 @@
+import { toSimplified } from './zhVariants.js';
+
 // Persist actual listening time separately from the playback position: seeking is not listening.
 const DATABASE = 'half-half-listening-stats';
 const finite = (value, fallback = 0) => Number.isFinite(Number(value)) ? Number(value) : fallback;
 const emptyStats = () => ({ completedPlayCount: {}, coListeningTime: {}, trackMetadata: {} });
-const songKey = meta => JSON.stringify([meta?.title, meta?.artist].map(value => String(value || '').normalize('NFKC').trim().toLowerCase().replace(/\s+/gu, ' ')));
+const normalizedName = value => toSimplified(String(value || '')).normalize('NFKC').trim().toLowerCase().replace(/\s+/gu, ' ');
+const songKey = meta => JSON.stringify([meta?.title, meta?.artist].map(normalizedName));
 const calendarDay = timestamp => {
   const date = new Date(timestamp);
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
@@ -339,9 +342,15 @@ export class ListeningStats {
     for (const record of this.records) {
       if (!inPeriod(record, bounds, now)) continue;
       const artist = this.stats.trackMetadata[record.trackId]?.artist?.trim() || '未知歌手';
-      totals.set(artist, (totals.get(artist) || 0) + Math.max(0, finite(record.durationPlayed)));
+      const key = normalizedName(artist), seconds = Math.max(0, finite(record.durationPlayed));
+      const group = totals.get(key) || { seconds: 0, variants: new Map() };
+      group.seconds += seconds;
+      group.variants.set(artist, (group.variants.get(artist) || 0) + seconds);
+      totals.set(key, group);
     }
-    return [...totals].filter(([, seconds]) => seconds > 0).map(([artist, seconds]) => ({ artist, seconds }))
+    return [...totals.values()].filter(group => group.seconds > 0).map(({ seconds, variants }) => ({
+      artist: [...variants].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0][0], seconds,
+    }))
       .sort((a, b) => b.seconds - a.seconds || a.artist.localeCompare(b.artist));
   }
 

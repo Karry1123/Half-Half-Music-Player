@@ -17,6 +17,7 @@ function CountUp({ value }) {
 
 const card = 'min-w-0 space-y-3 rounded-2xl border border-white/10 bg-white/5 p-3 sm:p-4';
 const note = 'min-w-0 break-words text-xs text-sand-400';
+const caption = 'min-w-0 whitespace-nowrap truncate text-xs text-sand-400';
 const periods = [['week', '本周'], ['month', '本月'], ['year', '本年'], ['all', '全部']];
 const minutes = seconds => Math.floor(seconds / 60).toLocaleString();
 function Duration({ seconds }) {
@@ -95,10 +96,10 @@ export function ListeningStatsCards({ stats, tracks = [], me = {}, friends = [],
     <h2 className="min-w-0 truncate font-semibold">收听统计</h2>
     <div className="grid min-w-0 grid-cols-4 gap-1 rounded-full border border-white/10 bg-white/5 p-1" role="group" aria-label="统计周期">${periods.map(([value, label]) => html`<button key=${value} type="button" aria-pressed=${period === value} onClick=${() => setPeriod(value)} className=${`min-w-0 truncate rounded-full px-1 py-2 text-xs ${period === value ? 'bg-host/20 font-semibold text-host' : 'text-sand-400'}`}>${label}</button>`)}</div>
     <div className="grid min-w-0 grid-cols-2 gap-2">
-      <article className=${card}><h3 className=${note}>收听时长</h3><div className="min-w-0 text-2xl font-bold text-host"><${Duration} seconds=${seconds} /></div>${delta !== null && html`<p className=${note}>${delta >= 0 ? '↑' : '↓'} ${minutes(Math.abs(delta))} 分钟 · 对比${period === 'week' ? '上周' : '上月'}全期</p>`}</article>
-      <article className=${card}><h3 className=${note}>听完的歌</h3><p className="min-w-0 break-all text-2xl font-bold tabular-nums"><${CountUp} value=${completed} /> <small className="text-xs font-normal text-sand-400">次</small></p><p className=${note}>累计（不分周期）</p></article>
-      <article className=${card}><h3 className=${note}>一起听</h3><div className="min-w-0 text-2xl font-bold text-guest"><${Duration} seconds=${coSeconds} /></div><p className=${note}>累计${lifetime > 0 && coSeconds <= lifetime ? ` · 占全部 ${Math.round(coSeconds / lifetime * 100)}%` : ''}（不分周期）</p></article>
-      <article className=${card}><h3 className=${note}>活跃天数</h3><p className="min-w-0 break-all text-2xl font-bold tabular-nums"><${CountUp} value=${active.days} /> <small className="text-xs font-normal text-sand-400">天</small></p><p className=${note}>最长连续 ${active.longestStreak} 天</p></article>
+      <article className=${card}><h3 className=${note}>收听时长</h3><div className="h-16 min-w-0 text-2xl font-bold text-host"><${Duration} seconds=${seconds} /></div><p className=${`${caption} flex gap-1`}>${delta !== null ? html`<span className="min-w-0 truncate">较${period === 'week' ? '上周' : '上月'}</span><span className="shrink-0 tabular-nums">${delta >= 0 ? '↑' : '↓'}${minutes(Math.abs(delta))} 分</span>` : period === 'year' ? '今年至今' : '全部记录'}</p></article>
+      <article className=${card}><h3 className=${note}>听完的歌</h3><p className="h-16 min-w-0 break-all text-2xl font-bold tabular-nums"><${CountUp} value=${completed} /> <small className="text-xs font-normal text-sand-400">次</small></p><p className=${caption}>累计</p></article>
+      <article className=${card}><h3 className=${note}>一起听</h3><div className="h-16 min-w-0 text-2xl font-bold text-guest"><${Duration} seconds=${coSeconds} /></div><p className=${`${caption} flex gap-1`}>${lifetime > 0 && coSeconds <= lifetime ? html`<span className="min-w-0 truncate">占全部</span><span className="shrink-0 tabular-nums">${Math.round(coSeconds / lifetime * 100)}%</span>` : '累计'}</p></article>
+      <article className=${card}><h3 className=${note}>活跃天数</h3><p className="h-16 min-w-0 break-all text-2xl font-bold tabular-nums"><${CountUp} value=${active.days} /> <small className="text-xs font-normal text-sand-400">天</small></p><p className=${`${caption} flex gap-1`}><span className="min-w-0 truncate">连续</span><span className="shrink-0 tabular-nums">${active.longestStreak} 天</span></p></article>
     </div>
     <div className=${card}><h3 className="min-w-0 break-words text-sm font-semibold">一起听的里程碑 <span className="text-xs font-normal text-sand-400">累计</span></h3>
       ${Object.entries(coTotals).map(([id, time]) => {

@@ -4,6 +4,41 @@ import { ListeningStats, createCompletedPlayUploader } from '../public/listening
 
 const base = new Date(2026, 9, 15, 12).getTime();
 
+test('artist totals merge script variants and display the spelling with most listening seconds', async () => {
+  const { stats } = await tracker();
+  stats.stats.trackMetadata = {
+    a: { artist: '陳綺貞' }, b: { artist: '陈绮贞' },
+    c: { artist: '張學友' }, d: { artist: '张学友' },
+    e: { artist: '  ＡＬＰＨＡ   陳  ' }, f: { artist: 'alpha 陈' },
+  };
+  stats.records = [
+    ['a', 40], ['b', 60], ['a', 40], ['c', 10], ['d', 20], ['e', 5], ['f', 10],
+  ].map(([trackId, durationPlayed]) => ({ trackId, durationPlayed, timestamp: base - 1000 }));
+  stats.records.push({ trackId: 'b', durationPlayed: 999, timestamp: base + 1 });
+  const snapshot = JSON.stringify({ records: stats.records, metadata: stats.stats.trackMetadata });
+  assert.deepEqual(stats.artistTotals('week', base), [
+    { artist: '陳綺貞', seconds: 140 },
+    { artist: '张学友', seconds: 30 },
+    { artist: 'alpha 陈', seconds: 15 },
+  ]);
+  assert.equal(JSON.stringify({ records: stats.records, metadata: stats.stats.trackMetadata }), snapshot);
+});
+
+test('song keys and completion counts merge simplified and traditional titles and artists', async () => {
+  const { stats } = await tracker();
+  stats.rememberTrack({ trackId: 'traditional', title: '  旅行的意義 ＬＩＶＥ  ', artist: '陳綺貞' });
+  stats.rememberTrack({ trackId: 'simplified', title: '旅行的意义 live', artist: '陈绮贞' });
+  stats.rememberTrack({ trackId: 'other', title: '另一首歌', artist: '陈绮贞' });
+  stats.stats.completedPlayCount = { traditional: 2, simplified: 3, other: 7 };
+  assert.equal(stats.trackKey('traditional'), stats.trackKey('simplified'));
+  assert.equal(stats.completedCount('traditional'), 5);
+  assert.equal(stats.completedCount('simplified'), 5);
+  assert.equal(stats.completedCount('other'), 7);
+  stats.rememberTrack({ trackId: 'simplified', title: '旅行的意义 live', artist: '陈绮贞', sourceId: 'source:1' });
+  assert.equal(stats.completedCount('traditional'), 5);
+  assert.equal(stats.completedCount('simplified'), 5);
+});
+
 test('dashboard helpers use Monday/localDay boundaries and include cloud daily totals only once', async () => {
   const { stats } = await tracker();
   stats.records = [
