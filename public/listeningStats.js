@@ -9,6 +9,24 @@ const calendarDay = timestamp => {
 };
 const recordDay = record => record.localDay || (record.day ? calendarDay(Date.parse(record.day)) : calendarDay(record.timestamp));
 
+// Calendar operations stay in local time, including across daylight-saving changes.
+const dayDate = day => new Date(`${day}T00:00:00`);
+const dayNumber = day => {
+  const date = dayDate(day);
+  return Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) / 86400000;
+};
+const periodBounds = (period, now) => {
+  const start = new Date(now);
+  start.setHours(0, 0, 0, 0);
+  if (period === 'week') start.setDate(start.getDate() - (start.getDay() + 6) % 7);
+  else if (period === 'month') start.setDate(1);
+  else if (period === 'year') start.setMonth(0, 1);
+  else if (period !== 'all') throw new RangeError('Unknown listening statistics period');
+  return { startDay: period === 'all' ? '0000-01-01' : calendarDay(+start), endDay: calendarDay(now), start };
+};
+const inPeriod = (record, bounds, now) => recordDay(record) >= bounds.startDay
+  && recordDay(record) <= bounds.endDay && record.timestamp <= now;
+
 export function createListeningStatsPersistence(indexedDB) {
   let database;
   const open = () => database ||= new Promise((resolve, reject) => {
@@ -260,21 +278,94 @@ export class ListeningStats {
     const ids = new Set([...Object.keys(this.stats.coListeningTime), ...(this.cloud?.coListening || []).map(row => row.friendId)]);
     return Object.fromEntries([...ids].map(id => [id, this.coListeningSeconds(id)]));
   }
-  summary(period = 'week', now = Date.now()) {
-    const start = new Date(now);
-    start.setHours(0, 0, 0, 0);
-    if (period === 'week') start.setDate(start.getDate() - (start.getDay() + 6) % 7);
-    else if (period === 'month') start.setDate(1);
-    else if (period === 'year') start.setMonth(0, 1);
-    else throw new RangeError('Unknown listening statistics period');
-    const startDay = calendarDay(+start), endDay = calendarDay(now);
-    const remote = (this.cloud?.daily || []).reduce((total, row) => total +
-      (row.day >= startDay && row.day <= endDay ? Number(row.seconds) : 0), 0);
-    return this.records.reduce((total, record) => {
-      const day = recordDay(record);
-      return total + (day >= startDay && day <= endDay && record.timestamp <= now ? record.durationPlayed : 0);
-    }, remote);
+  dailyTotals(period = 'week', now = Date.now()) {
+    const bounds = periodBounds(period, now), totals = new Map();
+    const add = (day, seconds) => {
+      if (day >= bounds.startDay && day <= bounds.endDay)
+        totals.set(day, (totals.get(day) || 0) + Math.max(0, finite(seconds)));
+    };
+    for (const row of this.cloud?.daily || []) add(row.day, row.seconds);
+    for (const record of this.records) if (inPeriod(record, bounds, now)) add(recordDay(record), record.durationPlayed);
+    return [...totals].map(([day, seconds]) => ({ day, seconds })).sort((a, b) => a.day.localeCompare(b.day));
   }
+
+  summary(period = 'week', now = Date.now()) {
+    return this.dailyTotals(period, now).reduce((sum, row) => sum + row.seconds, 0);
+  }
+
+  // Previous complete calendar week/month, compared with the current period to date.
+  previousSummary(period = 'week', now = Date.now()) {
+    if (!['week', 'month'].includes(period)) return null;
+    const { start } = periodBounds(period, now);
+    return this.summary(period, +start - 1);
+  }
+
+  dailySeries(period = 'week', now = Date.now()) {
+    const totals = this.dailyTotals(period, now), bounds = periodBounds(period, now);
+    let cursor = period === 'all' ? dayDate(totals[0]?.day || bounds.endDay) : bounds.start;
+    const end = dayDate(bounds.endDay), series = [];
+    const monthly = period === 'year' || period === 'all';
+    const months = (end.getFullYear() - cursor.getFullYear()) * 12 + end.getMonth() - cursor.getMonth() + 1;
+    const stride = Math.max(1, Math.ceil(months / 31));
+    if (monthly) cursor = new Date(cursor.getFullYear(), cursor.getMonth(), 1);
+    const values = new Map(totals.map(row => [row.day, row.seconds]));
+    while (cursor <= end) {
+      const day = calendarDay(+cursor), next = new Date(cursor);
+      if (monthly) next.setMonth(next.getMonth() + stride);
+      else next.setDate(next.getDate() + 1);
+      const nextDay = calendarDay(+next);
+      const seconds = monthly ? totals.reduce((sum, row) => sum + (row.day >= day && row.day < nextDay ? row.seconds : 0), 0) : values.get(day) || 0;
+      const last = new Date(Math.min(+end, +next - 1));
+      series.push({ day, endDay: calendarDay(+last), seconds });
+      cursor = next;
+    }
+    return series;
+  }
+
+  activeDays(period = 'week', now = Date.now()) {
+    const days = this.dailyTotals(period, now).filter(row => row.seconds > 0);
+    let longestStreak = 0, streak = 0, previous;
+    for (const row of days) {
+      const day = dayNumber(row.day);
+      streak = day === previous + 1 ? streak + 1 : 1;
+      longestStreak = Math.max(longestStreak, streak);
+      previous = day;
+    }
+    return { days: days.length, longestStreak };
+  }
+
+  artistTotals(period = 'week', now = Date.now()) {
+    const bounds = periodBounds(period, now), totals = new Map();
+    for (const record of this.records) {
+      if (!inPeriod(record, bounds, now)) continue;
+      const artist = this.stats.trackMetadata[record.trackId]?.artist?.trim() || '未知歌手';
+      totals.set(artist, (totals.get(artist) || 0) + Math.max(0, finite(record.durationPlayed)));
+    }
+    return [...totals].filter(([, seconds]) => seconds > 0).map(([artist, seconds]) => ({ artist, seconds }))
+      .sort((a, b) => b.seconds - a.seconds || a.artist.localeCompare(b.artist));
+  }
+
+  // Daily cloud totals have no hour/artist detail and cannot populate these views.
+  hourWeekdayMatrix(period = 'week', now = Date.now()) {
+    const bounds = periodBounds(period, now), matrix = Array.from({ length: 7 }, () => Array(24).fill(0));
+    for (const record of this.records) {
+      if (!inPeriod(record, bounds, now)) continue;
+      let cursor = record.timestamp, remaining = Math.max(0, finite(record.durationPlayed));
+      const firstDay = dayNumber(calendarDay(cursor));
+      const weekday = (dayDate(recordDay(record)).getDay() + 6) % 7;
+      while (remaining > 0) {
+        const date = new Date(cursor), next = new Date(cursor);
+        next.setHours(next.getHours() + 1, 0, 0, 0);
+        const seconds = Math.min(remaining, (+next - cursor) / 1000);
+        const row = (weekday + dayNumber(calendarDay(cursor)) - firstDay) % 7;
+        matrix[row][date.getHours()] += seconds;
+        remaining -= seconds;
+        cursor += seconds * 1000;
+      }
+    }
+    return matrix;
+  }
+
 }
 
 // Upload absolute device totals: retrying/backfilling cannot double count on the server.

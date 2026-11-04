@@ -3,6 +3,89 @@ import assert from 'node:assert/strict';
 import { ListeningStats, createCompletedPlayUploader } from '../public/listeningStats.js';
 
 const base = new Date(2026, 9, 15, 12).getTime();
+
+test('dashboard helpers use Monday/localDay boundaries and include cloud daily totals only once', async () => {
+  const { stats } = await tracker();
+  stats.records = [
+    { trackId: 'a', timestamp: +new Date(2026, 9, 11, 12), durationPlayed: 90 },
+    { trackId: 'a', timestamp: +new Date(2026, 9, 12, 12), localDay: '2026-10-12', durationPlayed: 60 },
+    { trackId: 'b', timestamp: +new Date(2026, 9, 13, 12), localDay: '2026-10-13', durationPlayed: 120 },
+    { trackId: 'a', timestamp: base + 1, durationPlayed: 999 },
+    { trackId: 'b', timestamp: base - 1, localDay: '2026-10-11', durationPlayed: 999 },
+  ];
+  stats.stats.trackMetadata = { a: { artist: 'Alpha' }, b: { artist: 'Beta' } };
+  stats.cloud = { daily: [{ day: '2026-10-14', seconds: 180 }, { day: '2026-10-16', seconds: 999 }] };
+  const snapshot = JSON.stringify({ records: stats.records, cloud: stats.cloud, stats: stats.stats });
+  assert.equal(stats.summary('week', base), 360);
+  const series = stats.dailySeries('week', base);
+  assert.deepEqual(series.map(row => row.day), ['2026-10-12', '2026-10-13', '2026-10-14', '2026-10-15']);
+  assert.deepEqual(series.map(row => row.seconds), [60, 120, 180, 0]);
+  assert.deepEqual(stats.activeDays('week', base), { days: 3, longestStreak: 3 });
+  assert.deepEqual(stats.artistTotals('week', base), [{ artist: 'Beta', seconds: 120 }, { artist: 'Alpha', seconds: 60 }]);
+  assert.equal(stats.hourWeekdayMatrix('week', base).flat().reduce((a, b) => a + b, 0), 180);
+  assert.equal(JSON.stringify({ records: stats.records, cloud: stats.cloud, stats: stats.stats }), snapshot, 'aggregations do not mutate inputs');
+});
+
+test('previous summaries use complete previous calendar periods across month/year boundaries', async () => {
+  const { stats } = await tracker();
+  stats.cloud = { daily: [
+    { day: '2025-12-22', seconds: 10 }, { day: '2025-12-28', seconds: 20 },
+    { day: '2025-12-29', seconds: 40 }, { day: '2025-12-31', seconds: 80 },
+    { day: '2026-01-01', seconds: 160 },
+  ] };
+  const now = +new Date(2026, 0, 1, 12);
+  assert.equal(stats.previousSummary('week', now), 30);
+  assert.equal(stats.previousSummary('month', now), 150);
+  assert.equal(stats.previousSummary('year', now), null);
+  assert.equal(stats.previousSummary('all', now), null);
+  assert.equal(stats.summary('year', now), 160);
+});
+
+test('hour matrix splits intervals across hours and midnight, respecting recorded local day', async () => {
+  const { stats } = await tracker();
+  const now = +new Date(2026, 9, 15, 12);
+  stats.records = [
+    { timestamp: +new Date(2026, 9, 12, 21, 30), localDay: '2026-10-13', durationPlayed: 5400 },
+    { timestamp: +new Date(2026, 9, 13, 23, 30), durationPlayed: 3600 },
+  ];
+  const matrix = stats.hourWeekdayMatrix('week', now);
+  assert.equal(matrix.length, 7);
+  assert.ok(matrix.every(row => row.length === 24));
+  assert.equal(matrix[1][21], 1800);
+  assert.equal(matrix[1][22], 3600);
+  assert.equal(matrix[1][23], 1800);
+  assert.equal(matrix[2][0], 1800);
+  assert.equal(matrix.flat().reduce((a, b) => a + b, 0), 9000);
+});
+
+test('long-history series stay within 31 points without losing time and include silent buckets', async () => {
+  const { stats } = await tracker();
+  stats.cloud = { daily: [{ day: '2018-01-01', seconds: 60 }, { day: '2026-10-15', seconds: 120 }] };
+  for (const period of ['week', 'month', 'year', 'all']) {
+    const series = stats.dailySeries(period, base);
+    assert.ok(series.length <= 31);
+    assert.equal(series.reduce((sum, row) => sum + row.seconds, 0), stats.summary(period, base));
+    assert.equal(series.at(-1).endDay, '2026-10-15');
+  }
+  assert.equal(stats.dailySeries('year', base).length, 10);
+  assert.deepEqual(stats.activeDays('all', base), { days: 2, longestStreak: 1 });
+});
+
+test('empty dashboards, legacy day records, leap days, and very large durations remain deterministic', async () => {
+  const { stats } = await tracker();
+  assert.deepEqual(stats.activeDays('all', base), { days: 0, longestStreak: 0 });
+  assert.deepEqual(stats.artistTotals('all', base), []);
+  assert.deepEqual(stats.dailySeries('all', base), [{ day: '2026-10-01', endDay: '2026-10-15', seconds: 0 }]);
+  assert.equal(stats.hourWeekdayMatrix('all', base).flat().reduce((a, b) => a + b, 0), 0);
+  stats.records = [{ day: new Date(2024, 1, 28).toDateString(), timestamp: +new Date(2024, 1, 28), durationPlayed: 99999 * 60 }];
+  stats.cloud = { daily: [{ day: '2024-02-29', seconds: 60 }, { day: '2024-03-01', seconds: 60 }] };
+  const now = +new Date(2024, 2, 2);
+  assert.deepEqual(stats.activeDays('all', now), { days: 3, longestStreak: 3 });
+  assert.equal(stats.summary('month', now), 60);
+  assert.equal(stats.summary('all', now), 99999 * 60 + 120);
+  assert.deepEqual(stats.artistTotals('all', now), [{ artist: '未知歌手', seconds: 99999 * 60 }]);
+  assert.throws(() => stats.dailySeries('invalid', now), RangeError);
+});
 test('continuous samples coalesce persistence; explicit lifecycle flush saves immediately', async t => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const saved = [];

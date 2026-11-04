@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useState } from 'react';
+﻿import React, { useEffect, useRef, useState } from 'react';
 import htm from 'htm';
 const html = htm.bind(React.createElement);
 function CountUp({ value }) {
@@ -14,22 +14,112 @@ function CountUp({ value }) {
   }, [value]);
   return html`<span>${number}</span>`;
 }
+
+const card = 'min-w-0 space-y-3 rounded-2xl border border-white/10 bg-white/5 p-3 sm:p-4';
+const note = 'min-w-0 break-words text-xs text-sand-400';
+const periods = [['week', '本周'], ['month', '本月'], ['year', '本年'], ['all', '全部']];
+const minutes = seconds => Math.floor(seconds / 60).toLocaleString();
+function Duration({ seconds }) {
+  const total = Math.floor(seconds / 60);
+  return html`<span className="flex min-w-0 flex-wrap items-baseline gap-x-1 tabular-nums">
+    ${total >= 60 && html`<span className="min-w-0 break-all"><${CountUp} value=${Math.floor(total / 60)} /><small className="text-xs font-normal text-sand-400"> 小时</small></span>`}
+    <span className="min-w-0 break-all"><${CountUp} value=${total % 60} /><small className="text-xs font-normal text-sand-400"> 分钟</small></span>
+  </span>`;
+}
+
+function ListeningChart({ series, period }) {
+  const [hover, setHover] = useState(null);
+  // The viewBox follows the container's CSS width so labels keep their pixel size on wide screens.
+  const [width, setWidth] = useState(340);
+  const box = useRef(null);
+  useEffect(() => {
+    const node = box.current;
+    if (!node || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(([entry]) => setWidth(Math.max(240, Math.round(entry.contentRect.width))));
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+  useEffect(() => setHover(null), [period]);
+  const max = Math.max(1, ...series.map(row => row.seconds / 60));
+  const left = 12, right = width - 12, span = right - left;
+  const x = i => left + i * span / Math.max(1, series.length - 1);
+  const y = seconds => 112 - seconds / 60 / max * 76;
+  const peak = series.reduce((best, row, i) => row.seconds > (series[best]?.seconds || 0) ? i : best, 0);
+  const selected = hover !== null && series[hover] ? hover : null;
+  const select = event => {
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const position = (event.clientX - bounds.left) / bounds.width * width;
+    setHover(Math.max(0, Math.min(series.length - 1, Math.round((position - left) / span * (series.length - 1)))));
+  };
+  return html`<div ref=${box} className="relative min-w-0 overflow-hidden">
+    <svg viewBox=${`0 0 ${width} 144`} preserveAspectRatio="xMidYMid meet" className="block w-full text-host" role="img" aria-label="每日收听分钟折线图；触摸或悬停查看详情" onPointerMove=${select} onPointerDown=${select} onPointerLeave=${() => setHover(null)}>
+      ${[0, 0.5, 1].map(level => html`<line key=${level} x1=${left} x2=${right} y1=${112 - level * 76} y2=${112 - level * 76} stroke="currentColor" opacity="0.12" />`)}
+      <path d=${series.map((row, i) => `${i ? 'L' : 'M'}${x(i)} ${y(row.seconds)}`).join(' ')} fill="none" stroke="currentColor" strokeWidth="2" vectorEffect="non-scaling-stroke" strokeLinejoin="round" />
+      ${series.length > 0 && html`<circle key="peak" cx=${x(peak)} cy=${y(series[peak].seconds)} r="3" fill="currentColor" /><text key="peak-label" x=${x(peak)} y=${y(series[peak].seconds) - 10} textAnchor=${peak < series.length / 2 ? 'start' : 'end'} fill="currentColor" fontSize="10">${minutes(series[peak].seconds)} 分钟</text>`}
+      ${selected !== null && html`<line key="crosshair-x" x1=${x(selected)} x2=${x(selected)} y1="30" y2="112" stroke="currentColor" opacity="0.5" strokeDasharray="3 3" /><line key="crosshair-y" x1=${left} x2=${right} y1=${y(series[selected].seconds)} y2=${y(series[selected].seconds)} stroke="currentColor" opacity="0.3" strokeDasharray="3 3" /><circle key="selected" cx=${x(selected)} cy=${y(series[selected].seconds)} r="4" fill="currentColor" />`}
+      ${series.length > 0 && [0, series.length - 1].filter((i, index, all) => all.indexOf(i) === index).map(i => html`<text key=${i} x=${x(i)} y="136" textAnchor=${i === 0 ? 'start' : 'end'} fill="currentColor" opacity="0.65" fontSize="10">${series[i].day.slice(5)}</text>`)}
+    </svg>
+    ${selected !== null && html`<div role="status" className="pointer-events-none absolute inset-x-0 top-0 mx-auto min-w-0 max-w-full rounded-lg border border-white/10 px-2 py-1 text-center text-xs tabular-nums" style=${{ background: 'var(--color-bg-subtle)', width: 'max-content' }}><p className="min-w-0 break-words">${series[selected].day}${series[selected].endDay !== series[selected].day ? ` — ${series[selected].endDay}` : ''}</p><p className="min-w-0 break-all text-host">${minutes(series[selected].seconds)} 分钟</p></div>`}
+  </div>`;
+}
+
 export function ListeningStatsCards({ stats, tracks = [], me = {}, friends = [], count }) {
-  const names = friends;
-  const counts = new Map(tracks.map(t => [t, count(t)]));
-  count = t => counts.get(t) || 0;
-  const top = [...tracks].filter(t => count(t) > 0).sort((a, b) => count(b) - count(a)).slice(0, 5);
-  const max = top.length ? count(top[0]) : 1;
-  const avatar = name => html`<span className="grid h-10 w-10 place-items-center rounded-full border-2 border-ink-900 bg-gradient-to-br from-host/60 to-guest/60 text-sm">${String(name || '听').slice(0, 1)}</span>`;
-  return html`<section className="mb-4 space-y-5 rounded-3xl border border-white/10 bg-gradient-to-br from-host/10 via-white/5 to-guest/10 p-5 backdrop-blur-xl"><h2 className="font-semibold">收听统计</h2>
-    <div className="grid grid-cols-3 gap-2">${[['week', '本周'], ['month', '本月'], ['year', '本年']].map(([period, label]) => html`<div key=${period} className="rounded-2xl border border-white/10 bg-white/5 p-3"><p className="text-xs text-sand-400">${label}</p><p className="mt-2 text-3xl font-bold tabular-nums text-host"><${CountUp} value=${Math.floor((stats?.summary(period) || 0) / 60)} /></p><p className="text-xs text-sand-400">分钟</p></div>`)}</div>
-    <h3 className="text-sm">一起听的里程碑</h3>
-    ${Object.entries(stats?.coListeningTotals() || {}).map(([id, seconds]) => {
-      const friend = names.find(f => (f.id || f.userId) === id), name = friend?.nickname || friend?.username || '好友';
-      const hours = seconds / 3600, target = [1, 10, 50, 100, 500].find(n => hours < n) || Math.ceil(hours / 500) * 500 + 500;
-      return html`<article key=${id} className="rounded-2xl border border-white/10 bg-white/5 p-4"><div className="flex items-center gap-3"><div className="flex -space-x-3">${avatar(me.name || me.username)}${avatar(name)}</div><div className="min-w-0"><p className="truncate text-sm">与 ${name} 的音乐旅程</p><p className="text-xs text-sand-400">已同行 ${Math.floor(seconds / 60)} 分钟 · 下一站 ${target} 小时</p></div></div><div role="progressbar" aria-label=${`与 ${name} 的同听进度`} aria-valuenow=${Math.min(100, Math.round(hours / target * 100))} aria-valuemin="0" aria-valuemax="100" className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/10"><div className="h-full rounded-full bg-gradient-to-r from-host to-guest" style=${{ width: `${Math.min(100, hours / target * 100)}%` }} /></div></article>`;
-    })}
-    ${!Object.keys(stats?.coListeningTotals() || {}).length && html`<p className="text-xs text-sand-400">邀请好友一起听，让共同的旋律慢慢累积。</p>`}
-    <h3 className="text-sm">最常听的 5 首</h3>${top.map((t, i) => html`<div key=${t.id} className="flex items-center gap-3"><span className="grid h-10 w-10 shrink-0 place-items-center rounded-full" style=${{ background: `conic-gradient(var(--color-role-host) ${count(t) / max * 360}deg, rgb(var(--color-text-primary-rgb) / 9%) 0)` }}><span className="grid h-8 w-8 place-items-center rounded-full bg-ink-900 text-xs">${count(t)}</span></span><div className="min-w-0"><p className="truncate text-sm">${i + 1}. ${t.title}</p><p className="text-xs text-sand-400">${t.artist} · 已听 ${count(t)} 次</p></div></div>`)}${!top.length && html`<p className="text-xs text-sand-400">完整听完一首，留下旋律的足迹。</p>`}
+  const [period, setPeriod] = useState('week');
+  const now = Date.now();
+  const seconds = stats?.summary(period, now) || 0;
+  const previous = stats?.previousSummary(period, now);
+  const active = stats?.activeDays(period, now) || { days: 0, longestStreak: 0 };
+  const series = stats?.dailySeries(period, now) || [];
+  const matrix = stats?.hourWeekdayMatrix(period, now) || Array.from({ length: 7 }, () => Array(24).fill(0));
+  const artists = (stats?.artistTotals(period, now) || []).slice(0, 5);
+  const heatMax = Math.max(0, ...matrix.flat());
+  const peak = matrix.flat().indexOf(heatMax);
+  const weekdays = ['一', '二', '三', '四', '五', '六', '日'];
+  const coTotals = stats?.coListeningTotals() || {};
+  const coSeconds = Object.values(coTotals).reduce((sum, value) => sum + value, 0);
+  const lifetime = stats?.summary('all', now) || 0;
+  const localCompleted = Object.values(stats?.stats?.completedPlayCount || {}).reduce((sum, value) => sum + value, 0);
+  const remoteCompleted = [...new Map((stats?.cloud?.completed || []).map(row => [row.key, row])).values()].reduce((sum, row) => sum + Number(row.completed || 0), 0);
+  const completed = localCompleted + remoteCompleted;
+  // Tracks no longer in the library still count: fall back to the metadata the stats remembered.
+  const known = new Set(tracks.flatMap(track => [track.id, track.localId]));
+  const remembered = Object.entries(stats?.stats?.trackMetadata || {}).filter(([id, meta]) => meta?.title && !known.has(id)).map(([id, meta]) => ({ id, title: meta.title, artist: meta.artist, remembered: true }));
+  const top = [...tracks.map(track => ({ track, plays: count?.(track) ?? 0 })), ...remembered.map(track => ({ track, plays: stats?.completedCount(track.id) || 0 }))]
+    .filter(row => row.plays > 0).sort((a, b) => b.plays - a.plays).slice(0, 5);
+  const delta = previous == null ? null : seconds - previous;
+  // Each play session that produced listening time leaves one record; the ratio is lifetime and local only.
+  const started = Math.max(stats?.records?.length || 0, localCompleted);
+  const rate = started ? Math.round(localCompleted / started * 100) : 0;
+  const avatar = name => html`<span className="grid h-8 w-8 shrink-0 place-items-center rounded-full border border-white/10 bg-host/20 text-xs">${String(name || '听').slice(0, 1)}</span>`;
+  return html`<section className="mb-4 min-w-0 space-y-4 rounded-3xl border border-white/10 bg-gradient-to-br from-host/10 via-white/5 to-guest/10 p-3 sm:p-5">
+    <h2 className="min-w-0 truncate font-semibold">收听统计</h2>
+    <div className="grid min-w-0 grid-cols-4 gap-1 rounded-full border border-white/10 bg-white/5 p-1" role="group" aria-label="统计周期">${periods.map(([value, label]) => html`<button key=${value} type="button" aria-pressed=${period === value} onClick=${() => setPeriod(value)} className=${`min-w-0 truncate rounded-full px-1 py-2 text-xs ${period === value ? 'bg-host/20 font-semibold text-host' : 'text-sand-400'}`}>${label}</button>`)}</div>
+    <div className="grid min-w-0 grid-cols-2 gap-2">
+      <article className=${card}><h3 className=${note}>收听时长</h3><div className="min-w-0 text-2xl font-bold text-host"><${Duration} seconds=${seconds} /></div>${delta !== null && html`<p className=${note}>${delta >= 0 ? '↑' : '↓'} ${minutes(Math.abs(delta))} 分钟 · 对比${period === 'week' ? '上周' : '上月'}全期</p>`}</article>
+      <article className=${card}><h3 className=${note}>听完的歌</h3><p className="min-w-0 break-all text-2xl font-bold tabular-nums"><${CountUp} value=${completed} /> <small className="text-xs font-normal text-sand-400">次</small></p><p className=${note}>累计（不分周期）</p></article>
+      <article className=${card}><h3 className=${note}>一起听</h3><div className="min-w-0 text-2xl font-bold text-guest"><${Duration} seconds=${coSeconds} /></div><p className=${note}>累计${lifetime > 0 && coSeconds <= lifetime ? ` · 占全部 ${Math.round(coSeconds / lifetime * 100)}%` : ''}（不分周期）</p></article>
+      <article className=${card}><h3 className=${note}>活跃天数</h3><p className="min-w-0 break-all text-2xl font-bold tabular-nums"><${CountUp} value=${active.days} /> <small className="text-xs font-normal text-sand-400">天</small></p><p className=${note}>最长连续 ${active.longestStreak} 天</p></article>
+    </div>
+    <div className=${card}><h3 className="min-w-0 break-words text-sm font-semibold">一起听的里程碑 <span className="text-xs font-normal text-sand-400">累计</span></h3>
+      ${Object.entries(coTotals).map(([id, time]) => {
+        const friend = friends.find(f => String(f.id || f.userId) === id), name = friend?.nickname || friend?.username || '好友';
+        const hours = time / 3600, target = [1, 10, 50, 100, 500].find(n => hours < n) || (Math.floor(hours / 500) + 1) * 500;
+        const progress = Math.min(100, hours / target * 100);
+        return html`<article key=${id} className="min-w-0 rounded-2xl border border-white/10 p-3"><div className="flex min-w-0 items-center gap-2"><div className="flex shrink-0 -space-x-2">${avatar(me.name || me.username)}${avatar(name)}</div><div className="min-w-0 flex-1"><p className="min-w-0 truncate text-sm">与 ${name} 的音乐旅程</p><p className=${note}>已同行 ${minutes(time)} 分钟 · 下一站 ${target} 小时</p></div></div><div role="progressbar" aria-label=${`与 ${name} 的同听进度`} aria-valuenow=${Math.round(progress)} aria-valuemin="0" aria-valuemax="100" className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/10"><div className="h-full rounded-full bg-gradient-to-r from-host to-guest" style=${{ width: `${progress}%` }} /></div></article>`;
+      })}
+      ${!Object.keys(coTotals).length && html`<p className=${note}>邀请好友一起听，让共同的旋律慢慢累积。</p>`}
+    </div>
+    <div className=${card}><h3 className="min-w-0 break-words text-sm font-semibold">每日收听 <span className="text-xs font-normal text-sand-400">分钟 · ${period === 'year' || period === 'all' ? '按月汇总 · ' : ''}触摸查看</span></h3><${ListeningChart} series=${series} period=${period} />${!seconds && html`<p className=${note}>让喜欢的旋律，点亮今天的曲线。</p>`}</div>
+    <div className=${card}><h3 className="min-w-0 break-words text-sm font-semibold">收听热力 <span className="text-xs font-normal text-sand-400">星期 × 小时 · 本机</span></h3>
+      <div className="grid min-w-0 gap-px" style=${{ gridTemplateColumns: 'minmax(0, 1.5fr) repeat(24, minmax(0, 1fr))' }}>
+        ${matrix.map((row, day) => html`<${React.Fragment} key=${day}><span className="min-w-0 truncate text-xs text-sand-400">${weekdays[day]}</span>${row.map((value, hour) => html`<span key=${hour} className="min-w-0 self-center rounded-sm" style=${{ aspectRatio: '1', background: `rgb(var(--color-brand-host-rgb) / ${[0.06, 0.23, 0.43, 0.68, 0.95][value > 0 ? Math.min(4, Math.ceil(value / heatMax * 4)) : 0]})` }} title=${`周${weekdays[day]} ${hour} 时 · ${minutes(value)} 分钟`} />`)}<//>`)}
+        <span /><div className="flex min-w-0 justify-between text-xs text-sand-400" style=${{ gridColumn: '2 / -1' }}>${[0, 6, 12, 18, 23].map(hour => html`<span key=${hour} className="min-w-0 truncate">${hour}时</span>`)}</div>
+      </div><p className=${note}>${heatMax ? `高峰在 周${weekdays[Math.floor(peak / 24)]} ${peak % 24} 点。` : '还没有收听足迹，下一首就从此刻开始。'}</p>
+    </div>
+    <div className=${card}><h3 className="min-w-0 break-words text-sm font-semibold">最常听的歌手 <span className="text-xs font-normal text-sand-400">分钟 · 本机</span></h3>${artists.map((row, i) => html`<div key=${row.artist} className="grid min-w-0 items-center gap-2" style=${{ gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr) minmax(0, .65fr)' }}><span className="min-w-0 truncate text-xs" title=${row.artist}>${i + 1}. ${row.artist}</span><span className="h-2 min-w-0 overflow-hidden rounded-full bg-host/10"><span className="block h-full rounded-full bg-host" style=${{ width: `${row.seconds / artists[0].seconds * 100}%`, opacity: 1 - i * 0.13 }} /></span><span className="min-w-0 break-all text-right text-xs tabular-nums">${minutes(row.seconds)}</span></div>`)}${!artists.length && html`<p className=${note}>听一首喜欢的歌，让熟悉的声音留下足迹。</p>`}</div>
+    <div className=${card}><h3 className="min-w-0 break-words text-sm font-semibold">最常听的 5 首 <span className="text-xs font-normal text-sand-400">累计听完</span></h3>${top.map(({ track, plays }, i) => html`<div key=${track.id} className="flex min-w-0 items-center gap-3"><span className="min-w-0 shrink-0 text-sm tabular-nums text-host">${i + 1}</span><div className="min-w-0 flex-1"><p className="min-w-0 truncate text-sm" title=${track.title}>${track.title}</p><p className="min-w-0 truncate text-xs text-sand-400" title=${track.artist}>${track.artist || '未知歌手'} · 已听 ${plays.toLocaleString()} 次</p></div></div>`)}${!top.length && html`<p className=${note}>完整听完一首，留下旋律的足迹。</p>`}</div>
+    <div className=${card}><h3 className="min-w-0 break-words text-sm font-semibold">听完率 <span className="text-xs font-normal text-sand-400">听完 / 开始播放 · 本机累计</span></h3>
+      ${started > 0 ? html`<div className="flex min-w-0 items-center gap-3"><div className="h-2.5 min-w-0 flex-1 overflow-hidden rounded-full bg-host/10" role="meter" aria-label="听完率" aria-valuenow=${rate} aria-valuemin="0" aria-valuemax="100"><div className="h-full rounded-full bg-host" style=${{ width: `${rate}%` }} /></div><span className="shrink-0 text-lg font-bold tabular-nums text-host">${rate}%</span></div><p className=${note}>${localCompleted.toLocaleString()} 次听完 · ${started.toLocaleString()} 次开始播放</p>` : html`<p className=${note}>播放几首歌后，这里会显示完整听完的比例。</p>`}
+    </div>
   </section>`;
 }
