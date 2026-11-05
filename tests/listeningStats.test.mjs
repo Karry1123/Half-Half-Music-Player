@@ -439,3 +439,26 @@ test('period completions use local calendar days and cloud dates in both timezon
     assert.equal(result.status, 0, result.stderr);
   }
 });
+
+test('backfillCompletions dates legacy completions from listening time, capped by lifetime totals', async () => {
+  const stats = new ListeningStats({ userId: 'u', indexedDB: null });
+  await stats.ready();
+  const day = (d, h = 10) => +new Date(2026, 10, d, h);
+  stats.stats.completedPlayCount = { song: 2, other: 1 };
+  stats.records = [
+    { id: 'a', userId: 'u', trackId: 'song', durationPlayed: 200, timestamp: day(1), localDay: '2026-11-01' },
+    { id: 'b', userId: 'u', trackId: 'song', durationPlayed: 199, timestamp: day(2), localDay: '2026-11-02' },
+    { id: 'c', userId: 'u', trackId: 'song', durationPlayed: 410, timestamp: day(3), localDay: '2026-11-03' },
+    { id: 'd', userId: 'u', trackId: 'song', durationPlayed: 50, timestamp: day(4), localDay: '2026-11-04' },
+    { id: 'e', userId: 'u', trackId: 'other', durationPlayed: 300, timestamp: day(4), localDay: '2026-11-04' },
+    { id: 'f', userId: 'u', trackId: 'song', durationPlayed: 300, timestamp: day(5), localDay: '2026-11-05', completed: 0 },
+  ];
+  assert.equal(stats.backfillCompletions(id => ({ song: 200 })[id] || 0), true);
+  // Newest first: c (2 loops) exhausts the cap of 2, so a and b get nothing; d is below 95%.
+  assert.deepEqual(stats.records.map(r => r.completed), [0, 0, 2, 0, undefined, 0]);
+  assert.equal(stats.completedInPeriod('month', day(6)), 2);
+  // Unknown durations are retried once they become known.
+  assert.equal(stats.backfillCompletions(id => ({ song: 200, other: 300 })[id] || 0), true);
+  assert.equal(stats.records[4].completed, 1);
+  assert.equal(stats.backfillCompletions(() => 300), false);
+});

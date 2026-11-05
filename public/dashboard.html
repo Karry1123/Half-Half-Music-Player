@@ -1870,7 +1870,10 @@ class Session {
         this.out.stopAt(now(), position);
       }
       set({ loaded: true, duration });
-      if (!item.duration || Math.abs(item.duration - duration) > 1) this.patch(id, { duration }); // 以实际解码时长为准
+      if (!item.duration || Math.abs(item.duration - duration) > 1) {
+        this.patch(id, { duration }); // 以实际解码时长为准
+        if (item.localId && Number.isFinite(duration)) LocalLib.updateTrack(item.localId, { duration }).catch(() => {});
+      }
       if (!autoplay) return;
       if (immediate) {
         this.anchor = { trackId: id, playing: this.out.intent, position: initialPosition, at: startedAt };
@@ -4882,6 +4885,13 @@ function sampleListening(extra = {}) {
     seeking: audio.seeking, playbackRate: audio.playbackRate, ...extra }); } finally { samplingListening = false; }
 }
 function trackCompletedCount(track) { return listeningStats?.completedCount(track?.localId || track?.id) || 0; }
+/** 老版本的"听完"只有累计数：按本机曲库里的时长把它们推算回每天的记录，周/月/年统计才有数 */
+function backfillCompletions() {
+  const stats = listeningStats;
+  if (!stats || !get().library.length) return;
+  const durationOf = id => { const x = get().library.find(x => x.id === id); return x?.duration || x?.analysis?.duration || 0; };
+  stats.ready().then(() => stats.backfillCompletions(durationOf)).catch(console.warn);
+}
 function StatsPanel() {
   useStore(s => s.statsRevision);
   const tracks = useStore(s => s.library), me = useStore(s => s.me);
@@ -5030,7 +5040,7 @@ function App() {
     let revisionTimer;
     const revise = () => { clearTimeout(revisionTimer); revisionTimer = null; if (!document.hidden) set({ statsRevision: (get().statsRevision || 0) + 1 }); };
     const unsubscribe = stats.subscribe(() => { if (!revisionTimer && !document.hidden) revisionTimer = setTimeout(revise, 1000); });
-    stats.ready().then(() => set({ statsRevision: (get().statsRevision || 0) + 1 })).catch(console.warn);
+    stats.ready().then(() => { backfillCompletions(); set({ statsRevision: (get().statsRevision || 0) + 1 }); }).catch(console.warn);
     const audio = session.out.audio;
     const sample = () => sampleListening();
     const ended = () => sampleListening({ ended: true });
@@ -5168,7 +5178,7 @@ function AppShell() {
     iceReady = applyIce();
     api.init();
     // 每次打开页面：自动识别本机已保存的歌曲，然后同步账号里的昵称和歌单
-    session.restoreLocal().then(() => { nativePlayback?.markReady(); syncProfile(); cloudSync.sync().catch(() => {}); });
+    session.restoreLocal().then(() => { nativePlayback?.markReady(); syncProfile(); cloudSync.sync().catch(() => {}); backfillCompletions(); });
     // 空格 = 播放/暂停
     const onKey = (e) => {
       if (e.code !== 'Space' || e.repeat || e.target.closest('input, textarea, button, select')) return;

@@ -294,6 +294,34 @@ export class ListeningStats {
     return [...totals].map(([day, seconds]) => ({ day, seconds })).sort((a, b) => a.day.localeCompare(b.day));
   }
 
+  // Records written before completions were dated carry no `completed` field. Infer them from
+  // listening time (the same 95% rule as live playback), capped by each track's lifetime total.
+  backfillCompletions(durationOf) {
+    const pending = new Map();
+    for (const record of this.records) {
+      if (record.completed !== undefined) continue;
+      const list = pending.get(record.trackId) || [];
+      list.push(record);
+      pending.set(record.trackId, list);
+    }
+    let changed = false;
+    for (const [trackId, list] of pending) {
+      const duration = Math.max(0, finite(durationOf(trackId)));
+      if (!duration) continue; // unknown length: leave for a later run
+      let remaining = Math.max(0, finite(this.stats.completedPlayCount[trackId]));
+      for (const record of list.sort((a, b) => b.timestamp - a.timestamp)) {
+        const played = Math.max(0, finite(record.durationPlayed));
+        const inferred = played >= duration * 0.95 ? Math.min(remaining, Math.max(1, Math.floor(played / duration))) : 0;
+        record.completed = inferred;
+        remaining -= inferred;
+        this.dirty.add(record.id);
+        changed = true;
+      }
+    }
+    if (changed) { this.changed = true; this.scheduleSave(); this.notify(); }
+    return changed;
+  }
+
   completedInPeriod(period = 'week', now = Date.now()) {
     if (period === 'all') {
       const local = Object.values(this.stats.completedPlayCount).reduce((sum, count) => sum + count, 0);
