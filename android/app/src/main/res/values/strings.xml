@@ -5,7 +5,7 @@
     <string name="package_name">com.halfhalf.musicplayer</string>
     <string name="custom_url_scheme">com.halfhalf.musicplayer</string>
     <string name="widget_player_description">正在播放：封面、歌名与播放控制</string>
-    <string name="widget_player_small_description">正在播放：封面与播放按钮</string>
+    <string name="widget_player_small_description">正在播放：封面、歌名与播放控制</string>
     <string name="widget_empty_title">Half&amp;Half</string>
     <string name="widget_empty_hint">打开 App 选一首歌</string>
     <string name="widget_open_to_resume">点按打开 App 继续</string>

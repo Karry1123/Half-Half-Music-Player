@@ -12,7 +12,7 @@
 - 更新提示也可返回关闭；已开始的 APK 下载不会因关闭提示而中止。
 - Android 音频直接使用 HTMLAudioElement，避免分析器所在 AudioContext 挂起造成静音。浏览器仍保留频谱分析。Android 因此不显示真实音频频谱。
 - 自研 `PlaybackService`（`android/app/src/main/java/com/halfhalf/musicplayer/`）同时持有 MediaSession、MediaStyle 通知和 PARTIAL_WAKE_LOCK：通知显示封面大图、歌手、同步状态、可拖动进度条和上一首 / 播放暂停 / 下一首；锁屏和耳机媒体键走同一个会话。JS 侧只有 `public/nativePlayback.js` 一条通道：订阅 store 推送状态，切歌时抓封面缩到 512px 推给原生缓存。暂停 2 秒后退出前台并释放锁但保留通知可继续；清掉曲目或从最近任务划掉才撤通知。第三方前台服务插件已移除。Android 上不再使用 WebView 自己的 `navigator.mediaSession`，避免两套会话互相覆盖。
-- 桌面小组件 `PlayerWidgetProvider`（4×2）与 `PlayerWidgetSmallProvider`（2×2）读取 `PlaybackStateStore` 的快照；服务每次状态变化和播放中每 30 秒刷新一次。服务活着时按钮直达服务；进程被杀后按钮改为带动作拉起 App，JS 在曲库恢复后执行排队的动作。Android 12+ 跟随 Material You 动态取色与系统圆角。
+- 桌面小组件 `PlayerWidgetProvider`（4×2）与 `PlayerWidgetSmallProvider`（2×2）读取 `PlaybackStateStore` 快照，采用「双色流光」：封面主色生成深浅双色渐变，保留奶油白文字、琥珀色播放键与完整三键控制，4×2 显示清晰封面和播放进度，2×2 使用左上角小封面，Android 12+ 保留系统圆角。服务在状态变化和播放中每 30 秒刷新；服务活着时按钮直达服务，进程被杀后带动作拉起 App，由 JS 在曲库恢复后执行。
 - 状态栏图标颜色随主题切换（`public/systemUi.js` 调 Capacitor 核心 `SystemBars.setStyle`），`theme-color` 同步；未固定主题时跟随系统深浅色变化。横屏允许绘制到刘海 / 打孔下方（`layoutInDisplayCutoutMode=shortEdges`），固定定位的底栏和迷你播放条在两侧留出安全区；软键盘弹出时底栏下滑让位。
 - `scripts/bundle-dashboard.mjs` 在构建时打包 React、htm、PeerJS 等依赖并编译 Tailwind；APK 不再依赖 CDN 才能显示页面。音乐搜索、房间连接仍需要网络。
 
