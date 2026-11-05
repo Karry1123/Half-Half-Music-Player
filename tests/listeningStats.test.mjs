@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { ListeningStats, createCompletedPlayUploader } from '../public/listeningStats.js';
 
 const base = new Date(2026, 9, 15, 12).getTime();
@@ -396,4 +397,45 @@ test('failed play upload can retry the same cumulative totals', async () => {
   fails = false;
   await upload();
   assert.equal(body.plays[0].completed, 1);
+});
+
+
+test('completion is persisted once on the current day record across midnight', async () => {
+  const writes = [];
+  const { stats } = await tracker({ persistence: { load: async () => null, save: async snapshot => writes.push(snapshot) } });
+  const start = +new Date(2026, 9, 14, 23, 59, 55);
+  stats.sample({ trackId: 'song', duration: 10, currentTime: 0, playing: true, now: start });
+  stats.sample({ trackId: 'song', duration: 10, currentTime: 10, ended: true, now: start + 10000 });
+  stats.sample({ trackId: 'song', duration: 10, currentTime: 10, ended: true, now: start + 11000 });
+  assert.equal(stats.records.length, 2);
+  assert.equal(stats.records[0].completed, undefined);
+  assert.equal(stats.records[1].localDay, '2026-10-15');
+  assert.equal(stats.records[1].completed, 1);
+  assert.ok(stats.dirty.has(stats.records[1].id));
+  await stats.flush();
+  assert.equal(writes.at(-1).records.find(row => row.localDay === '2026-10-15').completed, 1);
+});
+
+test('period completions use local calendar days and cloud dates in both timezone directions', () => {
+  for (const tz of ['America/Los_Angeles', 'Asia/Shanghai']) {
+    const result = spawnSync(process.execPath, ['--input-type=module', '-e', `
+      import assert from 'node:assert/strict';
+      import { ListeningStats } from './public/listeningStats.js';
+      const stats = new ListeningStats({ userId: 'alice', indexedDB: null });
+      await stats.ready();
+      const now = +new Date(2026, 9, 15, 0, 30);
+      const dates = [[2025,11,31,100], [2026,0,1,10], [2026,8,30,20], [2026,9,1,30], [2026,9,11,40], [2026,9,12,50], [2026,9,15,60], [2026,9,16,999]];
+      stats.records = dates.map(([year,month,day,completed]) => ({timestamp: +new Date(year,month,day,0,15), completed}));
+      stats.records.push({timestamp: now + 1, completed: 999});
+      stats.records.push({timestamp: now - 1});
+      stats.cloud = { dailyCompleted: [{day: '2026-10-15', completed: 2}, {day: '2026-10-01', completed: 3}, {day: '2026-01-01', completed: 4}, {day: '2026-10-16', completed: 999}], completed: [{key: 'song', completed: 5}, {key: 'song', completed: 5}] };
+      stats.stats.completedPlayCount = {song: 200};
+      assert.equal(stats.completedInPeriod('week', now), 112);
+      assert.equal(stats.completedInPeriod('month', now), 185);
+      assert.equal(stats.completedInPeriod('year', now), 219);
+      assert.equal(stats.completedInPeriod('all', now), 205);
+      assert.throws(() => stats.completedInPeriod('invalid', now), RangeError);
+    `], { env: { ...process.env, TZ: tz }, encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+  }
 });

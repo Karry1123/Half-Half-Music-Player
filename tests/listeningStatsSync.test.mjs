@@ -9,7 +9,7 @@ async function tracker() {
   const stats = new ListeningStats({ userId: 'alice', indexedDB: null });
   await stats.ready();
   stats.rememberTrack({ trackId: 'local-id', sourceId: 'source:123', title: 'Song', artist: 'Artist' });
-  stats.records = [{ id: 'record', userId: 'alice', trackId: 'local-id', timestamp: now, durationPlayed: 20 }];
+  stats.records = [{ id: 'record', userId: 'alice', trackId: 'local-id', timestamp: now, durationPlayed: 20, completed: 1 }];
   stats.stats.completedPlayCount['local-id'] = 2;
   stats.stats.coListeningTime.bob = 10;
   return stats;
@@ -79,13 +79,13 @@ test('cloud calendar data respects calendar boundaries and excludes future days'
 test('sync retries failed absolute snapshots, batches at 200, and uploads only changes thereafter', async () => {
   const stats = await tracker(), requests = [];
   stats.records = Array.from({ length: 401 }, (_, i) => ({ ...stats.records[0], id: String(i) }));
-  let fail = true, plays = 0;
+  let fail = true, plays = 0, clock = now;
   const client = { user: { id: 'alice', isActivated: true }, request: async (path, body) => {
     requests.push({ path, body: structuredClone(body) });
     if (fail) throw new Error('offline');
     return cloud();
   } };
-  const sync = createListeningSync({ stats, client, listTracks: async () => [], uploadPlays: async () => { plays++; } });
+  const sync = createListeningSync({ stats, client, listTracks: async () => [], now: () => clock, uploadPlays: async () => { plays++; } });
   try {
     stats.mergeCloud(cloud());
     await assert.rejects(sync.sync(), /offline/);
@@ -96,14 +96,19 @@ test('sync retries failed absolute snapshots, batches at 200, and uploads only c
     assert.deepEqual(uploads[0].body, uploads[1].body);
     assert.equal(uploads[1].body.records[0].key, 'source:123');
     assert.equal(uploads[1].body.records[0].day, day);
+    assert.equal(uploads[1].body.records[0].completed, 1);
     const length = requests.length;
     await sync.sync();
     assert.equal(requests.length, length + 1); // pull only; already acknowledged snapshots
+    clock += 60001;
+    stats.records[0].completed += 1;
+    await sync.sync();
+    assert.equal(requests.at(-2).body.records[0].completed, 2);
     stats.records[0].durationPlayed += 5;
     await sync.sync();
     assert.equal(requests.at(-2).body.records.length, 1);
     assert.equal(requests.at(-2).body.records[0].seconds, 25);
-    assert.equal(plays, 3);
+    assert.equal(plays, 4);
     client.user.id = 'other-account';
     const before = requests.length;
     await sync.sync(); assert.equal(requests.length, before);

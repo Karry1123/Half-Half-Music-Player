@@ -144,6 +144,8 @@ export class Accounts {
       const columns = async table => db.dialect === 'postgres'
         ? (await db.all('SELECT column_name AS name FROM information_schema.columns WHERE table_schema=current_schema() AND table_name=$1', [table])).map(row => row.name)
         : (await db.all(`PRAGMA table_info(${table})`)).map(row => row.name);
+      if (db.dialect === 'postgres') await db.exec('ALTER TABLE listening_sessions ADD COLUMN IF NOT EXISTS completed INTEGER NOT NULL DEFAULT 0');
+      else if (!(await columns('listening_sessions')).includes('completed')) await db.exec('ALTER TABLE listening_sessions ADD COLUMN completed INTEGER NOT NULL DEFAULT 0');
       if (!(await columns('users')).includes('short_id')) await db.exec('ALTER TABLE users ADD COLUMN short_id TEXT');
       if (!(await columns('profiles')).includes('nickname_normalized')) await db.exec('ALTER TABLE profiles ADD COLUMN nickname_normalized TEXT');
       const users = await db.all('SELECT id, short_id FROM users ORDER BY created_at, id');
@@ -269,7 +271,8 @@ export class Accounts {
     for (const r of body.records) {
       if (!r || !text(r.id, 200) || ids.has(r.id) || !text(r.key, 2000) || !text(r.title, 200) ||
         typeof r.artist !== 'string' || r.artist.length > 200 || typeof r.cover !== 'string' || r.cover.length > 2000 ||
-        !/^\d{4}-\d{2}-\d{2}$/.test(r.day) || !Number.isFinite(Date.parse(r.day)) || new Date(r.day).toISOString().slice(0, 10) !== r.day || !seconds(r.seconds)) invalid();
+        !/^\d{4}-\d{2}-\d{2}$/.test(r.day) || !Number.isFinite(Date.parse(r.day)) || new Date(r.day).toISOString().slice(0, 10) !== r.day || !seconds(r.seconds) ||
+        (r.completed !== undefined && (!Number.isInteger(r.completed) || r.completed < 0 || r.completed > 1000))) invalid();
       ids.add(r.id);
     }
     for (const r of body.coListening) {
@@ -283,7 +286,7 @@ export class Accounts {
         await db.run('INSERT INTO listening_track_aliases SELECT user_id,song_key,completion_key FROM listening_tracks WHERE user_id=$1 AND song_key=$2 ON CONFLICT DO NOTHING', [userId, r.key]);
         await db.run('INSERT INTO listening_track_aliases VALUES($1,$2,$3) ON CONFLICT DO NOTHING', [userId, r.key, songKey(r.title, r.artist)]);
         // Absolute, monotonically increasing device counters tolerate retries and stale requests.
-        await db.run('INSERT INTO listening_sessions VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(user_id,device_id,record_id) DO UPDATE SET seconds=excluded.seconds,updated_at=excluded.updated_at WHERE excluded.seconds>listening_sessions.seconds', [userId, body.deviceId, r.id, r.key, r.day, r.seconds, Date.now()]);
+        await db.run('INSERT INTO listening_sessions(user_id,device_id,record_id,song_key,day,seconds,updated_at,completed) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(user_id,device_id,record_id) DO UPDATE SET seconds=CASE WHEN excluded.seconds>listening_sessions.seconds THEN excluded.seconds ELSE listening_sessions.seconds END,completed=CASE WHEN excluded.completed>listening_sessions.completed THEN excluded.completed ELSE listening_sessions.completed END,updated_at=excluded.updated_at', [userId, body.deviceId, r.id, r.key, r.day, r.seconds, Date.now(), r.completed ?? 0]);
         await db.run('INSERT INTO listening_tracks VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(user_id,song_key) DO UPDATE SET completion_key=excluded.completion_key,title=excluded.title,artist=excluded.artist,cover=excluded.cover', [userId, r.key, songKey(r.title, r.artist), r.title, r.artist, /^https:\/\//i.test(r.cover) ? r.cover : '']);
       }
       for (const r of body.coListening) await db.run('INSERT INTO co_listening VALUES($1,$2,$3,$4,$5) ON CONFLICT(user_id,device_id,friend_id) DO UPDATE SET seconds=excluded.seconds,updated_at=excluded.updated_at WHERE excluded.seconds>co_listening.seconds', [userId, body.deviceId, r.friendId, r.seconds, Date.now()]);
@@ -297,6 +300,7 @@ export class Accounts {
     const since = new Date(Date.now() - 400 * 86400000).toISOString().slice(0, 10);
     return this.db.tx(async db => {
       const daily = await db.all('SELECT day,SUM(seconds) AS seconds FROM listening_sessions WHERE user_id=$1 AND device_id<>$2 AND day>=$3 GROUP BY day', [userId, deviceId, since]);
+      const dailyCompleted = await db.all('SELECT day,SUM(completed) AS completed FROM listening_sessions WHERE user_id=$1 AND device_id<>$2 AND day>=$3 GROUP BY day', [userId, deviceId, since]);
       const tracks = await db.all('SELECT song_key AS key,SUM(seconds) AS seconds FROM listening_sessions WHERE user_id=$1 AND device_id<>$2 GROUP BY song_key', [userId, deviceId]);
       const coListening = await db.all('SELECT friend_id AS "friendId",SUM(seconds) AS seconds FROM co_listening WHERE user_id=$1 AND device_id<>$2 GROUP BY friend_id', [userId, deviceId]);
       const completed = await db.all('SELECT p.song_key AS key,p.completed-COALESCE(d.completed,0) AS completed FROM play_counts p LEFT JOIN play_devices d ON d.user_id=p.user_id AND d.song_key=p.song_key AND d.device_id=$2 WHERE p.user_id=$1', [userId, deviceId]);
@@ -308,7 +312,7 @@ export class Accounts {
       const mapped = metadata.map(row => ({ key: row.key, completionKey: row.completionKey,
         completed: [...keys.get(row.key)].reduce((sum, key) => sum + (counts.get(key) || 0), 0) }));
       const known = new Set([...keys.values()].flatMap(set => [...set]));
-      return { daily, tracks, completed: [...mapped, ...completed.filter(row => !known.has(row.key))], coListening, metadata };
+      return { daily, dailyCompleted, tracks, completed: [...mapped, ...completed.filter(row => !known.has(row.key))], coListening, metadata };
     });
   }
   async trending(now = Date.now()) {

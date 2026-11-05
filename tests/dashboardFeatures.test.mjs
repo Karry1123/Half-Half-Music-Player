@@ -13,7 +13,7 @@ test('statistics cards render period buckets, two rings, plain comparisons and c
   const stats = new ListeningStats({ userId: 'alice', indexedDB: null });
   await stats.ready();
   const now = +new Date(2026, 9, 15, 12);
-  stats.cloud = { daily: [{ day: '2026-10-15', seconds: 720 }] };
+  stats.cloud = { daily: [{ day: '2026-10-15', seconds: 720 }], dailyCompleted: [{ day: '2026-10-15', completed: 3 }] };
   stats.stats.completedPlayCount.song = 128;
   stats.records = [60, 600, 1800, 3600].map((durationPlayed, hour) => ({ timestamp: +new Date(2026, 9, 12, hour), durationPlayed }));
   const code = readFileSync(new URL('../public/statsUI.js', import.meta.url), 'utf8')
@@ -27,16 +27,62 @@ test('statistics cards render period buckets, two rings, plain comparisons and c
     const markup = renderToStaticMarkup(React.createElement(Cards, { stats }));
     assert.match(markup, new RegExp(`>${heading}</h3>`));
     assert.equal((markup.match(/class="stats-ring"/g) || []).length, 2);
-    assert.equal((markup.match(/<g>/g) || []).length, points);
-    assert.match(markup, /128.*次/);
+    assert.equal((markup.match(/class="stats-chart-point"/g) || []).length, points);
+    assert.equal((markup.match(/class="stats-chart-peak tabular-nums"/g) || []).length, 1);
+    assert.equal((markup.match(/stroke-width="12"/g) || []).length, 4);
+    assert.match(markup, /stats-ring-draw 800ms ease-out both/);
+    assert.doesNotMatch(markup, /transition:stroke-dashoffset/);
+    assert.match(markup, period === 'all' ? /<span>128<\/span> 次/ : /<span>3<\/span> 次/);
     assert.doesNotMatch(markup, /活跃天数|>一起听<|累计|本机|触摸查看|↑|↓/);
-    for (const alpha of ['0.45', '0.65', '0.85', '1']) assert.ok(markup.includes(` / ${alpha})`));
+    for (const fill of ['rgb(var(--color-brand-host-rgb) / 0.08)', '#F2C9A0', '#E39A5B', '#C96E2A', '#8A4512']) assert.ok(markup.includes(fill));
+    assert.match(markup, /收听热力图例/);
+    assert.match(markup, /<span>少<\/span>/);
+    assert.match(markup, /<span>多<\/span>/);
     assert.match(markup, /prefers-reduced-motion/);
     if (period === 'week') assert.match(markup, /较上周增加 113 分钟/);
     if (period === 'month') assert.match(markup, /较上月增加 113 分钟/);
     if (period === 'year') assert.match(markup, /今年至今/);
     if (period === 'all') assert.match(markup, /全部记录/);
   }
+});
+
+test('chart labels only the first peak and the selected tooltip, with labels inside both edges', () => {
+  const code = readFileSync(new URL('../public/statsUI.js', import.meta.url), 'utf8')
+    .replace(/^\uFEFF/, '').replace(/^import .*;\r?\n/gm, '').replace('export function ListeningStatsCards', 'function ListeningStatsCards');
+  const render = (values, selected = null) => {
+    let hook = 0;
+    const Chart = vm.runInNewContext(`${code}; ListeningChart`, {
+      React, htm, useState: initial => [hook++ === 0 ? selected : initial, () => {}],
+      useEffect() {}, useRef: () => ({ current: null }),
+    });
+    return renderToStaticMarkup(React.createElement(Chart, { period: 'week', series: values.map((seconds, i) => ({ seconds, startDay: `2026-10-${12 + i}`, endDay: `2026-10-${12 + i}`, label: String(i) })) }));
+  };
+  const first = render([7200, 7200, 60]);
+  assert.equal((first.match(/class="stats-chart-peak tabular-nums"/g) || []).length, 1);
+  assert.match(first, /class="stats-chart-peak tabular-nums" x="24" y="26" text-anchor="start"/);
+  assert.equal((first.match(/<text /g) || []).length, 4, 'one peak label plus three x-axis labels');
+  assert.match(render([60, 7200, 60]), /class="stats-chart-peak tabular-nums" x="170" y="26" text-anchor="middle"/);
+  assert.match(render([60, 60, 7200]), /class="stats-chart-peak tabular-nums" x="316" y="26" text-anchor="end"/);
+  const selected = render([7200, 60, 60], 1);
+  assert.match(selected, /role="status"/);
+  assert.match(selected, /2026-10-13/);
+  assert.equal((selected.match(/stroke-dasharray="3 3"/g) || []).length, 2);
+  assert.equal((selected.match(/class="stats-chart-point"/g) || []).length, 3);
+  assert.match(selected, /r="4"/);
+});
+
+test('heatmap cells use the five fills at one, five, fifteen and thirty minutes', async () => {
+  const stats = new ListeningStats({ userId: 'alice', indexedDB: null });
+  await stats.ready();
+  stats.hourWeekdayMatrix = () => [[0, 59, 60, 299, 300, 899, 900, 1799, 1800]];
+  const code = readFileSync(new URL('../public/statsUI.js', import.meta.url), 'utf8')
+    .replace(/^\uFEFF/, '').replace(/^import .*;\r?\n/gm, '').replace('export function ListeningStatsCards', 'function ListeningStatsCards');
+  const Cards = vm.runInNewContext(`${code}; ListeningStatsCards`, {
+    React, htm, useState: initial => [initial, () => {}], useEffect() {}, useRef: () => ({ current: null }),
+  });
+  const markup = renderToStaticMarkup(React.createElement(Cards, { stats }));
+  const fills = [...markup.matchAll(/aspect-ratio:1;background:([^";]+)[;]?" title=/g)].map(match => match[1]);
+  assert.deepEqual(fills, ['rgb(var(--color-brand-host-rgb) / 0.08)', 'rgb(var(--color-brand-host-rgb) / 0.08)', '#F2C9A0', '#F2C9A0', '#E39A5B', '#E39A5B', '#C96E2A', '#C96E2A', '#8A4512']);
 });
 
 const source = readFileSync(new URL('../public/dashboard.html', import.meta.url), 'utf8');

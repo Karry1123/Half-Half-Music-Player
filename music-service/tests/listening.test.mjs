@@ -77,18 +77,26 @@ test('PostgreSQL listening schema and absolute upserts match SQLite semantics', 
   const accounts = new Accounts(wrapPostgres(pg, fn => pg.transaction(tx => fn(wrapPostgres(tx)))));
   try {
     await accounts.migrate();
+    await accounts.migrate(); // column migration is idempotent
     const { user } = await accounts.register('pg-listening', 'local-test-password');
     const day = new Date().toISOString().slice(0, 10);
-    const body = { deviceId: 'device-one', records: [{ id: 'r', key: 'hash:abc', day, seconds: 12.5, title: 'Song', artist: 'Artist', cover: '' }], coListening: [{ friendId: 'friend', seconds: 5.5 }] };
+    const body = { deviceId: 'device-one', records: [{ id: 'r', key: 'hash:abc', day, seconds: 12.5, completed: 2, title: 'Song', artist: 'Artist', cover: '' }], coListening: [{ friendId: 'friend', seconds: 5.5 }] };
     await accounts.recordListening(user.id, body);
     await accounts.recordListening(user.id, body);
     await accounts.recordPlays(user.id, { deviceId: body.deviceId, plays: [{ title: 'Song', artist: 'Artist', completed: 2 }] });
     const all = await accounts.listening(user.id);
     assert.equal(all.daily[0].seconds, 12.5);
+    assert.deepEqual(all.dailyCompleted, [{ day, completed: 2 }]);
+    await accounts.recordListening(user.id, { ...body, records: [{ ...body.records[0], seconds: 1, completed: 3 }] });
+    await accounts.recordListening(user.id, { ...body, records: [{ ...body.records[0], seconds: 15, completed: 1 }] });
+    const merged = await accounts.listening(user.id);
+    assert.equal(merged.daily[0].seconds, 15);
+    assert.equal(merged.dailyCompleted[0].completed, 3);
     assert.equal(all.coListening[0].seconds, 5.5);
     assert.equal(all.completed[0].completed, 2);
     const excluded = await accounts.listening(user.id, body.deviceId);
     assert.deepEqual(excluded.daily, []);
+    assert.deepEqual(excluded.dailyCompleted, []);
     assert.deepEqual(excluded.coListening, []);
     assert.equal(excluded.completed[0].completed, 0);
   } finally { await pg.close(); }
@@ -107,7 +115,7 @@ test('listening HTTP routes isolate accounts, merge devices, reject invalid data
     return { status: response.status, data: await response.json() };
   };
   const day = new Date().toISOString().slice(0, 10);
-  const row = { id: 'same-record-id', key: 'source:shared', title: 'Song', artist: 'Artist', cover: 'https://example.com/cover', day, seconds: 60 };
+  const row = { id: 'same-record-id', key: 'source:shared', title: 'Song', artist: 'Artist', cover: 'https://example.com/cover', day, seconds: 60, completed: 1 };
   const body = { deviceId: 'device-one', records: [row], coListening: [{ friendId: 'friend', seconds: 20 }] };
   try {
     assert.equal((await request('/account/listening')).status, 401);
@@ -127,6 +135,7 @@ test('listening HTTP routes isolate accounts, merge devices, reject invalid data
     }
     const all = (await request('/account/listening', a.token)).data;
     assert.deepEqual(all.daily, [{ day, seconds: 150 }]);
+    assert.deepEqual(all.dailyCompleted, [{ day, completed: 2 }]);
     assert.deepEqual(all.tracks, [{ key: row.key, seconds: 150 }]);
     assert.deepEqual(all.coListening, [{ friendId: 'friend', seconds: 50 }]);
     assert.equal(all.completed[0].key, row.key);
@@ -134,6 +143,7 @@ test('listening HTTP routes isolate accounts, merge devices, reject invalid data
     assert.equal(all.metadata[0].cover, row.cover);
     const one = (await request('/account/listening?deviceId=device-one', a.token)).data;
     assert.equal(one.daily[0].seconds, 90);
+    assert.deepEqual(one.dailyCompleted, [{ day, completed: 1 }]);
     assert.equal(one.completed[0].completed, 3);
     assert.equal(one.coListening[0].seconds, 30);
     const other = (await request('/account/listening', b.token)).data;
@@ -142,6 +152,7 @@ test('listening HTTP routes isolate accounts, merge devices, reject invalid data
       { ...body, deviceId: {} },
       { ...body, records: Array(201).fill(row) },
       { ...body, records: [{ ...row, seconds: -1 }] },
+      ...[-1, 1.5, 1001, '1', null].map(completed => ({ ...body, records: [{ ...row, completed }] })),
       { ...body, records: [{ ...row, day: '2026-02-30' }] },
       { ...body, records: [row, row] },
       { ...body, coListening: [{ friendId: 'friend', seconds: '30' }] },
@@ -149,5 +160,28 @@ test('listening HTTP routes isolate accounts, merge devices, reject invalid data
     assert.equal((await request('/account/listening?deviceId=bad', a.token)).status, 400);
     await request('/account/listening', a.token, { ...body, records: [{ ...row, id: 'ancient', day: '2020-01-01', seconds: 100 }] });
     assert.equal((await request('/account/listening', a.token)).data.daily.length, 1);
+    assert.equal((await request('/account/listening', a.token)).data.dailyCompleted.length, 1);
   } finally { await new Promise(resolve => server.close(resolve)); await accounts.close(); }
+});
+
+
+test('SQLite upgrades legacy session rows with zero completions and can rerun migration', async () => {
+  const accounts = await Accounts.memory();
+  try {
+    const { user } = await accounts.register('legacy-listening', 'local-test-password');
+    await accounts.db.exec('ALTER TABLE listening_sessions DROP COLUMN completed');
+    const day = new Date().toISOString().slice(0, 10);
+    await accounts.db.run('INSERT INTO listening_sessions VALUES($1,$2,$3,$4,$5,$6,$7)', [user.id, 'device-old', 'r', 'song', day, 60, Date.now()]);
+    await accounts.migrate();
+    await accounts.migrate();
+    const columns = await accounts.db.all('PRAGMA table_info(listening_sessions)');
+    assert.equal(columns.filter(row => row.name === 'completed').length, 1);
+    const result = await accounts.listening(user.id);
+    assert.equal(result.daily[0].seconds, 60);
+    assert.equal(result.dailyCompleted[0].completed, 0);
+    await accounts.recordListening(user.id, {deviceId: 'device-old', records: [{id: 'r', key: 'song', day, seconds: 1, completed: 2, title: 'Song', artist: '', cover: ''}], coListening: []});
+    const merged = await accounts.listening(user.id);
+    assert.equal(merged.daily[0].seconds, 60);
+    assert.equal(merged.dailyCompleted[0].completed, 2);
+  } finally { await accounts.close(); }
 });

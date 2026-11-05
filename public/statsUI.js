@@ -19,28 +19,21 @@ const card = 'min-w-0 space-y-3 rounded-2xl border border-white/10 bg-white/5 p-
 const note = 'min-w-0 break-words text-xs text-sand-400';
 const periods = [['week', '本周'], ['month', '本月'], ['year', '本年'], ['all', '全部']];
 const minutes = seconds => Math.floor(seconds / 60).toLocaleString();
-const durationLabel = (seconds, compact = false) => {
+const durationLabel = seconds => {
   const total = Math.floor(seconds / 60);
-  if (compact) return total >= 60 ? `${Math.round(total / 60)}小时` : `${total}分`;
   return total >= 60 ? `${Math.floor(total / 60)}小时${total % 60}分` : `${total}分`;
 };
+const heatColours = ['rgb(var(--color-brand-host-rgb) / 0.08)', '#F2C9A0', '#E39A5B', '#C96E2A', '#8A4512'];
 const chartTitles = { week: '每日收听', month: '每周收听', year: '每月收听', all: '每年收听' };
 // Goals: week/month/year = 7/30/365 hours and 50/200/2000 completions; all is full.
 const goals = { week: [7 * 3600, 50], month: [30 * 3600, 200], year: [365 * 3600, 2000] };
-// Completed plays are a lifetime total, so the ring fills toward the next milestone instead of a period goal.
+// All-time completions fill toward the next milestone.
 const completionMilestone = count => [10, 50, 100, 200, 500, 1000, 2000, 5000].find(n => count < n) || Math.ceil((count + 1) / 5000) * 5000;
 function StatRing({ progress, children, label, colour = 'text-host' }) {
-  const [drawn, setDrawn] = useState(false);
-  useEffect(() => {
-    if (globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches) { setDrawn(true); return; }
-    let second;
-    const first = requestAnimationFrame(() => { second = requestAnimationFrame(() => setDrawn(true)); });
-    return () => { cancelAnimationFrame(first); cancelAnimationFrame(second); };
-  }, []);
   return html`<div className=${`relative mx-auto w-full max-w-40 ${colour}`}>
     <svg viewBox="0 0 160 160" className="block w-full" role="img" aria-label=${label}>
-      <circle cx="80" cy="80" r="67" fill="none" stroke="currentColor" strokeWidth="8" opacity="0.12" />
-      <circle className="stats-ring" cx="80" cy="80" r="67" pathLength="100" fill="none" stroke="currentColor" strokeWidth="8" strokeLinecap="round" strokeDasharray="100" transform="rotate(-90 80 80)" style=${{ strokeDashoffset: drawn ? 100 - Math.min(1, Math.max(0, progress)) * 100 : 100, transition: 'stroke-dashoffset 800ms ease-out' }} />
+      <circle cx="80" cy="80" r="67" fill="none" stroke="currentColor" strokeWidth="12" opacity="0.12" />
+      <circle className="stats-ring" cx="80" cy="80" r="67" pathLength="100" fill="none" stroke="currentColor" strokeWidth="12" strokeLinecap="round" strokeDasharray="100" transform="rotate(-90 80 80)" style=${{ strokeDashoffset: 100 - Math.min(1, Math.max(0, progress)) * 100 }} />
     </svg><div className="absolute inset-0 flex items-center justify-center px-3 text-center text-sm font-bold tabular-nums sm:text-base">${children}</div>
   </div>`;
 }
@@ -58,23 +51,17 @@ function ListeningChart({ series, period }) {
     return () => observer.disconnect();
   }, []);
   useEffect(() => setHover(null), [period]);
-  // The plot always fits the card; when neighbouring labels would collide they alternate above/below.
   const plotWidth = width;
-  const widthOf = compact => Math.max(30, ...series.map(row => durationLabel(row.seconds, compact).length * 9));
-  const slot = (plotWidth - 80) / Math.max(1, series.length - 1);
-  // Full labels when they fit; otherwise alternate rows, and fall back to whole hours when even that collides.
-  const crowded = series.length > 1 && slot < widthOf(false) + 6;
-  const compact = crowded && slot * 2 < widthOf(false) + 6;
-  const labelWidth = widthOf(compact);
   const max = Math.max(1, ...series.map(row => row.seconds / 60));
-  const left = Math.min(labelWidth / 2 + 8, 40), right = plotWidth - left, span = right - left;
+  const left = 24, right = plotWidth - 24, span = right - left;
   const x = i => left + i * span / Math.max(1, series.length - 1);
   const y = seconds => 112 - seconds / 60 / max * 76;
-  const labelBelow = i => {
-    if (crowded) return i % 2 === 1;
-    const row = series[i];
-    return i > 0 && i < series.length - 1 && row.seconds < series[i - 1].seconds && row.seconds < series[i + 1].seconds;
-  };
+  const peak = series.reduce((best, row, i) => best === null || row.seconds > series[best].seconds ? i : best, null);
+  const peakLabel = peak === null ? '' : durationLabel(series[peak].seconds);
+  const peakWidth = peakLabel.length * 10;
+  const peakAnchor = peak !== null && x(peak) - peakWidth / 2 < 8 ? 'start'
+    : peak !== null && x(peak) + peakWidth / 2 > plotWidth - 8 ? 'end' : 'middle';
+  const peakX = peak === null ? 0 : Math.max(8, Math.min(plotWidth - 8, x(peak)));
   const selected = hover !== null && series[hover] ? hover : null;
   const select = event => {
     const bounds = event.currentTarget.getBoundingClientRect();
@@ -85,7 +72,8 @@ function ListeningChart({ series, period }) {
     <svg viewBox=${`0 0 ${plotWidth} 160`} preserveAspectRatio="xMidYMid meet" className="block w-full text-host" role="img" aria-label=${`${chartTitles[period]}折线图；触摸或悬停查看详情`} onPointerMove=${select} onPointerDown=${select} onPointerLeave=${() => setHover(null)}>
       ${[0, 0.5, 1].map(level => html`<line key=${level} x1=${left} x2=${right} y1=${112 - level * 76} y2=${112 - level * 76} stroke="currentColor" opacity="0.12" />`)}
       <path d=${series.map((row, i) => `${i ? 'L' : 'M'}${x(i)} ${y(row.seconds)}`).join(' ')} fill="none" stroke="currentColor" strokeWidth="2" vectorEffect="non-scaling-stroke" strokeLinejoin="round" />
-      ${series.map((row, i) => html`<g key=${row.startDay}><circle cx=${x(i)} cy=${y(row.seconds)} r="3" fill="currentColor" /><text x=${x(i)} y=${y(row.seconds) + (labelBelow(i) ? 16 : -10)} textAnchor="middle" fill="currentColor" fontSize="10" className="tabular-nums">${durationLabel(row.seconds, compact)}</text></g>`)}
+      ${series.map((row, i) => html`<circle key=${row.startDay} className="stats-chart-point" cx=${x(i)} cy=${y(row.seconds)} r="3" fill="currentColor" />`)}
+      ${peak !== null && html`<text className="stats-chart-peak tabular-nums" x=${peakX} y=${y(series[peak].seconds) - 10} textAnchor=${peakAnchor} fill="currentColor" fontSize="10">${peakLabel}</text>`}
       ${selected !== null && html`<line key="crosshair-x" x1=${x(selected)} x2=${x(selected)} y1="30" y2="112" stroke="currentColor" opacity="0.5" strokeDasharray="3 3" /><line key="crosshair-y" x1=${left} x2=${right} y1=${y(series[selected].seconds)} y2=${y(series[selected].seconds)} stroke="currentColor" opacity="0.3" strokeDasharray="3 3" /><circle key="selected" cx=${x(selected)} cy=${y(series[selected].seconds)} r="4" fill="currentColor" />`}
       ${series.map((row, i) => html`<text key=${row.startDay} x=${x(i)} y="153" textAnchor="middle" fill="currentColor" opacity="0.65" fontSize="10">${row.label}</text>`)}
     </svg></div>
@@ -106,8 +94,7 @@ export function ListeningStatsCards({ stats, tracks = [], me = {}, friends = [],
   const weekdays = ['一', '二', '三', '四', '五', '六', '日'];
   const coTotals = stats?.coListeningTotals() || {};
   const localCompleted = Object.values(stats?.stats?.completedPlayCount || {}).reduce((sum, value) => sum + value, 0);
-  const remoteCompleted = [...new Map((stats?.cloud?.completed || []).map(row => [row.key, row])).values()].reduce((sum, row) => sum + Number(row.completed || 0), 0);
-  const completed = localCompleted + remoteCompleted;
+  const completed = stats?.completedInPeriod(period, now) || 0;
   // Tracks no longer in the library still count: fall back to the metadata the stats remembered.
   const known = new Set(tracks.flatMap(track => [track.id, track.localId]));
   const remembered = Object.entries(stats?.stats?.trackMetadata || {}).filter(([id, meta]) => meta?.title && !known.has(id)).map(([id, meta]) => ({ id, title: meta.title, artist: meta.artist, remembered: true }));
@@ -120,12 +107,12 @@ export function ListeningStatsCards({ stats, tracks = [], me = {}, friends = [],
   const rate = started ? Math.round(localCompleted / started * 100) : 0;
   const avatar = name => html`<span className="grid h-8 w-8 shrink-0 place-items-center rounded-full border border-white/10 bg-host/20 text-xs">${String(name || '听').slice(0, 1)}</span>`;
   return html`<section className="mb-4 min-w-0 space-y-4 rounded-3xl border border-white/10 bg-gradient-to-br from-host/10 via-white/5 to-guest/10 p-3 sm:p-5">
-    <style>@media (prefers-reduced-motion: reduce) { .stats-ring { transition: none !important; } }</style>
+    <style>@keyframes stats-ring-draw { from { stroke-dashoffset: 100; } } .stats-ring { animation: stats-ring-draw 800ms ease-out both; will-change: stroke-dashoffset; } @media (prefers-reduced-motion: reduce) { .stats-ring { animation: none !important; will-change: auto; } }</style>
     <h2 className="min-w-0 truncate font-semibold">收听统计</h2>
     <div className="grid min-w-0 grid-cols-4 gap-1 rounded-full border border-white/10 bg-white/5 p-1" role="group" aria-label="统计周期">${periods.map(([value, label]) => html`<button key=${value} type="button" aria-pressed=${period === value} onClick=${() => setPeriod(value)} className=${`min-w-0 truncate rounded-full px-1 py-2 text-xs ${period === value ? 'bg-host/20 font-semibold text-host' : 'text-sand-400'}`}>${label}</button>`)}</div>
     <div className="grid min-w-0 grid-cols-2 gap-2">
       <article className=${card}><h3 className=${`${note} text-center`}>收听时长</h3><${StatRing} key=${`duration-${period}`} progress=${period === 'all' ? 1 : seconds / goals[period][0]} label="收听时长目标进度">${durationLabel(seconds)}<//><p className="min-w-0 break-words text-center text-xs text-sand-400 tabular-nums">${comparison}</p></article>
-      <article className=${card}><h3 className=${`${note} text-center`}>听完的歌</h3><${StatRing} key=${`completed-${period}`} progress=${completed / completionMilestone(completed)} label="听完歌曲里程碑进度" colour="text-guest"><span><${CountUp} value=${completed} /> 次</span><//></article>
+      <article className=${card}><h3 className=${`${note} text-center`}>听完的歌</h3><${StatRing} key=${`completed-${period}`} progress=${completed / (period === 'all' ? completionMilestone(completed) : goals[period][1])} label="听完歌曲里程碑进度" colour="text-guest"><span><${CountUp} value=${completed} /> 次</span><//></article>
     </div>
     <div className=${card}><h3 className="min-w-0 break-words text-sm font-semibold">一起听的里程碑</h3>
       ${Object.entries(coTotals).map(([id, time]) => {
@@ -139,9 +126,9 @@ export function ListeningStatsCards({ stats, tracks = [], me = {}, friends = [],
     <div className=${card}><h3 className="min-w-0 break-words text-sm font-semibold">${chartTitles[period]}</h3><${ListeningChart} series=${series} period=${period} />${!seconds && html`<p className=${note}>让喜欢的旋律，点亮今天的曲线。</p>`}</div>
     <div className=${card}><h3 className="min-w-0 break-words text-sm font-semibold">收听热力</h3>
       <div className="grid min-w-0 gap-px" style=${{ gridTemplateColumns: 'minmax(0, 1.5fr) repeat(24, minmax(0, 1fr))' }}>
-        ${matrix.map((row, day) => html`<${React.Fragment} key=${day}><span className="min-w-0 truncate text-xs text-sand-400">${weekdays[day]}</span>${row.map((value, hour) => html`<span key=${hour} className="min-w-0 self-center rounded-sm" style=${{ aspectRatio: '1', background: `rgb(var(--color-brand-host-rgb) / ${[0.12, 0.45, 0.65, 0.85, 1][value >= 3600 ? 4 : value >= 1800 ? 3 : value >= 600 ? 2 : value >= 60 ? 1 : 0]})` }} title=${`周${weekdays[day]} ${hour} 时 · ${minutes(value)} 分钟`} />`)}<//>`)}
+        ${matrix.map((row, day) => html`<${React.Fragment} key=${day}><span className="min-w-0 truncate text-xs text-sand-400">${weekdays[day]}</span>${row.map((value, hour) => html`<span key=${hour} className="min-w-0 self-center rounded-sm" style=${{ aspectRatio: '1', background: heatColours[value >= 1800 ? 4 : value >= 900 ? 3 : value >= 300 ? 2 : value >= 60 ? 1 : 0] }} title=${`周${weekdays[day]} ${hour} 时 · ${minutes(value)} 分钟`} />`)}<//>`)}
         <span /><div className="flex min-w-0 justify-between text-xs text-sand-400" style=${{ gridColumn: '2 / -1' }}>${[0, 6, 12, 18, 23].map(hour => html`<span key=${hour} className="min-w-0 truncate">${hour}时</span>`)}</div>
-      </div><p className=${note}>${heatMax ? `高峰在 周${weekdays[Math.floor(peak / 24)]} ${peak % 24} 点。` : '还没有收听足迹，下一首就从此刻开始。'}</p>
+      </div><div className="flex items-center justify-end gap-1 text-xs text-sand-400" aria-label="收听热力图例"><span>少</span>${heatColours.map(fill => html`<span key=${fill} className="h-3 w-3 rounded-sm" style=${{ background: fill }} />`)}<span>多</span></div><p className=${note}>${heatMax ? `高峰在 周${weekdays[Math.floor(peak / 24)]} ${peak % 24} 点。` : '还没有收听足迹，下一首就从此刻开始。'}</p>
     </div>
     <div className=${card}><h3 className="min-w-0 break-words text-sm font-semibold">最常听的歌手</h3>${artists.map((row, i) => html`<div key=${row.artist} className="grid min-w-0 items-center gap-2" style=${{ gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr) minmax(0, .65fr)' }}><span className="min-w-0 truncate text-xs" title=${row.artist}>${i + 1}. ${row.artist}</span><span className="h-2 min-w-0 overflow-hidden rounded-full bg-host/10"><span className="block h-full rounded-full bg-host" style=${{ width: `${row.seconds / artists[0].seconds * 100}%`, opacity: 1 - i * 0.13 }} /></span><span className="min-w-0 break-all text-right text-xs tabular-nums">${minutes(row.seconds)}</span></div>`)}${!artists.length && html`<p className=${note}>听一首喜欢的歌，让熟悉的声音留下足迹。</p>`}</div>
     <div className=${card}><h3 className="min-w-0 break-words text-sm font-semibold">最常听的 5 首</h3>${top.map(({ track, plays }, i) => html`<div key=${track.id} className="flex min-w-0 items-center gap-3"><span className="min-w-0 shrink-0 text-sm tabular-nums text-host">${i + 1}</span><div className="min-w-0 flex-1"><p className="min-w-0 truncate text-sm" title=${track.title}>${track.title}</p><p className="min-w-0 truncate text-xs text-sand-400" title=${track.artist}>${track.artist || '未知歌手'} · 已听 ${plays.toLocaleString()} 次</p></div></div>`)}${!top.length && html`<p className=${note}>完整听完一首，留下旋律的足迹。</p>`}</div>

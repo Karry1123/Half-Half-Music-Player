@@ -174,6 +174,8 @@ export class ListeningStats {
     const naturalEnd = sample.ended && !session.skipped && session.played > 0;
     if (!session.completed && (reachedThreshold || naturalEnd)) {
       this.stats.completedPlayCount[sample.trackId] = (this.stats.completedPlayCount[sample.trackId] || 0) + 1;
+      session.record.completed = (session.record.completed || 0) + 1;
+      this.dirty.add(session.record.id);
       this.completionIndex = null;
       session.completed = true;
       completed = true;
@@ -290,6 +292,20 @@ export class ListeningStats {
     for (const row of this.cloud?.daily || []) add(row.day, row.seconds);
     for (const record of this.records) if (inPeriod(record, bounds, now)) add(recordDay(record), record.durationPlayed);
     return [...totals].map(([day, seconds]) => ({ day, seconds })).sort((a, b) => a.day.localeCompare(b.day));
+  }
+
+  completedInPeriod(period = 'week', now = Date.now()) {
+    if (period === 'all') {
+      const local = Object.values(this.stats.completedPlayCount).reduce((sum, count) => sum + count, 0);
+      const remote = [...new Map((this.cloud?.completed || []).map(row => [row.key, row])).values()];
+      return local + remote.reduce((sum, row) => sum + Number(row.completed || 0), 0);
+    }
+    const bounds = periodBounds(period, now);
+    const local = this.records.filter(record => inPeriod(record, bounds, now))
+      .reduce((sum, record) => sum + (record.completed || 0), 0);
+    return local + (this.cloud?.dailyCompleted || [])
+      .filter(row => row.day >= bounds.startDay && row.day <= bounds.endDay)
+      .reduce((sum, row) => sum + Number(row.completed || 0), 0);
   }
 
   summary(period = 'week', now = Date.now()) {
@@ -491,7 +507,7 @@ export function createListeningSync({ stats, client, listTracks, uploadPlays = a
             const meta = stats.stats.trackMetadata[record.trackId];
             if (!meta?.title || meta.title.length > 200 || (meta.artist || '').length > 200) return [];
             return [{ id: String(record.id), key: stats.trackKey(record.trackId), day: recordDay(record),
-              seconds: record.durationPlayed, title: meta.title, artist: meta.artist || '', cover: meta.cover || '' }];
+              seconds: record.durationPlayed, completed: record.completed || 0, title: meta.title, artist: meta.artist || '', cover: meta.cover || '' }];
           }).filter(row => sent.get(`r:${row.id}`) !== JSON.stringify(row));
           const co = Object.entries(stats.stats.coListeningTime).map(([friendId, seconds]) => ({ friendId, seconds }))
             .filter(row => sent.get(`f:${row.friendId}`) !== JSON.stringify(row));
