@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import htm from 'htm';
 import { coverSrc, coverError } from './coverUrl.js';
 const html = htm.bind(React.createElement);
@@ -38,6 +38,24 @@ export function coListeningLabel(username, seconds = 0) {
 export function FriendsPanel({ client, presence = {}, invite, history = [], stats, onPreview, onCollect }) {
   const [query, setQuery] = useState(''), [results, setResults] = useState([]), [error, setError] = useState('');
   const friends = useFriends(client, setError);
+  const [openMenu, setOpenMenu] = useState(null);
+  const menuRef = useRef(null);
+  useEffect(() => {
+    if (openMenu === null) return;
+    const outside = e => { if (!menuRef.current?.contains(e.target)) setOpenMenu(null); };
+    const escape = e => {
+      if (e.key === 'Escape') {
+        setOpenMenu(null);
+        menuRef.current?.querySelector('button')?.focus();
+      }
+    };
+    document.addEventListener('pointerdown', outside);
+    document.addEventListener('keydown', escape);
+    return () => {
+      document.removeEventListener('pointerdown', outside);
+      document.removeEventListener('keydown', escape);
+    };
+  }, [openMenu]);
   const [, revise] = useState(0);
   useEffect(() => {
     let timer;
@@ -68,11 +86,22 @@ export function FriendsPanel({ client, presence = {}, invite, history = [], stat
       const id = f.userId || f.id, online = presence[id]?.online;
       return html`<article key=${id} className=${`rounded-2xl border p-4 space-y-3 ${online ? 'border-sync/50 bg-sync/5' : 'border-ink-700'}`}>
         <div className="flex items-center justify-between gap-3 font-semibold"><${FriendIdentity} friend=${f} /><span className="text-xs text-sand-400">${online ? '在线' : '离线'}</span></div>
-        ${f.status === 'accepted' && html`<p className="text-xs text-sand-400">${coListeningLabel(f.username || f.nickname || id, stats?.coListeningSeconds?.(id))}</p>`}
+        ${f.status === 'accepted' && html`<div className="flex items-center justify-between gap-3">
+          <p className="min-w-0 text-xs text-sand-400">${coListeningLabel(f.username || f.nickname || id, stats?.coListeningSeconds?.(id))}</p>
+          <div className="relative shrink-0" ref=${openMenu === id ? menuRef : null}>
+            <button type="button" className=${`${button} text-sand-400`} aria-label=${`${f.username || f.nickname || id} 的更多操作`} aria-haspopup="menu" aria-expanded=${openMenu === id} onClick=${() => setOpenMenu(current => current === id ? null : id)}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="2" /><circle cx="12" cy="12" r="2" /><circle cx="19" cy="12" r="2" /></svg>
+            </button>
+            ${openMenu === id && html`<div role="menu" aria-label="好友操作" className="absolute right-0 top-full z-20 mt-2 flex w-max flex-col gap-1 rounded-xl border border-ink-600 bg-ink-800 p-2 text-sand-400 shadow-lg">
+              <button role="menuitem" className=${button} disabled=${publicLoading} onClick=${() => { setOpenMenu(null); openPublic(id, f); }}>TA的公开歌单</button>
+              <button role="menuitem" className=${button} disabled=${!online} onClick=${() => { setOpenMenu(null); invite(id); }}>邀请一起听</button>
+              <button role="menuitem" className=${button} onClick=${() => { setOpenMenu(null); run(() => client.request(`/account/friends/${id}`, null, 'DELETE')); }}>移除好友</button>
+            </div>`}
+          </div>
+        </div>`}
         ${presence[id]?.nowPlaying && html`<p className="text-xs text-sand-400">正在听：${presence[id].nowPlaying.title || presence[id].nowPlaying}</p>`}
-        <div className="flex flex-wrap gap-2">${f.status === 'accepted' ? html`<button className=${button} disabled=${publicLoading} onClick=${() => openPublic(id, f)}>TA的公开歌单</button><button className=${button} disabled=${!online} onClick=${() => invite(id)}>邀请一起听</button><button className=${button} onClick=${() => run(() => client.request(`/account/friends/${id}`, null, 'DELETE'))}>移除好友</button>`
-          : f.requester === client.user?.id ? html`<span>等待对方接受</span><button className=${button} onClick=${() => run(() => client.request(`/account/friends/${id}`, null, 'DELETE'))}>取消请求</button>`
-          : html`<button className=${button} onClick=${() => run(() => client.request(`/account/friends/${id}/accept`, {}))}>接受</button><button className=${button} onClick=${() => run(() => client.request(`/account/friends/${id}/decline`, {}))}>拒绝</button>`}</div>
+        ${f.status !== 'accepted' && html`<div className="flex flex-wrap gap-2">${f.requester === client.user?.id ? html`<span>等待对方接受</span><button className=${button} onClick=${() => run(() => client.request(`/account/friends/${id}`, null, 'DELETE'))}>取消请求</button>`
+          : html`<button className=${button} onClick=${() => run(() => client.request(`/account/friends/${id}/accept`, {}))}>接受</button><button className=${button} onClick=${() => run(() => client.request(`/account/friends/${id}/decline`, {}))}>拒绝</button>`}</div>`}
       </article>`;
     })}${!friends.length && html`<p className="text-sand-400">搜索好友，邀请对方一起听歌。</p>`}</div>
     ${publicLibrary && html`<section className="space-y-3 rounded-2xl border border-ink-600 bg-ink-800/60 p-4">
