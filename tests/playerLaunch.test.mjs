@@ -31,7 +31,7 @@ function harness(saved = null) {
     html: htm.bind(React.createElement), useStore: fn => fn(state),
     useState: () => [0, () => {}], useRef: () => ({ current: null }), useBackLayer() {}, useEffect() {},
     cx: (...args) => args.filter(Boolean).join(' '),
-    ...Object.fromEntries(['Cover', 'CoListenPill', 'Pause', 'Play', 'SkipForward'].map(name => [name, () => null])),
+    ...Object.fromEntries(['Cover', 'CoListenPill', 'Pause', 'Play', 'SkipForward', 'VolumeSlider'].map(name => [name, () => null])),
   };
   const methods = vm.runInNewContext(`({
     ${between('  restorePlayback()', '\n  /** Restore the local library')},
@@ -107,7 +107,7 @@ test('page reserves mini-player space only while a track or co-listen session is
 test('desktop controls tolerate a missing track and disable play and next even with stale loaded flags', () => {
   const { state, context } = harness();
   Object.assign(state, { loaded: true, canNext: true });
-  for (const name of ['LinkIndicator', 'MiniWave', 'PlayModeButton', 'SkipBack', 'ListMusic', 'SeekBar', 'Volume2', 'VolumeX', 'SyncStatus']) {
+  for (const name of ['LinkIndicator', 'MiniWave', 'PlayModeButton', 'SkipBack', 'ListMusic', 'SeekBar', 'Volume2', 'VolumeX', 'VolumeSlider', 'SyncStatus']) {
     context[name] = () => null;
   }
   const PlayerBar = vm.runInNewContext(`${between('function PlayerBar()', '\nfunction Toasts()')}; PlayerBar`, context);
