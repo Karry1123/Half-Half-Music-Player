@@ -19,13 +19,16 @@ const card = 'min-w-0 space-y-3 rounded-2xl border border-white/10 bg-white/5 p-
 const note = 'min-w-0 break-words text-xs text-sand-400';
 const periods = [['week', '本周'], ['month', '本月'], ['year', '本年'], ['all', '全部']];
 const minutes = seconds => Math.floor(seconds / 60).toLocaleString();
-const durationLabel = seconds => {
+const durationLabel = (seconds, compact = false) => {
   const total = Math.floor(seconds / 60);
+  if (compact) return total >= 60 ? `${Math.round(total / 60)}小时` : `${total}分`;
   return total >= 60 ? `${Math.floor(total / 60)}小时${total % 60}分` : `${total}分`;
 };
 const chartTitles = { week: '每日收听', month: '每周收听', year: '每月收听', all: '每年收听' };
 // Goals: week/month/year = 7/30/365 hours and 50/200/2000 completions; all is full.
 const goals = { week: [7 * 3600, 50], month: [30 * 3600, 200], year: [365 * 3600, 2000] };
+// Completed plays are a lifetime total, so the ring fills toward the next milestone instead of a period goal.
+const completionMilestone = count => [10, 50, 100, 200, 500, 1000, 2000, 5000].find(n => count < n) || Math.ceil((count + 1) / 5000) * 5000;
 function StatRing({ progress, children, label, colour = 'text-host' }) {
   const [drawn, setDrawn] = useState(false);
   useEffect(() => {
@@ -55,27 +58,34 @@ function ListeningChart({ series, period }) {
     return () => observer.disconnect();
   }, []);
   useEffect(() => setHover(null), [period]);
-  // Keep every duration readable; narrow containers can scroll the plot horizontally.
-  const labelWidth = Math.max(48, ...series.map(row => durationLabel(row.seconds).length * 11));
-  const plotWidth = Math.max(width, Math.max(0, series.length - 1) * (labelWidth + 24) + labelWidth + 24);
+  // The plot always fits the card; when neighbouring labels would collide they alternate above/below.
+  const plotWidth = width;
+  const widthOf = compact => Math.max(30, ...series.map(row => durationLabel(row.seconds, compact).length * 9));
+  const slot = (plotWidth - 80) / Math.max(1, series.length - 1);
+  // Full labels when they fit; otherwise alternate rows, and fall back to whole hours when even that collides.
+  const crowded = series.length > 1 && slot < widthOf(false) + 6;
+  const compact = crowded && slot * 2 < widthOf(false) + 6;
+  const labelWidth = widthOf(compact);
   const max = Math.max(1, ...series.map(row => row.seconds / 60));
-  const left = labelWidth / 2 + 12, right = plotWidth - left, span = right - left;
+  const left = Math.min(labelWidth / 2 + 8, 40), right = plotWidth - left, span = right - left;
   const x = i => left + i * span / Math.max(1, series.length - 1);
   const y = seconds => 112 - seconds / 60 / max * 76;
+  const labelBelow = i => {
+    if (crowded) return i % 2 === 1;
+    const row = series[i];
+    return i > 0 && i < series.length - 1 && row.seconds < series[i - 1].seconds && row.seconds < series[i + 1].seconds;
+  };
   const selected = hover !== null && series[hover] ? hover : null;
   const select = event => {
     const bounds = event.currentTarget.getBoundingClientRect();
     const position = (event.clientX - bounds.left) / bounds.width * plotWidth;
     setHover(Math.max(0, Math.min(series.length - 1, Math.round((position - left) / span * (series.length - 1)))));
   };
-  return html`<div ref=${box} className="relative min-w-0"><div className="overflow-x-auto">
-    <svg viewBox=${`0 0 ${plotWidth} 160`} preserveAspectRatio="xMidYMid meet" className="block w-full text-host" style=${{ minWidth: `${plotWidth}px` }} role="img" aria-label=${`${chartTitles[period]}折线图；触摸或悬停查看详情`} onPointerMove=${select} onPointerDown=${select} onPointerLeave=${() => setHover(null)}>
+  return html`<div ref=${box} className="relative min-w-0"><div className="overflow-hidden">
+    <svg viewBox=${`0 0 ${plotWidth} 160`} preserveAspectRatio="xMidYMid meet" className="block w-full text-host" role="img" aria-label=${`${chartTitles[period]}折线图；触摸或悬停查看详情`} onPointerMove=${select} onPointerDown=${select} onPointerLeave=${() => setHover(null)}>
       ${[0, 0.5, 1].map(level => html`<line key=${level} x1=${left} x2=${right} y1=${112 - level * 76} y2=${112 - level * 76} stroke="currentColor" opacity="0.12" />`)}
       <path d=${series.map((row, i) => `${i ? 'L' : 'M'}${x(i)} ${y(row.seconds)}`).join(' ')} fill="none" stroke="currentColor" strokeWidth="2" vectorEffect="non-scaling-stroke" strokeLinejoin="round" />
-      ${series.map((row, i) => {
-        const below = i > 0 && i < series.length - 1 && row.seconds < series[i - 1].seconds && row.seconds < series[i + 1].seconds;
-        return html`<g key=${row.startDay}><circle cx=${x(i)} cy=${y(row.seconds)} r="3" fill="currentColor" /><text x=${x(i)} y=${y(row.seconds) + (below ? 17 : -12)} textAnchor="middle" fill="currentColor" fontSize="11" className="tabular-nums">${durationLabel(row.seconds)}</text></g>`;
-      })}
+      ${series.map((row, i) => html`<g key=${row.startDay}><circle cx=${x(i)} cy=${y(row.seconds)} r="3" fill="currentColor" /><text x=${x(i)} y=${y(row.seconds) + (labelBelow(i) ? 16 : -10)} textAnchor="middle" fill="currentColor" fontSize="10" className="tabular-nums">${durationLabel(row.seconds, compact)}</text></g>`)}
       ${selected !== null && html`<line key="crosshair-x" x1=${x(selected)} x2=${x(selected)} y1="30" y2="112" stroke="currentColor" opacity="0.5" strokeDasharray="3 3" /><line key="crosshair-y" x1=${left} x2=${right} y1=${y(series[selected].seconds)} y2=${y(series[selected].seconds)} stroke="currentColor" opacity="0.3" strokeDasharray="3 3" /><circle key="selected" cx=${x(selected)} cy=${y(series[selected].seconds)} r="4" fill="currentColor" />`}
       ${series.map((row, i) => html`<text key=${row.startDay} x=${x(i)} y="153" textAnchor="middle" fill="currentColor" opacity="0.65" fontSize="10">${row.label}</text>`)}
     </svg></div>
@@ -115,7 +125,7 @@ export function ListeningStatsCards({ stats, tracks = [], me = {}, friends = [],
     <div className="grid min-w-0 grid-cols-4 gap-1 rounded-full border border-white/10 bg-white/5 p-1" role="group" aria-label="统计周期">${periods.map(([value, label]) => html`<button key=${value} type="button" aria-pressed=${period === value} onClick=${() => setPeriod(value)} className=${`min-w-0 truncate rounded-full px-1 py-2 text-xs ${period === value ? 'bg-host/20 font-semibold text-host' : 'text-sand-400'}`}>${label}</button>`)}</div>
     <div className="grid min-w-0 grid-cols-2 gap-2">
       <article className=${card}><h3 className=${`${note} text-center`}>收听时长</h3><${StatRing} key=${`duration-${period}`} progress=${period === 'all' ? 1 : seconds / goals[period][0]} label="收听时长目标进度">${durationLabel(seconds)}<//><p className="min-w-0 break-words text-center text-xs text-sand-400 tabular-nums">${comparison}</p></article>
-      <article className=${card}><h3 className=${`${note} text-center`}>听完的歌</h3><${StatRing} key=${`completed-${period}`} progress=${period === 'all' ? 1 : completed / goals[period][1]} label="听完歌曲目标进度" colour="text-guest"><span><${CountUp} value=${completed} /> 次</span><//></article>
+      <article className=${card}><h3 className=${`${note} text-center`}>听完的歌</h3><${StatRing} key=${`completed-${period}`} progress=${completed / completionMilestone(completed)} label="听完歌曲里程碑进度" colour="text-guest"><span><${CountUp} value=${completed} /> 次</span><//></article>
     </div>
     <div className=${card}><h3 className="min-w-0 break-words text-sm font-semibold">一起听的里程碑</h3>
       ${Object.entries(coTotals).map(([id, time]) => {
@@ -129,7 +139,7 @@ export function ListeningStatsCards({ stats, tracks = [], me = {}, friends = [],
     <div className=${card}><h3 className="min-w-0 break-words text-sm font-semibold">${chartTitles[period]}</h3><${ListeningChart} series=${series} period=${period} />${!seconds && html`<p className=${note}>让喜欢的旋律，点亮今天的曲线。</p>`}</div>
     <div className=${card}><h3 className="min-w-0 break-words text-sm font-semibold">收听热力</h3>
       <div className="grid min-w-0 gap-px" style=${{ gridTemplateColumns: 'minmax(0, 1.5fr) repeat(24, minmax(0, 1fr))' }}>
-        ${matrix.map((row, day) => html`<${React.Fragment} key=${day}><span className="min-w-0 truncate text-xs text-sand-400">${weekdays[day]}</span>${row.map((value, hour) => html`<span key=${hour} className="min-w-0 self-center rounded-sm" style=${{ aspectRatio: '1', background: `rgb(var(--color-brand-host-rgb) / ${[0.12, 0.35, 0.55, 0.78, 1][value >= 3600 ? 4 : value >= 1800 ? 3 : value >= 600 ? 2 : value >= 60 ? 1 : 0]})` }} title=${`周${weekdays[day]} ${hour} 时 · ${minutes(value)} 分钟`} />`)}<//>`)}
+        ${matrix.map((row, day) => html`<${React.Fragment} key=${day}><span className="min-w-0 truncate text-xs text-sand-400">${weekdays[day]}</span>${row.map((value, hour) => html`<span key=${hour} className="min-w-0 self-center rounded-sm" style=${{ aspectRatio: '1', background: `rgb(var(--color-brand-host-rgb) / ${[0.12, 0.45, 0.65, 0.85, 1][value >= 3600 ? 4 : value >= 1800 ? 3 : value >= 600 ? 2 : value >= 60 ? 1 : 0]})` }} title=${`周${weekdays[day]} ${hour} 时 · ${minutes(value)} 分钟`} />`)}<//>`)}
         <span /><div className="flex min-w-0 justify-between text-xs text-sand-400" style=${{ gridColumn: '2 / -1' }}>${[0, 6, 12, 18, 23].map(hour => html`<span key=${hour} className="min-w-0 truncate">${hour}时</span>`)}</div>
       </div><p className=${note}>${heatMax ? `高峰在 周${weekdays[Math.floor(peak / 24)]} ${peak % 24} 点。` : '还没有收听足迹，下一首就从此刻开始。'}</p>
     </div>

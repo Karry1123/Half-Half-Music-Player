@@ -30,7 +30,7 @@ test('statistics cards render period buckets, two rings, plain comparisons and c
     assert.equal((markup.match(/<g>/g) || []).length, points);
     assert.match(markup, /128.*次/);
     assert.doesNotMatch(markup, /活跃天数|>一起听<|累计|本机|触摸查看|↑|↓/);
-    for (const alpha of ['0.35', '0.55', '0.78', '1']) assert.ok(markup.includes(` / ${alpha})`));
+    for (const alpha of ['0.45', '0.65', '0.85', '1']) assert.ok(markup.includes(` / ${alpha})`));
     assert.match(markup, /prefers-reduced-motion/);
     if (period === 'week') assert.match(markup, /较上周增加 113 分钟/);
     if (period === 'month') assert.match(markup, /较上月增加 113 分钟/);
