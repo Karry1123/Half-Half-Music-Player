@@ -183,6 +183,7 @@ import { installAndroidBack, pushBackLayer } from './mobileRuntime.js';
 import { nativePlugin } from './nativeBridge.js';
 import { installThemeSync } from './systemUi.js';
 import { installNativePlayback } from './nativePlayback.js';
+import { readLastPlayback, installPlaybackPersistence } from './playbackResume.js';
 import { observeAudio } from './audioState.js';
 import { installAudioGuard } from './audioGuard.js';
 import { FriendsPanel, useFriends } from './friendsUI.js';
@@ -810,10 +811,10 @@ class AudioOut {
     return this.ctx ? (this.ctx.outputLatency || 0) + (this.ctx.baseLatency || 0) : 0;
   }
 
-  load(blob, { autoplay = false } = {}) {
+  load(blob, { autoplay = false, position = 0 } = {}) {
     clearTimeout(this.timer);
     this.intent = false;
-    this.pausedAt = 0;
+    this.pausedAt = position;
     this.pauseElement();
     if (this.url) URL.revokeObjectURL(this.url);
     this.url = URL.createObjectURL(blob);
@@ -960,6 +961,7 @@ class Session {
     }
     const a = this.out.audio;
     if (this.loadedId && this.out.intent && a.paused && now() > (this.out.target?.localMs ?? 0) + 200) {
+      if (!a.src || a.readyState === 0 || a.error) return this.loadTrack(this.loadedId, { autoplay: true, resumeAt: this.anchor.position });
       this.resumeFrom(a.currentTime);
       note('播放被系统打断，已自动继续', 'sync');
     }
@@ -1272,7 +1274,21 @@ class Session {
     return blob;
   }
 
-  /** 打开页面 / 离开别人的房间后：用本机曲库重建播放列表（只读元数据，音频按需加载） */
+  /** Restore metadata only; audio loads on an explicit play action. */
+  restorePlayback() {
+    if (get().currentId || this.isGuest) return;
+    const saved = readLastPlayback(get(), playlistStore);
+    if (!saved) return;
+    this.viewOrder = saved.viewOrder;
+    this.anchor = { trackId: saved.trackId, playing: false, position: saved.position, at: now() };
+    this.out.stopAt(now(), saved.position);
+    set({ currentId: saved.trackId, duration: saved.duration, loaded: false, playing: false,
+      playbackPending: false, activePlaylistId: saved.activePlaylistId, playMode: saved.playMode });
+    this.syncQueue().setMode(saved.playMode);
+    this.broadcastLibrary();
+  }
+
+  /** Restore the local library metadata without loading audio. */
   async restoreLocal() {
     let tracks;
     try {
@@ -1294,6 +1310,7 @@ class Session {
     }
     await refreshOffline();
     repairLibraryCovers(tracks);
+    this.restorePlayback();
   }
 
   leave() {
@@ -1587,10 +1604,21 @@ class Session {
     if (action === 'select') return this.loadTrack(opts.itemId, { autoplay: true, by, via: 'select' });
     if (action === 'next' || action === 'prev') {
       if (!get().library.some(x => x.id === get().currentId)) return;
-      if (action === 'prev' && this.position() > 3) { this.transport('seek', 0, by); this.notifySynced(); return; }
+      if (action === 'prev' && this.position() > 3) { this.act('seek', { position: 0, by }); this.notifySynced(); return; }
       const q = this.syncQueue();
       const target = action === 'next' ? q.peekNext() : q.peekPrev();
       if (target) this.loadTrack(target, { autoplay: true, by, via: action }).then(() => this.notifySynced());
+      return;
+    }
+    const id = get().currentId;
+    if (action === 'play' && id && (!this.loadedId || !this.out.audio.src || this.out.audio.readyState === 0 || this.out.audio.error)) {
+      return this.loadTrack(id, { autoplay: true, by, resumeAt: this.position() });
+    }
+    if (action === 'seek' && id && !this.loadedId) {
+      this.anchor.position = Math.min(Math.max(0, Number(opts.position) || 0), get().duration || Infinity);
+      this.out.pausedAt = this.anchor.position;
+      set({ playing: false });
+      this.persistPlayback?.(true);
       return;
     }
     this.transport(action, opts.position, by);
@@ -1606,7 +1634,7 @@ class Session {
     if (action === 'play') {
       if (playing) return;
       playing = true;
-      pos = this.out.audio.currentTime >= dur - 0.1 ? 0 : this.out.audio.currentTime;
+      pos = this.out.pausedAt >= dur - 0.1 ? 0 : this.out.pausedAt;
       if (pos === 0) this.out.audio.currentTime = 0;
     } else if (action === 'pause') {
       if (!playing) return;
@@ -1618,6 +1646,7 @@ class Session {
     this.applyAnchor(anchor);
     this.send({ type: action, ...anchor, by, quiet });
     if (!quiet && (action === 'play' || action === 'pause')) this.notifySynced();
+    this.persistPlayback?.(true);
     if (by === 'guest' && !quiet) this.noteAction(action, pos);
   }
 
@@ -1719,7 +1748,7 @@ class Session {
   }
 
   // ───────────────────────── 切歌
-  async loadTrack(id, { autoplay = false, by = 'host', quiet = false, via = 'select' } = {}) {
+  async loadTrack(id, { autoplay = false, by = 'host', quiet = false, via = 'select', resumeAt = null } = {}) {
     const token = ++this.token;
     // Media snapshots briefly say paused during ended/src changes. Keep the service
     // and its partial wake lock until this transition completes (or fails).
@@ -1734,16 +1763,16 @@ class Session {
       clearTimeout(this.autoplay?.timer);
       this.autoplay = null;
       this.loadedId = null;
-      this.anchor = { trackId: id, playing: false, position: 0, at: now() };
+      this.anchor = { trackId: id, playing: false, position: resumeAt ?? 0, at: now() };
       set({ currentId: id, loaded: false, playing: false, peerReady: false, duration: item.duration || 0, waitingPeer: false });
       this.send({ type: 'track', meta: item, by, quiet });
       this.broadcastLibrary();
       if (by === 'guest') note(`${get().peer?.name || '对方'} 切换到《${item.title}》`);
       let duration;
-      const immediate = autoplay && !this.conn?.open;
+      const immediate = autoplay && !this.conn?.open && resumeAt === null;
       const startedAt = now();
       try {
-        duration = await this.out.load(blob, { autoplay: immediate });
+        duration = await this.out.load(blob, { autoplay: immediate, position: resumeAt ?? 0 });
       } catch (e) {
         if (token !== this.token) return;
         this.out.stopAt(now(), 0);
@@ -1752,6 +1781,11 @@ class Session {
       }
       if (token !== this.token) return;
       this.loadedId = id;
+      if (resumeAt !== null) {
+        const position = Math.min(Math.max(0, resumeAt), duration);
+        this.anchor.position = position;
+        this.out.stopAt(now(), position);
+      }
       set({ loaded: true, duration });
       if (!item.duration || Math.abs(item.duration - duration) > 1) this.patch(id, { duration }); // 以实际解码时长为准
       if (!autoplay) return;
@@ -2057,6 +2091,7 @@ const nativePlayback = isAndroid ? installNativePlayback({
   plugin: nativePlugin('PlaybackSession'), store, get, session, fetchCover, toast,
   fallbackArtwork: (title) => fallbackArtwork(title),
 }) : null;
+installPlaybackPersistence({ store, get, session });
 const artCache = new Map();
 
 /** 没有封面时画一张（系统控件里不能是空白） */
@@ -3387,7 +3422,7 @@ function PlayerBar() {
   const [lastVol, setLastVol] = useState(0.8);
   const item = library.find((x) => x.id === currentId);
   const idx = library.findIndex((x) => x.id === currentId);
-  const can = !!item && loaded && (role !== 'guest' || conn === 'open');
+  const can = !!item && (loaded || role !== 'guest') && (role !== 'guest' || conn === 'open');
   const canSkip = !!item && (role !== 'guest' || conn === 'open');
 
   return html`<footer class="player-bar fixed inset-x-0 bottom-0 z-30 border-t border-ink-700/80 bg-ink-950/90 backdrop-blur-xl">
@@ -4756,7 +4791,7 @@ function NativePlayer({ open, close, expand }) {
     document.addEventListener('keydown', onKey);
     return () => { document.body.style.overflow = overflow; document.documentElement.style.overflow = rootOverflow; document.removeEventListener('keydown', onKey); };
   }, [open]);
-  const can = !!item && s.loaded && (s.role !== 'guest' || s.conn === 'open');
+  const can = !!item && (s.loaded || s.role !== 'guest') && (s.role !== 'guest' || s.conn === 'open');
   const receiving = item && s.role === 'guest' && !s.loaded;
   if (!item && !s.role) return null;
   return html`<div>

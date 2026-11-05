@@ -21,7 +21,7 @@ export function snapshot(state, session, item) {
     trackId: item ? String(item.id) : '',
     title: item?.title || '',
     artist: item?.artist || item?.sourceLabel || '',
-    subtitle: item ? subtitleFor(state) : '',
+    subtitle: item ? (!state.loaded && !hold && state.role !== 'guest' ? '点按打开 App 继续' : subtitleFor(state)) : '',
     duration: Number.isFinite(state.duration) ? Math.max(0, state.duration) : 0,
     position: Math.max(0, session.position?.() || 0),
     canNext: !!item && !!state.canNext,
@@ -52,7 +52,7 @@ export function installNativePlayback({ plugin, store, get, session, fetchCover,
   const perform = ({ action, position }) => {
     if (!action) return;
     if (!ready) { queued.push({ action, position }); return; }
-    try { session.act(action, action === 'seek' ? { position } : {}); } catch (e) { warn('[native playback] action failed', e); }
+    try { Promise.resolve(session.act(action, action === 'seek' ? { position } : {})).catch(e => warn('[native playback] action failed', e)); } catch (e) { warn('[native playback] action failed', e); }
   };
   plugin.addListener('action', perform).catch?.(warn);
 
@@ -117,6 +117,7 @@ export function installNativePlayback({ plugin, store, get, session, fetchCover,
     /** Call once the library is restored: queued actions (widget launch, early media keys) run now. */
     markReady() {
       ready = true;
+      push();
       for (const a of queued.splice(0)) perform(a);
     },
     push,

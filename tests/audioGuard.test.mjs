@@ -252,7 +252,7 @@ test('web devicechange pauses on removed output, tolerates denied enumeration', 
 
 const dashboard = readFileSync(new URL('../public/dashboard.html', import.meta.url), 'utf8');
 function sessionHarness(guest) {
-  const audio = Object.assign(new EventTarget(), { paused: false, currentTime: 40, duration: 120, readyState: 4 });
+  const audio = Object.assign(new EventTarget(), { paused: false, currentTime: 40, duration: 120, readyState: 4, src: 'blob:track' });
   const state = { playing: true, volume: 0.8, duration: 120, loaded: true, role: guest ? 'guest' : 'host', library: [{ id: 'track' }], currentId: 'track' };
   const messages = [], toasts = [];
   const out = { audio, intent: true, appPauses: 0, pausedAt: 0, unlock() {}, setVolume() {}, position: () => audio.currentTime,

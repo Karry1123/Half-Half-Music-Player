@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import { restoreDownloads } from '../public/dashboardFeedback.js';
+import { readLastPlayback } from '../public/playbackResume.js';
 import React from 'react';
 import htm from 'htm';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -14,7 +15,7 @@ const between = (start, end) => {
   return source.slice(offset, source.indexOf(end, offset));
 };
 
-function harness() {
+function harness(saved = null) {
   // Exercise the real initial state even with an old selection in storage.
   const state = vm.runInNewContext(`${between('const store = createStore(', 'const useStore =')}; store`, {
     createStore: value => value, loadProfile: () => ({ name: 'Listener' }), MOCK_SOURCES: [], ALL_ID: 'all', restoreDownloads,
@@ -25,6 +26,7 @@ function harness() {
     get: () => state, set: patch => Object.assign(state, typeof patch === 'function' ? patch(state) : patch),
     LocalLib: { listTracks: async () => [track], coverUrl: async () => null },
     playlistStore: { load: async () => {} }, fromLocal: t => t,
+    readLastPlayback: state => readLastPlayback(state, { get: () => null }, { getItem: () => JSON.stringify(saved) }),
     refreshOffline: async () => {}, repairLibraryCovers() {}, now: () => 0, clearTimeout, console,
     html: htm.bind(React.createElement), useStore: fn => fn(state),
     useState: () => [0, () => {}], useRef: () => ({ current: null }), useBackLayer() {}, useEffect() {},
@@ -32,6 +34,7 @@ function harness() {
     ...Object.fromEntries(['Cover', 'CoListenPill', 'Pause', 'Play', 'SkipForward'].map(name => [name, () => null])),
   };
   const methods = vm.runInNewContext(`({
+    ${between('  restorePlayback()', '\n  /** Restore the local library')},
     ${between('  async restoreLocal()', '\n  leave()')},
     ${between('  act(action,', '\n  transport(')},
     ${between('  async loadTrack(', '\n  startAutoplay()')},
@@ -39,8 +42,8 @@ function harness() {
   })`, context);
   const session = {
     ...methods, isGuest: false, token: 0, sendGen: 0, blobs: new Map([[track.id, {}]]),
-    broadcastLibrary() {}, send() {}, syncQueue: () => ({ moveTo() {} }),
-    out: { unlock() {}, intent: true, audio: { paused: false }, load: async () => 100 },
+    broadcastLibrary() {}, send() {}, syncQueue: () => ({ moveTo() {}, setMode() {} }),
+    out: { stopAt() { this.intent = false; }, unlock() {}, intent: true, audio: { paused: false }, load: async () => 100 },
   };
   context.session = session;
   const Player = vm.runInNewContext(`${between('function NativePlayer(', '\nfunction App()')}; NativePlayer`, context);
@@ -112,4 +115,15 @@ test('desktop controls tolerate a missing track and disable play and next even w
   const controls = [...markup.matchAll(/<button[^>]*>/g)].filter(([tag]) => /aria-label="(?:\u64ad\u653e|\u4e0b\u4e00\u9996)"/.test(tag));
   assert.equal(controls.length, 2);
   for (const [tag] of controls) assert.match(tag, /disabled=""/);
+});
+
+test('remembered local track renders mini-player metadata with an enabled play button while unloaded', async () => {
+  const { state, session, render } = harness({ version: 1, trackId: 'song', position: 42, playMode: 'order' });
+  await session.restoreLocal();
+  assert.equal(state.currentId, 'song'); assert.equal(state.loaded, false); assert.equal(state.playing, false);
+  assert.equal(session.anchor.position, 42); assert.equal(session.out.intent, false);
+  const markup = render();
+  assert.match(markup, /class="mini-player /); assert.match(markup, /Song/); assert.match(markup, /Artist/);
+  const play = [...markup.matchAll(/<button[^>]*>/g)].find(([tag]) => /aria-label="\u64ad\u653e"/.test(tag));
+  assert.ok(play); assert.doesNotMatch(play[0], /\sdisabled(?:=|[\s>])/);
 });
