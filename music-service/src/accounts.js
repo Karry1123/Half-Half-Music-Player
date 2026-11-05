@@ -424,7 +424,7 @@ export function validatePlaylists(value) {
       if (!t || typeof t.id !== 'string' || !t.id || t.id.length > 200) fail(400, 'INPUT', '无效曲目');
       const pageUrl = text(t.pageUrl, 2000);
       if (pageUrl && !/^https:\/\//.test(pageUrl)) fail(400, 'INPUT', '音源页面必须使用 HTTPS');
-      return { id: t.id, title: text(t.title, 200), artist: text(t.artist, 200), cover: /^https:\/\//i.test(text(t.cover, 2000)) ? text(t.cover, 2000) : '', sourceId: text(t.sourceId, 200), pageUrl, hash: text(t.hash, 100), duration: Number.isFinite(t.duration) ? Math.max(0, t.duration) : 0 };
+      return { ...(time(t.metadataUpdatedAt) ? { metadataUpdatedAt: time(t.metadataUpdatedAt) } : {}), id: t.id, title: text(t.title, 200), artist: text(t.artist, 200), cover: /^https:\/\//i.test(text(t.cover, 2000)) ? text(t.cover, 2000) : '', sourceId: text(t.sourceId, 200), pageUrl, hash: text(t.hash, 100), duration: Number.isFinite(t.duration) ? Math.max(0, t.duration) : 0 };
     }) };
   });
 }

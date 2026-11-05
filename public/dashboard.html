@@ -173,6 +173,7 @@ import {
   Wifi, WifiOff, X, Plus, MoreHorizontal, ListPlus, ListMinus, Pencil, Library, Eye, EyeOff, ChevronDown, ChevronRight, Cloud, CloudDownload,
 } from 'lucide-react';
 import { Peer } from 'peerjs';
+import { toSimplified } from './zhVariants.js';
 import { recentListening } from './libraryPresentation.js';
 import { ListeningStats, createCompletedPlayUploader, createListeningSync } from './listeningStats.js';
 import { DiscoverSections, sortPlaylistTracks } from './discoveryUI.js';
@@ -3098,14 +3099,91 @@ function PendingRows({ playlistId, pending, start }) {
 }
 
 /** 曲目"⋯"操作面板（手机是底部抽屉）：添加到其他歌单 / 从当前歌单移除 / 从本机删除 */
+// Library spellings win over stats/cloud; the most frequent library spelling wins.
+function artistKey(value) { return toSimplified(String(value || '').trim()).toLowerCase(); }
+function existingArtists() {
+  const groups = new Map();
+  const add = (track, library) => {
+    const name = String(track?.artist || '').trim(), key = artistKey(name);
+    if (!key) return;
+    if (!groups.has(key)) groups.set(key, { key, name, counts: new Map(), best: 0 });
+    const group = groups.get(key);
+    if (library) {
+      const count = (group.counts.get(name) || 0) + 1;
+      group.counts.set(name, count);
+      if (count > group.best) { group.name = name; group.best = count; }
+    }
+  };
+  get().library.forEach(t => add(t, true));
+  Object.values(listeningStats?.stats?.trackMetadata || {}).forEach(t => add(t, false));
+  (account.playlists || []).forEach(p => (p.tracks || p.pending || []).forEach(t => add(t, false)));
+  return [...groups.values()].map(({ key, name }) => ({ key, name }));
+}
+function artistSuggestions(query) {
+  const key = artistKey(query);
+  return existingArtists().filter(a => a.key.includes(key));
+}
+async function renameLibraryTrack(item, title, artist) {
+  if (get().role === 'guest' || !item.localId) throw new Error('此曲目不能重命名');
+  title = title.trim();
+  if (!title) throw new Error('歌名不能为空');
+  artist = existingArtists().find(a => a.key === artistKey(artist))?.name || artist.trim();
+  const patch = { title, artist, metadataUpdatedAt: Date.now() };
+  const saved = await LocalLib.updateTrack(item.localId, patch);
+  if (!saved) throw new Error('曲目已不存在');
+  const matches = t => t.localId === item.localId || t.id === item.localId ||
+    (item.sourceId && t.sourceId === item.sourceId) || (item.hash && t.hash === item.hash);
+  for (const track of get().library.filter(matches)) session.patch(track.id, patch);
+  trackMeta.set(item.localId, toCloudTrack(saved));
+  for (const p of playlistStore.list) {
+    for (const t of (p.pending || []).filter(matches)) await playlistStore.replacePending(p.id, t.id, patch);
+  }
+  account.playlists = (account.playlists || []).map(p => ({ ...p, tracks: (p.tracks || []).map(t => matches(t) ? { ...t, ...patch } : t) }));
+  cloudSync.schedule();
+}
+function RenameTrackSheet({ item, close }) {
+  const [title, setTitle] = useState(item.title || '');
+  const [artist, setArtist] = useState(item.artist || '');
+  const [focused, setFocused] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const dismiss = () => { if (!busy) close(); };
+  useBackLayer(true, dismiss);
+  const suggestions = focused ? artistSuggestions(artist) : [];
+  const save = async e => {
+    e.preventDefault();
+    if (busy) return;
+    setBusy(true); setError('');
+    try { await renameLibraryTrack(item, title, artist); close(); }
+    catch (e) { setError(e.message); }
+    finally { setBusy(false); }
+  };
+  return html`<div class="fixed inset-0 z-[75] flex items-end justify-center bg-ink-950/70 backdrop-blur-sm sm:items-center sm:p-6" onClick=${e => e.target === e.currentTarget && dismiss()}>
+    <form role="dialog" aria-modal="true" aria-label="重命名" onSubmit=${save} class="max-h-[85dvh] w-full max-w-sm overflow-y-auto rounded-t-3xl border border-ink-700 bg-ink-900 p-4 shadow-2xl sm:rounded-3xl">
+      <h2 class="mb-4 font-semibold">重命名</h2>
+      <label class="mb-3 flex flex-col gap-2 text-sm">歌名<input autoFocus required maxLength=${200} value=${title} disabled=${busy} onInput=${e => setTitle(e.target.value)} class="rounded-xl border border-ink-600 bg-ink-850 p-3" /></label>
+      <label class="flex flex-col gap-2 text-sm">歌手<input maxLength=${200} value=${artist} disabled=${busy} autoComplete="off" onFocus=${() => setFocused(true)} onBlur=${() => setFocused(false)} onInput=${e => { setArtist(e.target.value); setFocused(true); }} class="rounded-xl border border-ink-600 bg-ink-850 p-3" /></label>
+      ${suggestions.length > 0 && html`<div class="scroll-thin mt-1 max-h-[200px] overflow-y-auto rounded-xl border border-ink-700 bg-ink-850" aria-label="已有歌手">
+        ${suggestions.map(a => html`<button key=${a.key} type="button" disabled=${busy} class="block min-h-[40px] w-full truncate px-3 py-2 text-left text-sm hover:bg-white/5" onPointerDown=${e => e.preventDefault()} onClick=${() => { setArtist(a.name); setFocused(false); }}>${a.name}</button>`)}
+      </div>`}
+      ${error && html`<p role="alert" class="mt-3 text-sm text-guest">${error}</p>`}
+      <footer class="mt-4 flex gap-3"><button type="button" disabled=${busy} onClick=${dismiss} class="flex-1 rounded-xl border border-ink-600 p-3">取消</button><button disabled=${busy || !title.trim()} class="flex-1 rounded-xl hh-primary p-3 disabled:opacity-40">${busy ? '保存中…' : '保存'}</button></footer>
+    </form>
+  </div>`;
+}
+
 function TrackMenuSheet() {
   const menu = useStore((s) => s.trackMenu);
+  const role = useStore(s => s.role);
+  const [renaming, setRenaming] = useState(false);
   const item = useStore((s) => (s.trackMenu ? s.library.find((x) => x.id === s.trackMenu.itemId) : null));
   const currentId = useStore((s) => s.currentId);
   const playlists = useStore((s) => s.playlists);
   const close = () => set({ trackMenu: null });
-  useBackLayer(!!menu, close);
+  useBackLayer(!!menu && !renaming, close);
+  useEffect(() => { setRenaming(false); }, [menu?.itemId]);
   if (!menu || !item) return null;
+  if (renaming && role !== 'guest' && item.localId) return html`<${RenameTrackSheet} key=${item.id} item=${item} close=${close} />`;
   const viewing = menu.viewId !== ALL_ID ? playlists.find((p) => p.id === menu.viewId) : null;
   const memberOf = item.localId ? playlistsOf(playlists, item.localId) : [];
   const addTo = async () => {
@@ -3132,6 +3210,7 @@ function TrackMenuSheet() {
           <div class="truncate text-xs text-sand-500">${item.artist || item.sourceLabel}${memberOf.length ? ` · 在 ${memberOf.length} 个歌单里` : ''}</div>
         </div>
       </div>
+      <button class=${cx(row, 'disabled:opacity-40')} disabled=${role === 'guest' || !item.localId} onClick=${() => setRenaming(true)}><${Pencil} size=${17} /> 重命名</button>
       <button class=${row} onClick=${addTo}><${ListPlus} size=${17} class="text-host" /> 加入歌单…</button>
       ${viewing && html`<button class=${row} onClick=${removeHere}><${ListMinus} size=${17} class="text-sand-400" /> 从《${viewing.name}》移除<span class="ml-auto text-xs text-sand-500">歌曲保留</span></button>`}
       <button class=${cx(row, 'text-guest')} onClick=${del}><${Trash2} size=${17} /> ${item.localId ? '从本机删除' : '从曲库移除'}</button>

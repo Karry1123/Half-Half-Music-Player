@@ -14,7 +14,7 @@ const TOMBSTONE_TTL = 180 * 86400000; // 删除标记保留半年，足够让久
 export const trackKey = (t) => (t?.sourceId ? t.sourceId : t?.hash ? `hash:${t.hash}` : null);
 
 export function toCloudTrack(t) {
-  return { id: trackKey(t), title: t.title || '', artist: t.artist || '', cover: [t.coverUrl, t.cover].find(value => typeof value === 'string' && /^https:\/\//i.test(value)) || '', sourceId: t.sourceId || '', pageUrl: /^https:\/\//.test(t.pageUrl || '') ? t.pageUrl : '', hash: t.hash || '', duration: Number(t.duration) || 0 };
+  return { ...(t.metadataUpdatedAt ? { metadataUpdatedAt: t.metadataUpdatedAt } : {}), id: trackKey(t), title: t.title || '', artist: t.artist || '', cover: [t.coverUrl, t.cover].find(value => typeof value === 'string' && /^https:\/\//i.test(value)) || '', sourceId: t.sourceId || '', pageUrl: /^https:\/\//.test(t.pageUrl || '') ? t.pageUrl : '', hash: t.hash || '', duration: Number(t.duration) || 0 };
 }
 
 /** 本机曲库索引：cloudTrack → 本机 tracks.id（按音源 ID 或指纹） */
@@ -103,7 +103,11 @@ export function mergePlaylists({ local, cloud, base = {}, legacyPrefix = '', now
     const L = localById.get(id), C = cloudById.get(id), B = base[id];
     const tracksOf = (...sources) => {
       const m = new Map();
-      for (const s of sources) if (s?.tracks) for (const t of s.tracks instanceof Map ? s.tracks.values() : s.tracks) if (t?.id && !m.has(t.id)) m.set(t.id, t);
+      for (const s of sources) if (s?.tracks) for (const t of s.tracks instanceof Map ? s.tracks.values() : s.tracks) if (t?.id) {
+        const previous = m.get(t.id);
+        if (!previous) m.set(t.id, t);
+        else if ((t.metadataUpdatedAt || 0) > (previous.metadataUpdatedAt || 0)) m.set(t.id, { ...previous, title: t.title, artist: t.artist, metadataUpdatedAt: t.metadataUpdatedAt });
+      }
       return m;
     };
     const unchangedLocally = L && B && L.name === B.name && (L.isPublic === true) === (B.isPublic === true) && (L.coverUrl || null) === (B.coverUrl || null) && sameKeys(L.keys, B.keys) && !L.renamedFrom;
@@ -134,7 +138,7 @@ export function mergePlaylists({ local, cloud, base = {}, legacyPrefix = '', now
     if (!merged) continue;
     const tracks = merged.keys.map((k) => merged.tracks.get(k)).filter(Boolean);
     const keys = tracks.map((t) => t.id);
-    const changedInCloud = !C || C.deleted || C.name !== merged.name || (C.isPublic === true) !== merged.isPublic || (C.coverUrl || null) !== merged.coverUrl || !sameKeys(cloudKeys, keys);
+    const changedInCloud = !C || C.deleted || JSON.stringify(C.tracks) !== JSON.stringify(tracks) || C.name !== merged.name || (C.isPublic === true) !== merged.isPublic || (C.coverUrl || null) !== merged.coverUrl || !sameKeys(cloudKeys, keys);
     nextCloud.push({ id, name: merged.name, isPublic: merged.isPublic, coverUrl: merged.coverUrl, createdAt: merged.createdAt || now, updatedAt: changedInCloud ? now : C.updatedAt || now, tracks });
     if (!L || L.name !== merged.name || (L.isPublic === true) !== merged.isPublic || (L.coverUrl || null) !== merged.coverUrl || !sameKeys(L.keys, keys) || L.renamedFrom) upserts.push({ id, name: merged.name, isPublic: merged.isPublic, coverUrl: merged.coverUrl, createdAt: merged.createdAt || now, keys, tracks: new Map(tracks.map((t) => [t.id, t])) });
     nextBase[id] = { name: merged.name, isPublic: merged.isPublic, coverUrl: merged.coverUrl, keys };
