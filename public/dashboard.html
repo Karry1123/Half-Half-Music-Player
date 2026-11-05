@@ -180,6 +180,7 @@ import { DiscoverSections, sortPlaylistTracks } from './discoveryUI.js';
 import { ListeningStatsCards } from './statsUI.js';
 import { DailyGreeting } from './dailyGreeting.js';
 import * as LocalLib from './libraryStorage.js';
+import { gainFor, trimBounds, createAnalysisQueue } from './audioAnalysis.js';
 import { installAndroidBack, pushBackLayer } from './mobileRuntime.js';
 import { nativePlugin } from './nativeBridge.js';
 import { installThemeSync } from './systemUi.js';
@@ -769,21 +770,60 @@ class AudioOut {
   url = null;
   onEnded = null;
   onBlocked = null;
+  trackGain = 1;
+  trackLoudness = null;
+  endBoundary = Infinity;
+  endFired = false;
 
   constructor() {
     this.audio.preload = 'auto';
     this.audio.preservesPitch = true;
-    this.audio.addEventListener('ended', () => {
-      if (!this.intent) return;
-      this.intent = false;
-      this.onEnded?.();
-    });
+    this.audio.addEventListener('ended', () => this.finish());
+    for (const event of ['timeupdate', 'playing', 'seeked', 'ratechange']) this.audio.addEventListener(event, () => this.armEnd());
+    for (const event of ['pause', 'waiting', 'seeking']) this.audio.addEventListener(event, () => clearTimeout(this.endTimer));
+  }
+
+  finish() {
+    if (!this.intent || this.endFired) return;
+    this.endFired = true;
+    this.intent = false;
+    clearTimeout(this.endTimer);
+    this.pauseElement();
+    this.onEnded?.();
+  }
+
+  setEndBoundary(end) {
+    this.endBoundary = end;
+    this.armEnd();
+  }
+
+  armEnd() {
+    clearTimeout(this.endTimer);
+    if (!this.intent || this.endFired || this.audio.paused || this.audio.seeking || !Number.isFinite(this.endBoundary)) return;
+    const remaining = this.endBoundary - 0.05 - this.audio.currentTime;
+    if (remaining <= 0) return this.finish();
+    this.endTimer = setTimeout(() => this.armEnd(), Math.max(1, remaining * 1000 / (this.audio.playbackRate || 1)));
+  }
+
+  setTrackGain(factor) {
+    this.trackGain = this.gain ? factor : Math.min(1, factor);
+    this.setVolume(get().volume);
+  }
+
+  applyTrackAnalysis(analysis) {
+    this.trackLoudness = analysis?.version === 1 ? analysis.loudness : null;
+    this.refreshTrackGain();
+  }
+
+  refreshTrackGain() {
+    this.setTrackGain(stored('hh.loudnessNormalize') !== 'false'
+      ? gainFor(this.trackLoudness, { maxBoost: this.gain ? 6 : 0 }) : 1);
   }
 
   /** 必须在用户手势中调用：创建 AudioContext 并接入分析器（频谱动画） */
   unlock() {
     // Android uses the media pipeline directly; a suspended analyser must not mute playback.
-    if (isAndroid) { this.audio.volume = get().volume * audioDuck; return; }
+    if (isAndroid) { this.refreshTrackGain(); return; }
     if (!this.ctx) {
       try {
         this.ctx = new AudioContext();
@@ -792,7 +832,7 @@ class AudioOut {
         this.analyser = this.ctx.createAnalyser();
         this.analyser.fftSize = 64;
         src.connect(this.gain).connect(this.analyser).connect(this.ctx.destination);
-        this.gain.gain.value = get().volume * audioDuck;
+        this.refreshTrackGain();
         this.audio.volume = 1;
       } catch (e) {
         console.warn('Web Audio 不可用，退回纯 HTML5 Audio', e);
@@ -803,16 +843,20 @@ class AudioOut {
   }
 
   setVolume(v) {
-    v *= audioDuck;
+    v *= audioDuck * (this.gain ? this.trackGain : Math.min(1, this.trackGain));
     if (this.gain) this.gain.gain.setTargetAtTime(v, this.ctx.currentTime, 0.02);
-    else this.audio.volume = v;
+    else this.audio.volume = Math.min(1, v);
   }
 
   get latency() {
     return this.ctx ? (this.ctx.outputLatency || 0) + (this.ctx.baseLatency || 0) : 0;
   }
 
-  load(blob, { autoplay = false, position = 0 } = {}) {
+  load(blob, { autoplay = false, position = 0, end = Infinity, analysis = null } = {}) {
+    clearTimeout(this.endTimer);
+    this.endFired = false;
+    this.endBoundary = end;
+    this.applyTrackAnalysis(analysis);
     clearTimeout(this.timer);
     this.intent = false;
     this.pausedAt = position;
@@ -826,7 +870,7 @@ class AudioOut {
     this.audio.src = this.url;
     this.audio.currentTime = 0;
     // Solo playback must continue in the ended event, before metadata/bridge/timers.
-    if (autoplay) this.playAt(now(), 0);
+    if (autoplay) this.playAt(now(), position);
     return loaded;
   }
 
@@ -834,6 +878,7 @@ class AudioOut {
   playAt(localMs, pos) {
     clearTimeout(this.timer);
     this.intent = true;
+    this.endFired = false;
     this.target = { localMs, pos };
     this.audio.playbackRate = 1;
     const start = () => {
@@ -854,6 +899,7 @@ class AudioOut {
   stopAt(localMs, pos) {
     clearTimeout(this.timer);
     this.intent = false;
+    clearTimeout(this.endTimer);
     this.pausedAt = pos;
     const stop = () => {
       this.pauseElement();
@@ -913,6 +959,9 @@ class Session {
 
   constructor() {
     this.out.onEnded = () => this.onEnded();
+    this.out.audio.addEventListener('playing', () => {
+      if (!this.isGuest && this.loadedId) this.analysisQueue.enqueue(this.loadedId, this.blobs.get(this.loadedId));
+    });
     this.out.onBlocked = () => note('浏览器拦截了自动播放，点一下页面任意位置即可出声', 'warn');
     this.out.onPlayError = (e) => {
       this.anchor.playing = false;
@@ -934,6 +983,29 @@ class Session {
       else this.onResume();
     });
     window.addEventListener('pageshow', (e) => e.persisted && this.onResume()); // 从 bfcache 恢复
+  }
+
+  get analysisQueue() {
+    return this._analysisQueue ||= createAnalysisQueue({
+      eligible: item => !this.isGuest && !!item?.localId,
+      lookup: id => get().library.find(item => item.id === id),
+      read: id => this.blobFor(id),
+      persist: (localId, analysis) => LocalLib.updateTrack(localId, { analysis }),
+      apply: (id, analysis) => {
+        if (this.isGuest) return;
+        this.patch(id, { analysis });
+        if (this.loadedId === id) {
+          const end = trimBounds(analysis, get().duration).end;
+          this.out.setEndBoundary(end < get().duration ? end : Infinity);
+        }
+      },
+      canRun: priority => !this.isGuest && (priority || !document.hidden) && !get().transfer && !this.analysisTransfers && !this.incoming.size,
+    });
+  }
+
+  startAnalysisBackfill() {
+    if (this.isGuest) return;
+    for (const item of get().library) this.analysisQueue.enqueue(item.id);
   }
 
   /**
@@ -1312,6 +1384,7 @@ class Session {
     await refreshOffline();
     repairLibraryCovers(tracks);
     this.restorePlayback();
+    this.startAnalysisBackfill();
   }
 
   leave() {
@@ -1726,7 +1799,11 @@ class Session {
   onEnded() {
     if (this.isGuest) return;
     const next = this.syncQueue().peekNext({ auto: true });
-    if (next && next === this.loadedId) return this.resumeFrom(0);
+    if (next && next === this.loadedId) {
+      const item = get().library.find(x => x.id === next);
+      this.out.applyTrackAnalysis(item?.analysis);
+      return this.resumeFrom(this.conn?.open ? 0 : trimBounds(item?.analysis, get().duration).start);
+    }
     if (next) return this.loadTrack(next, { autoplay: true, by: 'host', quiet: true, via: 'auto' });
     const anchor = { trackId: this.loadedId, playing: false, position: 0, at: now() };
     this.applyAnchor(anchor);
@@ -1764,7 +1841,9 @@ class Session {
       clearTimeout(this.autoplay?.timer);
       this.autoplay = null;
       this.loadedId = null;
-      this.anchor = { trackId: id, playing: false, position: resumeAt ?? 0, at: now() };
+      const bounds = trimBounds(item.analysis, item.duration || item.analysis?.duration || 0);
+      const initialPosition = resumeAt ?? (autoplay && !this.conn?.open ? bounds.start : 0);
+      this.anchor = { trackId: id, playing: false, position: initialPosition, at: now() };
       set({ currentId: id, loaded: false, playing: false, peerReady: false, duration: item.duration || 0, waitingPeer: false });
       this.send({ type: 'track', meta: item, by, quiet });
       this.broadcastLibrary();
@@ -1773,7 +1852,7 @@ class Session {
       const immediate = autoplay && !this.conn?.open && resumeAt === null;
       const startedAt = now();
       try {
-        duration = await this.out.load(blob, { autoplay: immediate, position: resumeAt ?? 0 });
+        duration = await this.out.load(blob, { autoplay: immediate, position: initialPosition, end: bounds.end < (item.duration || item.analysis?.duration) ? bounds.end : Infinity, analysis: item.analysis });
       } catch (e) {
         if (token !== this.token) return;
         this.out.stopAt(now(), 0);
@@ -1782,6 +1861,9 @@ class Session {
       }
       if (token !== this.token) return;
       this.loadedId = id;
+      const end = trimBounds(item.analysis, duration).end;
+      this.out.setEndBoundary(end < duration ? end : Infinity);
+      if (autoplay) this.analysisQueue.enqueue(id, blob);
       if (resumeAt !== null) {
         const position = Math.min(Math.max(0, resumeAt), duration);
         this.anchor.position = position;
@@ -1791,12 +1873,12 @@ class Session {
       if (!item.duration || Math.abs(item.duration - duration) > 1) this.patch(id, { duration }); // 以实际解码时长为准
       if (!autoplay) return;
       if (immediate) {
-        this.anchor = { trackId: id, playing: this.out.intent, position: 0, at: startedAt };
+        this.anchor = { trackId: id, playing: this.out.intent, position: initialPosition, at: startedAt };
         set({ playing: this.out.intent && !this.out.audio.paused });
         return;
       }
       // 等对方缓冲好一起开始（最多 12 秒）
-      if (!this.conn?.open || get().peerReady) return this.transport('play', 0, 'host', true);
+      if (!this.conn?.open || get().peerReady) return this.transport('play', resumeAt ?? 0, 'host', true);
       set({ waitingPeer: true });
       this.autoplay = { id, timer: setTimeout(() => this.startAutoplay(), PEER_WAIT_MS) };
     } finally {
@@ -1851,7 +1933,8 @@ class Session {
   async guestLoad(id, blob, token) {
     let duration;
     try {
-      duration = await this.out.load(blob);
+      const item = get().library.find(x => x.id === id);
+      duration = await this.out.load(blob, { analysis: item?.analysis });
     } catch (e) {
       return toast(`解码失败：${e.message}`, 'warn');
     }
@@ -1869,6 +1952,14 @@ class Session {
    * 房主切到它时直接解码，不用再等传输。本机已有、正在传、或文件太大时不拉。
    */
   prefetchNext() {
+    if (!this.isGuest) {
+      const id = get().upNext;
+      if (id && id !== get().currentId && !this.blobs.has(id) && !this.prefetching.has(id)) {
+        this.prefetching.add(id);
+        this.blobFor(id).catch(console.warn).finally(() => this.prefetching.delete(id));
+      }
+      return;
+    }
     if (!this.isGuest || !this.conn?.open || !this.loadedId) return;
     const id = get().upNext;
     if (!id || id === this.loadedId || this.blobs.has(id) || this.incoming.has(id) || this.prefetching.has(id)) return;
@@ -1881,22 +1972,25 @@ class Session {
   // ───────────────────────── 文件传输（Host → Guest 播放；Guest → Host 分享歌曲）
   async sendFile(id, blob, extra = {}) {
     if (!blob || !this.conn?.open) return;
-    const background = extra.upload || extra.save || extra.prefetch; // 分享 / 保存 / 预缓存：与切歌无关，不能被切歌作废，也不能作废播放传输
-    const gen = background ? this.sendGen : ++this.sendGen;
-    const c = this.conn;
-    const label = extra.upload ? '分享给房主' : extra.save ? '对方正在保存到本机' : extra.prefetch ? '对方在预缓存下一首' : '发送给对方';
-    this.send({ type: 'file-begin', id, size: blob.size, mime: blob.type, ...extra });
-    const buf = new Uint8Array(await blob.arrayBuffer());
-    for (let off = 0; off < buf.length; off += CHUNK) {
-      if (gen !== this.sendGen && !background) return; // 切歌了，旧的传输作废
-      // 背压：PeerJS 自身队列 + DataChannel 缓冲超过 1MB 时等待
-      while (c.open && (c.dataChannel?.bufferedAmount ?? 0) + (c.bufferSize ?? 0) * CHUNK > 1 << 20) await sleep(15);
-      if (!c.open) return;
-      c.send({ type: 'file-chunk', id, data: buf.slice(off, off + CHUNK).buffer });
-      if ((off / CHUNK) % 32 === 0) set({ transfer: { dir: 'send', pct: off / buf.length, label } });
-    }
-    this.send({ type: 'file-end', id });
-    set({ transfer: background ? null : { dir: 'send', pct: 1, label: '已发送，对方缓冲中' } });
+    this.analysisTransfers = (this.analysisTransfers || 0) + 1;
+    try {
+      const background = extra.upload || extra.save || extra.prefetch; // 分享 / 保存 / 预缓存：与切歌无关，不能被切歌作废，也不能作废播放传输
+      const gen = background ? this.sendGen : ++this.sendGen;
+      const c = this.conn;
+      const label = extra.upload ? '分享给房主' : extra.save ? '对方正在保存到本机' : extra.prefetch ? '对方在预缓存下一首' : '发送给对方';
+      this.send({ type: 'file-begin', id, size: blob.size, mime: blob.type, ...extra });
+      const buf = new Uint8Array(await blob.arrayBuffer());
+      for (let off = 0; off < buf.length; off += CHUNK) {
+        if (gen !== this.sendGen && !background) return; // 切歌了，旧的传输作废
+        // 背压：PeerJS 自身队列 + DataChannel 缓冲超过 1MB 时等待
+        while (c.open && (c.dataChannel?.bufferedAmount ?? 0) + (c.bufferSize ?? 0) * CHUNK > 1 << 20) await sleep(15);
+        if (!c.open) return;
+        c.send({ type: 'file-chunk', id, data: buf.slice(off, off + CHUNK).buffer });
+        if ((off / CHUNK) % 32 === 0) set({ transfer: { dir: 'send', pct: off / buf.length, label } });
+      }
+      this.send({ type: 'file-end', id });
+      set({ transfer: background ? null : { dir: 'send', pct: 1, label: '已发送，对方缓冲中' } });
+    } finally { this.analysisTransfers--; }
   }
 
   fileDone(id) {
@@ -2036,11 +2130,7 @@ class Session {
       set({ upNext: q.peekNext({ auto: true }), canNext: !!q.peekNext(), queueState: q.toJSON() });
       // Read the next local file while current audio is still audible. On ended,
       // loadTrack can use the bounded blob cache without awaiting the bridge.
-      const next = get().upNext;
-      if (isAndroid && next && next !== get().currentId && !this.prefetching.has(next)) {
-        this.prefetching.add(next);
-        this.blobFor(next).catch(console.warn).finally(() => this.prefetching.delete(next));
-      }
+      this.prefetchNext();
     }
     const { library, currentId, playMode, upNext, canNext, queueState } = get();
     this.send({ type: 'library', items: library, currentId, playMode, upNext, canNext, queueState, playlist: this.isGuest ? undefined : this.playlistInfo() });
@@ -2183,6 +2273,7 @@ if (mediaSession && !isAndroid) {
 /** IndexedDB 记录 → 歌单条目 */
 function fromLocal(t, cover) {
   return {
+    analysis: t.analysis,
     id: t.id, localId: t.id, hash: t.hash, sourceId: t.sourceId, pageUrl: t.pageUrl,
     title: t.title, artist: t.artist, duration: t.duration, size: t.size,
     source: t.source, sourceLabel: t.sourceLabel, quality: t.quality || (t.ext || '').toUpperCase(),
@@ -3804,6 +3895,7 @@ function ConnSettingsModal() {
   const [svcTest, setSvcTest] = useState(null);
   const [name, setName] = useState(get().me.name);
   const [showToken, setShowToken] = useState(false);
+  const [normalize, setNormalize] = useState(() => stored('hh.loudnessNormalize') !== 'false');
   const [autoContinue, setAutoContinue] = useState(() => stored('hh.audioGuard.autoResume') !== 'false');
   useEffect(() => { if (open) { setForm(loadIceSettings()); setTest(null); setSvc({ api: stored('hh.api'), token: stored('hh.apiToken') }); setSvcTest(null); setName(get().me.name); setShowToken(false); } }, [open]);
   const svcBase = (svc.api || API_BASE).replace(/\/+$/, '');
@@ -3893,6 +3985,14 @@ function ConnSettingsModal() {
             try { localStorage.setItem('hh.audioGuard.autoResume', String(enabled)); } catch {}
             if (!enabled) audioGuard?.cancelResume();
           }} /></label>
+        </section>
+        <section class=${card}>
+          <label class="flex items-center justify-between gap-3"><span>统一音量</span><input type="checkbox" checked=${normalize} onChange=${e => {
+            const enabled = e.target.checked; setNormalize(enabled);
+            try { localStorage.setItem('hh.loudnessNormalize', String(enabled)); } catch {}
+            session.out.applyTrackAnalysis(get().library.find(item => item.id === session.loadedId)?.analysis);
+          }} /></label>
+          <p class="text-xs text-sand-500">把不同来源歌曲的响度拉平；Android 只会压低偏响的歌</p>
         </section>
         <section class=${card} aria-labelledby="set-me">
           <h3 id="set-me" class="text-xs font-semibold uppercase tracking-wider text-sand-500">我的昵称</h3>

@@ -1,3 +1,4 @@
+import { gainFor, trimBounds } from '../public/audioAnalysis.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -48,12 +49,14 @@ function harness(storage) {
   const state = { library: [{ id: 'a', localId: 'a', duration: 100 }, { id: 'b', localId: 'b', duration: 100 }], playMode: 'order' };
   const playlists = { get: () => ({ id: 'p', trackIds: ['a', 'b'] }) };
   const Session = vm.runInNewContext(`${section('class Session {', 'const session = new Session();')}; Session`, {
+    trimBounds,
     get: () => state, set: patch => Object.assign(state, patch), now: () => 0, clearTimeout, queueMicrotask, updateMediaPosition() {},
     resumePosition, readLastPlayback: s => readLastPlayback(s, playlists, storage), playlistStore: playlists, resolveScope, ALL_ID,
   });
   const session = Object.assign(Object.create(Session.prototype), {
+    _analysisQueue: { enqueue() {} },
     anchor: {}, token: 0, sendGen: 0, blobs: new Map([['a', {}], ['b', {}]]), queue: new PlayQueue(),
-    out: { intent: false, pausedAt: 0, audio: { src: '', readyState: 0, currentTime: 0, duration: 100 }, unlock() {}, position() { return this.pausedAt; },
+    out: { setEndBoundary() {}, intent: false, pausedAt: 0, audio: { src: '', readyState: 0, currentTime: 0, duration: 100 }, unlock() {}, position() { return this.pausedAt; },
       stopAt(_, pos) { this.pausedAt = pos; this.audio.currentTime = pos; this.intent = false; },
       async load(_, opts) { this.options = opts; this.pausedAt = opts.position; this.audio.src = 'blob:new'; this.audio.readyState = 4; return 100; },
       playAt(_, pos) { this.playedAt = pos; this.intent = true; },

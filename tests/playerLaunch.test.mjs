@@ -1,3 +1,4 @@
+import { gainFor, trimBounds } from '../public/audioAnalysis.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -23,6 +24,7 @@ function harness(saved = null) {
   });
   const track = { id: 'song', hash: 'hash', title: 'Song', artist: 'Artist', duration: 100 };
   const context = {
+    trimBounds,
     get: () => state, set: patch => Object.assign(state, typeof patch === 'function' ? patch(state) : patch),
     LocalLib: { listTracks: async () => [track], coverUrl: async () => null },
     playlistStore: { load: async () => {} }, fromLocal: t => t,
@@ -42,8 +44,9 @@ function harness(saved = null) {
   })`, context);
   const session = {
     ...methods, isGuest: false, token: 0, sendGen: 0, blobs: new Map([[track.id, {}]]),
+    startAnalysisBackfill() {}, analysisQueue: { enqueue() {} },
     broadcastLibrary() {}, send() {}, syncQueue: () => ({ moveTo() {}, setMode() {} }),
-    out: { stopAt() { this.intent = false; }, unlock() {}, intent: true, audio: { paused: false }, load: async () => 100 },
+    out: { setEndBoundary() {}, stopAt() { this.intent = false; }, unlock() {}, intent: true, audio: { paused: false }, load: async () => 100 },
   };
   context.session = session;
   const Player = vm.runInNewContext(`${between('function NativePlayer(', '\nfunction App()')}; NativePlayer`, context);

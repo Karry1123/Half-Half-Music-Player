@@ -1,3 +1,4 @@
+import { gainFor, trimBounds } from '../public/audioAnalysis.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -63,14 +64,15 @@ test('artwork is pushed once per track and the newest track wins', async () => {
   assert.deepEqual(art, ['b']);
 });
 
-function audioHarness() {
+function audioHarness(android = true) {
   class Audio extends EventTarget {
     paused = true; currentTime = 0; duration = 120; src = ''; plays = 0;
     pause() { this.paused = true; }
     play() { this.plays++; this.paused = false; return this.failure ? Promise.reject(this.failure) : Promise.resolve(); }
   }
   const AudioOut = vm.runInNewContext(`${section('class AudioOut {', '// ════════════════════════════════════════════════════════════ 会话引擎')}; AudioOut`, {
-    Audio, isAndroid: true, get: () => ({ volume: 1 }), now: () => 100,
+    stored: () => null, gainFor, audioDuck: 1,
+    Audio, isAndroid: android, get: () => ({ volume: 1 }), now: () => 100,
     URL: { createObjectURL: () => 'blob:next', revokeObjectURL() {} },
     clearTimeout() {}, setTimeout() { assert.fail('solo playback must not depend on a timer'); },
   });
@@ -97,18 +99,20 @@ test('play rejection reports the error and ends playback intent', async () => {
   assert.equal(out.intent, false);
 });
 
-test('eight local songs prefetch and advance synchronously from ended without bridge reads', async () => {
+for (const android of [true, false]) test(`eight local songs prefetch and advance synchronously on ${android ? 'Android' : 'web'} without bridge reads`, async () => {
   const state = { library: Array.from({ length: 8 }, (_, i) => ({ id: String(i), localId: String(i), duration: 120 })) };
   let reads = 0;
   const Session = vm.runInNewContext(`${section('class Session {', 'const session = new Session();')}; Session`, {
+    trimBounds,
     get: () => state, set: patch => Object.assign(state, typeof patch === 'function' ? patch(state) : patch),
-    now: () => 100, isAndroid: true, console, queueMicrotask, updateMediaPosition() {}, clearTimeout() {},
+    now: () => 100, isAndroid: android, console, queueMicrotask, updateMediaPosition() {}, clearTimeout() {},
     setTimeout() { assert.fail('solo playback must not schedule a timer'); },
     LocalLib: { getBlob: async () => { reads++; return new Blob(['audio']); } },
     toast: message => assert.fail(message),
   });
-  const out = audioHarness();
+  const out = audioHarness(android);
   const session = Object.assign(Object.create(Session.prototype), {
+    _analysisQueue: { enqueue() {} },
     out, blobs: new Map(), localLoaded: [], prefetching: new Set(), token: 0, sendGen: 0,
     queue: new PlayQueue(), anchor: {}, send() {}, scopeIds: () => state.library.map(x => x.id), playlistInfo: () => null,
   });
