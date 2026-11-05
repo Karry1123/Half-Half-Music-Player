@@ -4,6 +4,58 @@ import { ListeningStats, createCompletedPlayUploader } from '../public/listening
 
 const base = new Date(2026, 9, 15, 12).getTime();
 
+test('period series shows complete Monday weeks, clipped month weeks and all twelve months', async () => {
+  const { stats } = await tracker();
+  stats.cloud = { daily: [
+    { day: '2026-10-01', seconds: 10 }, { day: '2026-10-04', seconds: 20 },
+    { day: '2026-10-05', seconds: 30 }, { day: '2026-10-15', seconds: 40 },
+    { day: '2026-10-16', seconds: 999 }, { day: '2026-12-01', seconds: 999 },
+  ] };
+  const week = stats.periodSeries('week', base);
+  assert.equal(week.length, 7);
+  assert.equal(week[0].startDay, '2026-10-12');
+  assert.equal(week[6].endDay, '2026-10-18');
+  assert.deepEqual(week.map(row => row.label), ['周一', '周二', '周三', '周四', '周五', '周六', '周日']);
+  assert.deepEqual(week.map(row => row.seconds), [0, 0, 0, 40, 0, 0, 0]);
+  assert.deepEqual(week.map(row => row.reached), [true, true, true, true, false, false, false]);
+  const month = stats.periodSeries('month', base);
+  assert.deepEqual(month.map(row => row.label), ['第1周', '第2周', '第3周', '第4周', '第5周']);
+  assert.deepEqual(month.map(row => row.seconds), [30, 30, 40, 0, 0]);
+  assert.equal(month[0].startDay, '2026-10-01');
+  assert.equal(month[0].endDay, '2026-10-04');
+  assert.equal(month.at(-1).endDay, '2026-10-31');
+  const year = stats.periodSeries('year', base);
+  assert.equal(year.length, 12);
+  assert.equal(year[9].seconds, 100);
+  assert.deepEqual(year.slice(10).map(row => [row.seconds, row.reached]), [[0, false], [0, false]]);
+  for (const period of ['week', 'month', 'year', 'all']) {
+    assert.equal(stats.periodSeries(period, base).reduce((sum, row) => sum + row.seconds, 0), stats.summary(period, base));
+  }
+  assert.throws(() => stats.periodSeries('invalid', base), RangeError);
+});
+
+test('period series uses earliest registration or data year and guarantees two years', async () => {
+  const { stats } = await tracker();
+  for (const since of [undefined, 'invalid', '2026-10-15', '2028-01-01']) {
+    assert.deepEqual(stats.periodSeries('all', base, { since }), [
+      { label: '2026年', startDay: '2026-01-01', endDay: '2026-12-31', seconds: 0, reached: true },
+      { label: '2027年', startDay: '2027-01-01', endDay: '2027-12-31', seconds: 0, reached: false },
+    ]);
+  }
+  stats.records = [{ timestamp: +new Date(2024, 1, 29), durationPlayed: 60 }];
+  stats.cloud = { daily: [{ day: '2023-12-31', seconds: 120 }] };
+  assert.equal(stats.periodSeries('all', base)[0].label, '2023年');
+  const registered = stats.periodSeries('all', base, { since: +new Date(2022, 0, 1) });
+  assert.equal(registered[0].label, '2022年');
+  assert.equal(registered.reduce((sum, row) => sum + row.seconds, 0), 180);
+  const february = stats.periodSeries('month', +new Date(2024, 1, 29, 12));
+  assert.equal(february.at(-1).endDay, '2024-02-29');
+  assert.equal(february.at(-1).seconds, 60);
+  assert.equal(stats.periodSeries('month', +new Date(2026, 1, 1)).length, 5);
+  assert.equal(stats.periodSeries('month', +new Date(2026, 2, 1)).length, 6);
+  assert.equal(stats.periodSeries('week', +new Date(2026, 0, 1))[0].startDay, '2025-12-29');
+});
+
 test('artist totals merge script variants and display the spelling with most listening seconds', async () => {
   const { stats } = await tracker();
   stats.stats.trackMetadata = {

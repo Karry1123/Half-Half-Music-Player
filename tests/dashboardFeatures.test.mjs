@@ -7,6 +7,37 @@ import htm from 'htm';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { PlayQueue, PLAY_MODES } from '../public/playQueue.js';
 import { resolveScope } from '../public/playlists.js';
+import { ListeningStats } from '../public/listeningStats.js';
+
+test('statistics cards render period buckets, two rings, plain comparisons and clean headings', async () => {
+  const stats = new ListeningStats({ userId: 'alice', indexedDB: null });
+  await stats.ready();
+  const now = +new Date(2026, 9, 15, 12);
+  stats.cloud = { daily: [{ day: '2026-10-15', seconds: 720 }] };
+  stats.stats.completedPlayCount.song = 128;
+  stats.records = [60, 600, 1800, 3600].map((durationPlayed, hour) => ({ timestamp: +new Date(2026, 9, 12, hour), durationPlayed }));
+  const code = readFileSync(new URL('../public/statsUI.js', import.meta.url), 'utf8')
+    .replace(/^\uFEFF/, '').replace(/^import .*;\r?\n/gm, '').replace('export function ListeningStatsCards', 'function ListeningStatsCards');
+  for (const [period, heading, points] of [['week', '每日收听', 7], ['month', '每周收听', 5], ['year', '每月收听', 12], ['all', '每年收听', 2]]) {
+    const Cards = vm.runInNewContext(`${code}; ListeningStatsCards`, {
+      React, htm, Date: class extends Date { static now() { return now; } },
+      useState: value => [value === 'week' ? period : value, () => {}],
+      useEffect() {}, useRef: () => ({ current: null }),
+    });
+    const markup = renderToStaticMarkup(React.createElement(Cards, { stats }));
+    assert.match(markup, new RegExp(`>${heading}</h3>`));
+    assert.equal((markup.match(/class="stats-ring"/g) || []).length, 2);
+    assert.equal((markup.match(/<g>/g) || []).length, points);
+    assert.match(markup, /128.*次/);
+    assert.doesNotMatch(markup, /活跃天数|>一起听<|累计|本机|触摸查看|↑|↓/);
+    for (const alpha of ['0.35', '0.55', '0.78', '1']) assert.ok(markup.includes(` / ${alpha})`));
+    assert.match(markup, /prefers-reduced-motion/);
+    if (period === 'week') assert.match(markup, /较上周增加 113 分钟/);
+    if (period === 'month') assert.match(markup, /较上月增加 113 分钟/);
+    if (period === 'year') assert.match(markup, /今年至今/);
+    if (period === 'all') assert.match(markup, /全部记录/);
+  }
+});
 
 const source = readFileSync(new URL('../public/dashboard.html', import.meta.url), 'utf8');
 const between = (start, end) => source.slice(source.indexOf(start), source.indexOf(end, source.indexOf(start)));

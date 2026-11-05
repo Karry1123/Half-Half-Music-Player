@@ -303,6 +303,43 @@ export class ListeningStats {
     return this.summary(period, +start - 1);
   }
 
+  // Complete local calendar buckets; unreached buckets remain visible with zero time.
+  // Month weeks start on Monday and are clipped to the first/last day of the month.
+  periodSeries(period = 'week', now = Date.now(), { since } = {}) {
+    const totals = this.dailyTotals(period, now), { start, endDay: today } = periodBounds(period, now);
+    const year = new Date(now).getFullYear(), series = [];
+    const add = (label, first, next) => {
+      const startDay = calendarDay(+first), endDay = calendarDay(+next - 1);
+      const reached = startDay <= today;
+      const seconds = reached ? totals.reduce((sum, row) => sum + (row.day >= startDay && row.day <= endDay ? row.seconds : 0), 0) : 0;
+      series.push({ label, startDay, endDay, seconds, reached });
+    };
+    if (period === 'week') {
+      for (let i = 0; i < 7; i++) {
+        const first = new Date(start), next = new Date(start);
+        first.setDate(start.getDate() + i); next.setDate(start.getDate() + i + 1);
+        add(`周${['一', '二', '三', '四', '五', '六', '日'][i]}`, first, next);
+      }
+    } else if (period === 'month') {
+      const end = new Date(year, start.getMonth() + 1, 1);
+      let first = new Date(start);
+      while (first < end) {
+        const next = new Date(first);
+        next.setDate(next.getDate() + 7 - (next.getDay() + 6) % 7);
+        if (next > end) next.setTime(+end);
+        add(`第${series.length + 1}周`, first, next);
+        first = next;
+      }
+    } else if (period === 'year') {
+      for (let month = 0; month < 12; month++) add(`${month + 1}月`, new Date(year, month, 1), new Date(year, month + 1, 1));
+    } else {
+      const registered = since == null ? NaN : new Date(since).getFullYear();
+      const firstYear = Math.min(year, Number.isFinite(registered) ? registered : year, ...totals.map(row => Number(row.day.slice(0, 4))));
+      for (let value = firstYear; value <= Math.max(year, firstYear + 1); value++) add(`${value}年`, new Date(value, 0, 1), new Date(value + 1, 0, 1));
+    }
+    return series;
+  }
+
   dailySeries(period = 'week', now = Date.now()) {
     const totals = this.dailyTotals(period, now), bounds = periodBounds(period, now);
     let cursor = period === 'all' ? dayDate(totals[0]?.day || bounds.endDay) : bounds.start;
