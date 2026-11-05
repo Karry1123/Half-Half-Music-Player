@@ -4861,6 +4861,14 @@ function UpNextPanel() {
 function NativePlayer({ open, close, expand }) {
   const s = useStore(s => s), item = s.library.find(x => x.id === s.currentId);
   const [dy, setDy] = useState(0), start = useRef(null);
+  // The volume slider is hidden behind its icon so a stray swipe on the player cannot change the volume.
+  const [volumeOpen, setVolumeOpen] = useState(false);
+  useEffect(() => { if (!open) setVolumeOpen(false); }, [open]);
+  useEffect(() => {
+    if (!volumeOpen) return;
+    const timer = setTimeout(() => setVolumeOpen(false), 5000);
+    return () => clearTimeout(timer);
+  }, [volumeOpen, s.volume]);
   useBackLayer(open, close);
   useEffect(() => {
     if (!open) return;
@@ -4892,7 +4900,12 @@ function NativePlayer({ open, close, expand }) {
         <div class="w-full text-center"><h2 class="text-xl font-bold">${item?.title || '未在播放'}</h2><p class="mt-2 text-sand-400">${item?.artist || '选择喜欢的音乐'}</p>${receiving && html`<p role="status" class="mt-2 text-sm text-sand-400">正在从好友获取音频…</p>`}<p class="mt-2 text-xs text-sand-400">已完整聆听 ${trackCompletedCount(item)} 次</p></div>
         <${SeekBar} />
         <div class="hh-player-transport w-full"><${PlayModeButton} /><button disabled=${!can} onClick=${() => session.act('prev')} aria-label="上一首"><${SkipBack} size=${28} /></button><button data-role=${s.role} class="player-primary rounded-full hh-primary disabled:opacity-30" disabled=${!can} onClick=${() => session.act('toggle')} aria-label=${s.playing ? '暂停' : '播放'}><${s.playing ? Pause : Play} size=${30} /></button><button disabled=${!can || !s.canNext} onClick=${() => session.act('next')} aria-label="下一首"><${SkipForward} size=${28} /></button><button disabled=${s.role === 'guest'} onClick=${() => set({ queueSheetOpen: true })} aria-label="切换歌单" title="切换歌单"><${ListMusic} size=${24} /></button></div>
-        <div class="flex w-full items-center gap-3 text-sand-400"><${s.volume ? Volume2 : VolumeX} size=${20} /><input type="range" class="hh flex-1" min="0" max="1" step="0.01" value=${s.volume} style=${{ '--fill': `${s.volume * 100}%` }} aria-label="音量" onInput=${e => session.setVolume(Number(e.target.value))} /></div>
+        <div class="flex w-full items-center gap-3 text-sand-400">
+          <button type="button" class="grid h-11 w-11 shrink-0 place-items-center rounded-full hover:bg-white/5" aria-pressed=${volumeOpen} aria-label=${volumeOpen ? '收起音量条' : '调节音量'} onClick=${() => setVolumeOpen(v => !v)}><${s.volume ? Volume2 : VolumeX} size=${20} /></button>
+          ${volumeOpen
+            ? html`<input type="range" class="hh flex-1" min="0" max="1" step="0.01" value=${s.volume} style=${{ '--fill': `${s.volume * 100}%` }} aria-label="音量" onInput=${e => session.setVolume(Number(e.target.value))} />`
+            : html`<span class="flex-1 text-xs tabular-nums text-sand-500">音量 ${Math.round(s.volume * 100)}%</span>`}
+        </div>
         <${SyncStatus} />
       </div><aside class="hh-player-side"><h2 class="hh-eyebrow">两人状态</h2>
         <div class="hh-presence row" role="status"><span class="hh-person host">${s.me?.name || '你'} · ${s.role === 'guest' ? '房客' : '房主 / 本机'}</span><span class="hh-person guest">${s.peer?.name || '等待好友加入'}</span><span>${s.waitingPeer ? '等待对方缓冲…' : receiving ? '正在接收音频…' : s.conn === 'open' ? '已连接' : s.conn === 'reconnecting' ? '正在重连…' : s.role ? '等待连接' : '本机收听'}</span></div>
