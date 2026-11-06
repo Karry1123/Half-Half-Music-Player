@@ -4,16 +4,12 @@
 //   tracks     本机曲库（libraryStorage.js），歌单只引用 tracks.id
 //   playlists  { id, name, coverUrl, createdAt, updatedAt, trackIds: string[], system? }
 //
-// 两个"系统歌单"：
-//   ALL_ID   「全部已下载 / 已导入」：虚拟歌单，不存储，永远等于整个曲库
-//   INBOX_ID 「默认曲库」：真实存储，不能删除 / 改名；下载、导入时选"稍后整理"就放这里。
-//            第一次打开（还没有任何歌单数据）时，把已有的歌全部并入它 —— 旧版本用户的歌不会丢。
-//
+// 全部是虚拟曲库；我喜欢的音乐是固定置顶的系统歌单。
 // 删除歌单只解绑引用，不删音频；从曲库删歌时，用 prune() 把它从所有歌单里摘掉。
 
 export const ALL_ID = 'all';
-export const INBOX_ID = 'inbox';
-export const INBOX_NAME = '默认曲库';
+export const FAVORITES_ID = 'favorites';
+export const FAVORITES_NAME = '我喜欢的音乐';
 export const ALL_NAME = '全部已下载 / 已导入';
 export const MAX_NAME = 40;
 
@@ -25,7 +21,7 @@ export class PlaylistError extends Error {
   }
 }
 
-const isSystem = (p) => p?.id === INBOX_ID || p?.system === true;
+const isSystem = (p) => p?.id === FAVORITES_ID || p?.system === true;
 
 /** 名称：去首尾空白、合并连续空白、截断到 40 字（按字符，不切坏 emoji） */
 export function normalizeName(name) {
@@ -44,25 +40,36 @@ function assertUniqueName(list, name, exceptId) {
 
 const dedupe = (ids) => [...new Set(ids.filter((x) => typeof x === 'string' && x))];
 
-export function makeInbox(trackIds = [], now = Date.now()) {
-  return { id: INBOX_ID, name: INBOX_NAME, coverUrl: null, isPublic: false, createdAt: now, updatedAt: now, trackIds: dedupe(trackIds), system: true };
+export function makeFavorites(trackIds = [], now = Date.now()) {
+  return { id: FAVORITES_ID, name: FAVORITES_NAME, coverUrl: null, isPublic: false, createdAt: now, updatedAt: now, trackIds: dedupe(trackIds), system: true };
 }
 
-/**
- * 读出的歌单 + 曲库现状 → 规范化的歌单列表（默认曲库排第一，其余按创建时间）。
- * 没有默认曲库 = 第一次使用歌单功能：把曲库里已有的歌（按加入时间）全部并入默认曲库。
- * @returns {{ list: object[], migrated: boolean }}
- */
-export function migrate(stored, allTrackIds, now = Date.now()) {
-  const valid = Array.isArray(stored) ? stored.filter((p) => p && typeof p.id === 'string' && p.id !== ALL_ID) : [];
-  const clean = valid.map((p) => ({ ...p, isPublic: p.isPublic === true, name: String(p.name || '未命名歌单'), trackIds: dedupe(Array.isArray(p.trackIds) ? p.trackIds : []) }));
-  const hasInbox = clean.some((p) => p.id === INBOX_ID);
-  const list = hasInbox ? clean : [makeInbox(allTrackIds, now), ...clean];
-  return { list: sortPlaylists(list), migrated: !hasInbox };
+/** Convert the legacy inbox once, retaining a stable ordinary playlist id. */
+export function migrateInbox(playlist, allTrackIds = []) {
+  const ids = dedupe(Array.isArray(playlist.trackIds) ? playlist.trackIds : []), library = new Set(allTrackIds);
+  // Repair the empty artifact created by the previous migration; preserve renamed playlists and cloud-only songs.
+  if (playlist.id === 'pl-legacy-inbox' && playlist.name === '默认曲库' && !ids.length && !playlist.pending?.length) return null;
+  if (playlist.id !== 'inbox') return playlist;
+  if (!ids.length || (ids.length === library.size && ids.every(id => library.has(id)))) return null;
+  return { ...playlist, id: 'pl-legacy-inbox', name: '默认曲库', system: false, trackIds: ids };
 }
+export function normalize(stored, allTrackIds = [], now = Date.now()) {
+  const valid = Array.isArray(stored) ? stored.filter(p => p && typeof p.id === 'string' && p.id !== ALL_ID) : [];
+  let migrated = !valid.some(p => p.id === FAVORITES_ID && p.system === true && p.name === FAVORITES_NAME);
+  const clean = valid.map(p => {
+    if (p.id === 'inbox') migrated = true;
+    const next = migrateInbox(p, allTrackIds);
+    if (!next) { migrated = true; return null; }
+    return { ...next, isPublic: next.isPublic === true, name: next.id === FAVORITES_ID ? FAVORITES_NAME : String(next.name || '未命名歌单'),
+      system: next.id === FAVORITES_ID, trackIds: dedupe(Array.isArray(next.trackIds) ? next.trackIds : []) };
+  }).filter(Boolean);
+  if (!clean.some(p => p.id === FAVORITES_ID)) clean.push(makeFavorites([], now));
+  return { list: sortPlaylists(clean), migrated };
+}
+export const migrate = normalize;
 
 export function sortPlaylists(list) {
-  return [...list].sort((a, b) => (a.id === INBOX_ID ? -1 : b.id === INBOX_ID ? 1 : (a.createdAt || 0) - (b.createdAt || 0)));
+  return [...list].sort((a, b) => (a.id === FAVORITES_ID ? -1 : b.id === FAVORITES_ID ? 1 : (a.createdAt || 0) - (b.createdAt || 0)));
 }
 
 export function createPlaylist(list, name, { id = randomId(), now = Date.now() } = {}) {
@@ -201,7 +208,7 @@ export class PlaylistStore {
     return this.list.find((p) => p.id === id) || null;
   }
 
-  /** 启动时调用一次：allTrackIds 为本机曲库现有歌曲（按加入时间），用于首次迁移和清理失效引用 */
+  /** 启动时调用一次：allTrackIds 为本机曲库现有歌曲（按加入时间），用于迁移旧歌单和清理失效引用 */
   load(allTrackIds) {
     return this.#serial(async () => {
       const stored = await this.backend.listPlaylists();
@@ -210,8 +217,11 @@ export class PlaylistStore {
       this.list = pruned.list;
       this.ready = true;
       this.#emit();
-      const writes = migrated ? [this.get(INBOX_ID), ...pruned.changed.filter((p) => p.id !== INBOX_ID)] : pruned.changed;
+      const writes = migrated ? this.list : pruned.changed;
       for (const p of writes) await this.backend.putPlaylist(p);
+      for (const id of ['inbox', 'pl-legacy-inbox']) {
+        if (stored.some(p => p?.id === id) && !this.get(id)) await this.backend.deletePlaylist(id);
+      }
       return { migrated, count: this.list.length };
     });
   }
@@ -309,16 +319,16 @@ export class PlaylistStore {
 
   /**
    * 云端同步结果写入本机：upserts [{ id, name, createdAt, trackIds, pending }]，deletes [id]。
-   * 系统歌单（默认曲库）不会被删除，也保持系统标记。
+   * 系统歌单（我喜欢的音乐）不会被删除，也保持系统标记。
    */
   applyRemote({ upserts = [], deletes = [] }) {
     return this.#mutate((list) => {
-      const drop = new Set(deletes.filter((id) => id !== INBOX_ID));
+      const drop = new Set(deletes.filter((id) => id !== FAVORITES_ID));
       let next = list.filter((p) => !drop.has(p.id));
       const puts = [];
       for (const u of upserts) {
         const have = next.find((p) => p.id === u.id);
-        const np = { ...(have || { coverUrl: null }), id: u.id, isPublic: u.isPublic === true, coverUrl: u.coverUrl ?? null, name: u.id === INBOX_ID ? INBOX_NAME : String(u.name || '未命名歌单'), createdAt: have?.createdAt || u.createdAt || this.now(), updatedAt: this.now(), trackIds: dedupe(u.trackIds || []), pending: u.pending || [], ...(u.id === INBOX_ID && { system: true }) };
+        const np = { ...(have || { coverUrl: null }), id: u.id, isPublic: u.isPublic === true, coverUrl: u.coverUrl ?? null, name: u.id === FAVORITES_ID ? FAVORITES_NAME : String(u.name || '未命名歌单'), createdAt: have?.createdAt || u.createdAt || this.now(), updatedAt: this.now(), trackIds: dedupe(u.trackIds || []), pending: u.pending || [], ...(u.id === FAVORITES_ID && { system: true }) };
         next = have ? replace(next, np) : [...next, np];
         puts.push(np);
       }

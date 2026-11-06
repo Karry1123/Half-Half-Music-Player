@@ -1,3 +1,4 @@
+import { coverCandidates } from '../public/coverUrl.js';
 import { gainFor, trimBounds } from '../public/audioAnalysis.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -24,7 +25,7 @@ function harness(saved = null) {
   });
   const track = { id: 'song', hash: 'hash', title: 'Song', artist: 'Artist', duration: 100 };
   const context = {
-    trimBounds,
+    trimBounds, coverCandidates,
     get: () => state, set: patch => Object.assign(state, typeof patch === 'function' ? patch(state) : patch),
     LocalLib: { listTracks: async () => [track], coverUrl: async () => null },
     playlistStore: { load: async () => {} }, fromLocal: t => t,

@@ -2,12 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   ALL_ID,
-  INBOX_ID,
+  FAVORITES_ID,
   PlaylistStore,
   addTracks,
   createPlaylist,
   deletePlaylist,
   migrate,
+  migrateInbox,
   missingFromLibrary,
   normalizeName,
   playlistsOf,
@@ -29,30 +30,22 @@ const memBackend = (initial = []) => {
   };
 };
 
-test('migrate: first run puts every existing song into the default library (no song is lost)', () => {
-  const { list, migrated } = migrate([], ['t1', 't2', 't3'], 100);
+test('normalize creates empty favorites first and converts partial inbox once', () => {
+  const { list, migrated } = migrate([{ id: 'inbox', trackIds: ['t1'], system: true }], ['t1', 't2'], 100);
   assert.equal(migrated, true);
-  assert.equal(list.length, 1);
-  assert.equal(list[0].id, INBOX_ID);
-  assert.deepEqual(list[0].trackIds, ['t1', 't2', 't3']);
-  assert.equal(list[0].system, true);
+  assert.equal(list[0].id, FAVORITES_ID);
+  assert.equal(list[0].name, '我喜欢的音乐');
+  assert.deepEqual(list[0].trackIds, []);
+  const legacy = list.find(p => p.id === 'pl-legacy-inbox');
+  assert.equal(legacy.name, '默认曲库');
+  assert.deepEqual(legacy.trackIds, ['t1']);
+  assert.equal(legacy.system, false);
+  assert.doesNotThrow(() => renamePlaylist(list, legacy.id, '旧歌单'));
+  assert.doesNotThrow(() => deletePlaylist(list, legacy.id));
+  assert.equal(migrate(list, ['t1', 't2']).migrated, false);
 });
-
-test('migrate: later runs keep stored playlists, inbox first, and repair bad records', () => {
-  const stored = [
-    { id: 'b', name: 'B', createdAt: 20, trackIds: ['t2', 't2', 5, 't3'] },
-    { id: INBOX_ID, name: '默认曲库', createdAt: 1, trackIds: ['t1'], system: true },
-    { id: 'a', name: '', createdAt: 10 },
-    { id: ALL_ID, name: 'should never be stored' },
-    null,
-  ];
-  const { list, migrated } = migrate(stored, ['t1', 't2', 't3', 't4']);
-  assert.equal(migrated, false);
-  assert.deepEqual(list.map((p) => p.id), [INBOX_ID, 'a', 'b']);
-  assert.deepEqual(list[0].trackIds, ['t1'], 'tracks added later are not silently pushed into the inbox');
-  assert.deepEqual(list[2].trackIds, ['t2', 't3'], 'duplicates and non-string ids removed');
-  assert.equal(list[1].name, '未命名歌单');
-  assert.deepEqual(list[1].trackIds, []);
+test('legacy inbox equal to library is dropped regardless of order or duplicates', () => {
+  assert.deepEqual(migrate([{ id: 'inbox', trackIds: ['t2', 't1', 't1'] }], ['t1', 't2']).list.map(p => p.id), [FAVORITES_ID]);
 });
 
 test('names: trimmed, whitespace collapsed, 40 chars max, empty / duplicate rejected', () => {
@@ -62,26 +55,26 @@ test('names: trimmed, whitespace collapsed, 40 chars max, empty / duplicate reje
   let list = migrate([], []).list;
   list = createPlaylist(list, '跑步', { id: 'p1', now: 1 }).list;
   assert.throws(() => createPlaylist(list, ' 跑步 '), { code: 'DUPLICATE' });
-  assert.throws(() => createPlaylist(list, '默认曲库'), { code: 'DUPLICATE' });
+  assert.throws(() => createPlaylist(list, '我喜欢的音乐'), { code: 'DUPLICATE' });
   assert.throws(() => createPlaylist(list, '全部已下载 / 已导入'), { code: 'DUPLICATE' });
 });
 
 test('system playlist cannot be renamed or deleted; custom ones can', () => {
   let list = migrate([], ['t1']).list;
   list = createPlaylist(list, '夜跑', { id: 'p1' }).list;
-  assert.throws(() => renamePlaylist(list, INBOX_ID, 'x'), { code: 'SYSTEM' });
-  assert.throws(() => deletePlaylist(list, INBOX_ID), { code: 'SYSTEM' });
+  assert.throws(() => renamePlaylist(list, FAVORITES_ID, 'x'), { code: 'SYSTEM' });
+  assert.throws(() => deletePlaylist(list, FAVORITES_ID), { code: 'SYSTEM' });
   list = renamePlaylist(list, 'p1', '晨跑');
   assert.equal(list.find((p) => p.id === 'p1').name, '晨跑');
   assert.throws(() => renamePlaylist(list, 'nope', 'x'), { code: 'NOT_FOUND' });
   list = deletePlaylist(list, 'p1');
-  assert.deepEqual(list.map((p) => p.id), [INBOX_ID]);
+  assert.deepEqual(list.map((p) => p.id), [FAVORITES_ID]);
 });
 
 test('addTracks / removeTracks: no duplicates, order kept, ALL ignored, unknown playlist rejected', () => {
   let list = migrate([], []).list;
   list = createPlaylist(list, 'A', { id: 'a' }).list;
-  let r = addTracks(list, ['a', INBOX_ID, ALL_ID], ['t1', 't2', 't1']);
+  let r = addTracks(list, ['a', FAVORITES_ID, ALL_ID], ['t1', 't2', 't1']);
   assert.equal(r.changed.length, 2);
   r = addTracks(r.list, ['a'], ['t2', 't3']);
   assert.deepEqual(r.list.find((p) => p.id === 'a').trackIds, ['t1', 't2', 't3']);
@@ -89,12 +82,12 @@ test('addTracks / removeTracks: no duplicates, order kept, ALL ignored, unknown 
   assert.throws(() => addTracks(r.list, ['gone'], ['t1']), { code: 'NOT_FOUND' });
   const rm = removeTracks(r.list, 'a', ['t2']);
   assert.deepEqual(rm.list.find((p) => p.id === 'a').trackIds, ['t1', 't3']);
-  assert.deepEqual(rm.list.find((p) => p.id === INBOX_ID).trackIds, ['t1', 't2'], 'other playlists untouched');
-  assert.deepEqual(playlistsOf(rm.list, 't2'), [INBOX_ID]);
+  assert.deepEqual(rm.list.find((p) => p.id === FAVORITES_ID).trackIds, ['t1', 't2'], 'other playlists untouched');
+  assert.deepEqual(playlistsOf(rm.list, 't2'), [FAVORITES_ID]);
 });
 
 test('deleting a playlist never deletes songs; deleting a song removes it everywhere', () => {
-  let list = migrate([], ['t1', 't2']).list;
+  let list = addTracks(migrate([], ['t1', 't2']).list, [FAVORITES_ID], ['t1', 't2']).list;
   list = createPlaylist(list, 'A', { id: 'a' }).list;
   list = addTracks(list, ['a'], ['t1', 't2']).list;
   list = deletePlaylist(list, 'a');
@@ -120,23 +113,23 @@ test('resolveScope: playlist order, mapped to session ids, missing tracks report
   assert.deepEqual(missingFromLibrary(null, library), []);
 });
 
-test('store: load migrates once and persists the inbox; second load does not re-seed', async () => {
+test('store: load migrates once and persists empty favorites; second load does not re-seed', async () => {
   const be = memBackend();
   const s1 = new PlaylistStore(be);
   const r1 = await s1.load(['t1', 't2']);
   assert.deepEqual(r1, { migrated: true, count: 1 });
-  assert.deepEqual(be.db.get(INBOX_ID).trackIds, ['t1', 't2']);
+  assert.deepEqual(be.db.get(FAVORITES_ID).trackIds, []);
   const s2 = new PlaylistStore(be);
   const r2 = await s2.load(['t1', 't2', 't3']);
   assert.equal(r2.migrated, false);
-  assert.deepEqual(s2.get(INBOX_ID).trackIds, ['t1', 't2']);
+  assert.deepEqual(s2.get(FAVORITES_ID).trackIds, []);
 });
 
 test('store: load prunes references to songs that were deleted while the app was closed', async () => {
-  const be = memBackend([{ id: INBOX_ID, name: '默认曲库', trackIds: ['t1', 'gone'], system: true }, { id: 'a', name: 'A', trackIds: ['gone'] }]);
+  const be = memBackend([{ id: FAVORITES_ID, name: '我喜欢的音乐', trackIds: ['t1', 'gone'], system: true }, { id: 'a', name: 'A', trackIds: ['gone'] }]);
   const s = new PlaylistStore(be);
   await s.load(['t1']);
-  assert.deepEqual(be.db.get(INBOX_ID).trackIds, ['t1']);
+  assert.deepEqual(be.db.get(FAVORITES_ID).trackIds, ['t1']);
   assert.deepEqual(be.db.get('a').trackIds, []);
 });
 
@@ -157,7 +150,7 @@ test('store: create / add / rename / remove are persisted and notify subscribers
   await s.remove(p.id);
   assert.equal(be.db.has(p.id), false);
   assert.ok(seen.length >= 5);
-  await assert.rejects(s.remove(INBOX_ID), { code: 'SYSTEM' });
+  await assert.rejects(s.remove(FAVORITES_ID), { code: 'SYSTEM' });
 });
 
 test('store: a failed write rolls the in-memory state back', async () => {
@@ -166,7 +159,7 @@ test('store: a failed write rolls the in-memory state back', async () => {
   await s.load([]);
   be.failNext = true;
   await assert.rejects(s.create('会失败'), /disk full/);
-  assert.equal(s.list.length, 1, 'only the inbox is left');
+  assert.equal(s.list.length, 1, 'only favorites is left');
   assert.equal(be.db.size, 1);
 });
 
@@ -174,8 +167,8 @@ test('store: concurrent writes are serialized (no lost updates)', async () => {
   const be = memBackend();
   const s = new PlaylistStore(be);
   await s.load([]);
-  await Promise.all(['t1', 't2', 't3', 't4'].map((t) => s.addTracks([INBOX_ID], [t])));
-  assert.deepEqual(be.db.get(INBOX_ID).trackIds, ['t1', 't2', 't3', 't4']);
+  await Promise.all(['t1', 't2', 't3', 't4'].map((t) => s.addTracks([FAVORITES_ID], [t])));
+  assert.deepEqual(be.db.get(FAVORITES_ID).trackIds, ['t1', 't2', 't3', 't4']);
 });
 
 
@@ -212,4 +205,52 @@ test('existing and newly created playlists default to private', () => {
   assert.equal(list.find(p => p.id === 'old').isPublic, false);
   assert.equal(list[0].isPublic, false);
   assert.equal(createPlaylist(list, 'new playlist').playlist.isPublic, false);
+});
+
+test('cloud merge preserves favorites system name and flag and ignores deletion', async () => {
+ const store = new PlaylistStore(memBackend()); await store.load([]);
+ await store.applyRemote({ upserts: [{ id: FAVORITES_ID, name: 'wrong', system: false, trackIds: ['t1'] }], deletes: [FAVORITES_ID] });
+ assert.equal(store.get(FAVORITES_ID).system, true);
+ assert.equal(store.get(FAVORITES_ID).name, '我喜欢的音乐');
+ assert.deepEqual(store.get(FAVORITES_ID).trackIds, ['t1']);
+});
+
+test('migration helper and persisted conversion do not resurrect or re-seed the legacy inbox', async () => {
+  const inbox = { id: 'inbox', name: 'old', trackIds: ['a'], system: true };
+  assert.deepEqual(migrateInbox(inbox, ['a', 'b']).trackIds, ['a']);
+  assert.equal(migrateInbox(inbox, ['a']), null);
+  for (const library of [['a'], ['a', 'b']]) {
+    const backend = memBackend([inbox]);
+    const store = new PlaylistStore(backend);
+    await store.load(library);
+    assert.equal(backend.db.has('inbox'), false);
+    assert.equal(store.list.length, library.length === 1 ? 1 : 2);
+    const again = new PlaylistStore(backend);
+    assert.equal((await again.load([...library, 'c'])).migrated, false);
+    assert.deepEqual(again.get(FAVORITES_ID).trackIds, []);
+  }
+});
+
+test('empty legacy inbox is dropped even when the library contains tracks', async () => {
+  for (const trackIds of [[], undefined, ['', 5]]) {
+    const inbox = { id: 'inbox', name: '默认曲库', trackIds, system: true };
+    assert.equal(migrateInbox(inbox, ['a']), null);
+    assert.deepEqual(migrate([inbox], ['a']).list.map(p => p.id), [FAVORITES_ID]);
+    const backend = memBackend([inbox]), store = new PlaylistStore(backend);
+    await store.load(['a']);
+    assert.equal(backend.db.has('inbox'), false);
+    assert.deepEqual(store.list.map(p => p.id), [FAVORITES_ID]);
+  }
+});
+
+test('previously converted empty default artifact is removed from storage without deleting custom empty playlists', async () => {
+  const artifact = { id: 'pl-legacy-inbox', name: '默认曲库', trackIds: [] };
+  const custom = { id: 'custom', name: '默认曲库', trackIds: [] };
+  const backend = memBackend([artifact, custom]), store = new PlaylistStore(backend);
+  await store.load(['a']);
+  assert.equal(backend.db.has(artifact.id), false);
+  assert.equal(backend.db.has(custom.id), true);
+  for (const kept of [{ ...artifact, name: '已改名' }, { ...artifact, pending: [{ id: 'cloud-song' }] }]) {
+    assert.equal(migrateInbox(kept, ['a']), kept);
+  }
 });

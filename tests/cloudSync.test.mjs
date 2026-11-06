@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { CloudSync, localView, mergeKeys, mergePlaylists } from '../public/cloudSync.js';
-import { INBOX_ID, PlaylistStore } from '../public/playlists.js';
+import { FAVORITES_ID, PlaylistStore } from '../public/playlists.js';
 
 const ct = (id, title = id) => ({ id, title, artist: '', sourceId: id, pageUrl: '', hash: '', duration: 0 });
 const view = (id, name, keys, extra = {}) => ({ id, name, createdAt: 1, keys, tracks: new Map(keys.map((k) => [k, ct(k)])), ...extra });
@@ -14,8 +14,8 @@ test('mergeKeys: removals and additions from both sides survive', () => {
   assert.deepEqual(mergeKeys(['a', 'b'], ['a', 'b'], ['b']), ['b']); // removed elsewhere
 });
 
-test('first sync unions the default library of two devices instead of overwriting', () => {
-  const r = mergePlaylists({ local: [view(INBOX_ID, '默认曲库', ['b'])], cloud: [cloudPl(INBOX_ID, '默认曲库', ['a'])], base: {}, now: 5 });
+test('first sync unions favorites of two devices instead of overwriting', () => {
+  const r = mergePlaylists({ local: [view(FAVORITES_ID, '我喜欢的音乐', ['b'])], cloud: [cloudPl(FAVORITES_ID, '我喜欢的音乐', ['a'])], base: {}, now: 5 });
   assert.deepEqual(keysOf(r.cloud[0]), ['a', 'b']);
   assert.equal(r.cloudChanged, true);
   assert.deepEqual(r.upserts[0].keys, ['a', 'b']);
@@ -122,7 +122,7 @@ test('phone adds a song to a playlist → web sees it as not downloaded → down
   await web.store.load([]);
   const p = await phone.store.create('通勤');
   await phone.store.setPublic(p.id, true);
-  await phone.store.addTracks([p.id], ['ph1']);
+  await phone.store.addTracks([p.id, FAVORITES_ID], ['ph1']);
   await phone.sync.sync();
   await web.sync.sync();
   const onWeb = web.store.get(p.id);
@@ -130,7 +130,7 @@ test('phone adds a song to a playlist → web sees it as not downloaded → down
   assert.equal(onWeb.isPublic, true);
   assert.deepEqual(onWeb.trackIds, []);
   assert.deepEqual(onWeb.pending.map((t) => [t.id, t.title]), [['bilibili:BV1', '晴天']]);
-  assert.deepEqual(web.store.get(INBOX_ID).pending.map((t) => t.id), ['bilibili:BV1'], 'default library is shared too');
+  assert.deepEqual(web.store.get(FAVORITES_ID).pending.map((t) => t.id), ['bilibili:BV1'], 'favorites is shared too');
   await phone.store.setPublic(p.id, false);
   await phone.sync.sync();
   await web.sync.sync();

@@ -56,15 +56,28 @@ test('guest mini and fullscreen players show metadata and transfer status before
   const item = { id: 'song', title: '歌曲标题', artist: '歌曲作者', cover: 'https://example.com/cover.jpg' };
   const state = { library: [item], currentId: item.id, role: 'guest', conn: 'open', loaded: false, volume: 1 };
   const context = {
+    window: { matchMedia: () => ({ matches: false }) },
     html: htm.bind(React.createElement), useStore: fn => fn(state), useState: () => [0, () => {}], useRef: () => ({ current: null }), useBackLayer() {}, useEffect() {},
     cx: (...args) => args.filter(Boolean).join(' '), gradient: () => 'red', coverSrc: url => url, coverCandidates, coverError, trackCompletedCount: () => 0, session: {},
-    ...Object.fromEntries(['Music2', 'UpNextPanel', 'CoListenPill', 'Pause', 'Play', 'SkipForward', 'ChevronDown', 'SeekBar', 'PlayModeButton', 'SkipBack', 'ListMusic', 'Volume2', 'VolumeX', 'VolumeSlider', 'SyncStatus'].map(name => [name, () => null])),
+    ...Object.fromEntries(['FileText', 'Repeat', 'Repeat1', 'Shuffle', 'Heart', 'Music2', 'UpNextPanel', 'CoListenPill', 'Pause', 'Play', 'SkipForward', 'ChevronDown', 'SeekBar', 'PlayModeButton', 'SkipBack', 'ListMusic', 'Volume2', 'VolumeX', 'VolumeSlider', 'SyncStatus'].map(name => [name, () => null])),
   };
   const Player = vm.runInNewContext(`${between('function Cover(', 'function Panel(')};${between('function NativePlayer(', 'function App()')}; NativePlayer`, context);
   for (const open of [false, true]) {
     const markup = renderToStaticMarkup(React.createElement(Player, { open, close() {}, expand() {} }));
     for (const text of [item.title, item.artist, item.cover, '正在从好友获取音频…']) assert.ok(markup.includes(text), text);
     assert.doesNotMatch(markup, /从曲库选择一首歌|未在播放/);
+    if (open) {
+      assert.match(markup, /<h1>正在播放<\/h1>/);
+      const queue = markup.match(/<button[^>]*aria-label="队列"[^>]*>/)?.[0];
+      assert.ok(queue); assert.doesNotMatch(queue, /disabled/);
+      const transport = markup.match(/class="hh-player-transport w-full">([\s\S]*?)<\/div>/)?.[1];
+      assert.equal((transport.match(/<button/g) || []).length, 3);
+      assert.match(markup, /aria-label="随机播放：关"/);
+      assert.match(markup, /aria-label="循环：关"/);
+      assert.doesNotMatch(markup, /<details|详情|aria-label="音量"/);
+      assert.match(markup, /已完整聆听 0 次/);
+    }
+
   }
 });
 

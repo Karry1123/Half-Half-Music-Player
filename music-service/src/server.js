@@ -13,6 +13,7 @@ import { resolveLink, streamSource } from './resolve.js';
 import { listLibrary, loadLibrary, cleanTemporaryDownloads } from './library.js';
 import { parseTrackId, providers, timeoutFor } from './providers/index.js';
 import { makeTrack } from './providers/track.js';
+import { getLyrics } from './lyrics.js';
 import { aggregateSearch, trackCache } from './search.js';
 import { Accounts, mountAccounts } from './accounts.js';
 import { TrackFiles, mountTrackFiles } from './trackFiles.js';
@@ -104,7 +105,7 @@ if (config.signaling) {
 
 // 以下全部需要访问令牌（配置了 API_TOKEN 时）
 app.use(['/api', '/files'], accountGuard || requireToken);
-app.use(['/api/search', '/api/resolve', '/api/download'], rateLimit());
+app.use(['/api/search', '/api/lyrics', '/api/resolve', '/api/download'], rateLimit());
 mountCoverProxy(app);
 
 // ---------------------------------------------------------------- 状态
@@ -137,6 +138,20 @@ app.get('/api/search', async (req, res) => {
   const sources = req.query.sources ? String(req.query.sources) : undefined;
   const versions = req.query.versions === 'all' ? 'all' : 'original';
   res.json(await aggregateSearch(q, { sources, limit, versions }));
+});
+
+// GET /api/lyrics?title=&artist=&album=&duration= (or q=)
+app.get('/api/lyrics', async (req, res) => {
+  const input = Object.fromEntries(['title', 'artist', 'album', 'q'].map(key => [key, String(req.query[key] ?? '').trim()]));
+  if (!input.title && !input.q) return res.status(400).json({ error: '缺少歌曲标题或关键词' });
+  if (Object.values(input).some(value => value.length > 300)) return res.status(400).json({ error: '歌词查询参数过长（≤300 字符）' });
+  input.duration = Number(req.query.duration) || 0;
+  if (!Number.isFinite(input.duration) || input.duration < 0) return res.status(400).json({ error: '无效的歌曲时长' });
+  try { res.json(await getLyrics(input)); }
+  catch (e) {
+    const err = toSourceError(e);
+    res.status(ERROR_STATUS[err.code] || 502).json({ error: err.message, code: err.code });
+  }
 });
 
 // ---------------------------------------------------------------- 链接解析

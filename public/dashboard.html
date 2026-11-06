@@ -163,11 +163,11 @@
 
 <script type="module">
 import { songResults, upNextTracks } from './playerPresentation.js';
-import React, { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import React, { useEffect, useRef, useState, useId, useMemo, useSyncExternalStore } from 'react';
 import { createRoot } from 'react-dom/client';
 import htm from 'htm';
 import {
-  Activity, AlertTriangle, ArrowDownUp, ArrowRight, Check, FolderDown, HardDrive, HardDriveDownload, CirclePlay, Clock as ClockIcon, Copy, Crown, Disc3, Download, FileAudio, Flame, Globe,
+  FileText, Heart, Activity, AlertTriangle, ArrowDownUp, ArrowRight, Check, FolderDown, HardDrive, HardDriveDownload, CirclePlay, Clock as ClockIcon, Copy, Crown, Disc3, Download, FileAudio, Flame, Globe,
   ExternalLink, Gauge, Headphones, History, Home, ListOrdered, Server, Settings, Zap, Repeat, Repeat1, Shuffle, User, LayoutDashboard, Link, Link2, ListMusic, Loader2, LogOut, Music2, Pause, Play, QrCode,
   Radio, RefreshCw, Search, ShieldCheck, Signal, SkipBack, SkipForward, Sparkles, Square, Trash2, Upload, Users, Volume2, VolumeX,
   Wifi, WifiOff, X, Plus, MoreHorizontal, ListPlus, ListMinus, Pencil, Library, Eye, EyeOff, ChevronDown, ChevronRight, Cloud, CloudDownload,
@@ -196,9 +196,11 @@ function useBackLayer(open, close) {
   useEffect(() => open ? pushBackLayer(() => ref.current()) : undefined, [!!open]);
 }
 import { MODE_LABEL, PLAY_MODES, PlayQueue } from './playQueue.js';
-import { ALL_ID, ALL_NAME, INBOX_ID, PlaylistStore, missingFromLibrary, playlistsOf, resolveScope } from './playlists.js';
+import { ALL_ID, ALL_NAME, FAVORITES_ID, PlaylistStore, missingFromLibrary, playlistsOf, resolveScope } from './playlists.js';
 import { AccountClient, SOURCE_EXPIRED, cacheCloudTrack, downloadCloudTrack, downloadCloudFile } from './accountClient.js';
 import { createCloudUploader } from './cloudFiles.js';
+import { parseLrc, currentLineIndex, lyricsQuery, createLyricsCache } from './lyrics.js';
+import { loadCoverPalette } from './coverPalette.js';
 import { coverSrc, setCoverProxy, coverCandidates, coverError, fetchCover } from './coverUrl.js';
 import { readAudioTags } from './audioTags.js';
 import { createAppToast, restoreDownloads, persistDownloads, orderedDownloads } from './dashboardFeedback.js';
@@ -209,6 +211,7 @@ import { checkForUpdate, DEFAULT_REPO } from './appUpdate.js';
 import * as NativeUpdate from './appUpdateNative.js';
 
 const html = htm.bind(React.createElement);
+const lyricsCache = createLyricsCache();
 
 // ════════════════════════════════════════════════════════════ 配置
 const params = new URLSearchParams(location.search);
@@ -429,7 +432,7 @@ const store = createStore({
   upNext: null, // 自然播完后的下一首 id（单曲循环时等于当前曲目）
   canNext: false, // 手动"下一首"是否可用（顺序播放到最后一首时不可用）
   // 自定义歌单（见 playlists.js）
-  playlists: [], // [{ id, name, trackIds（= 本机 tracks.id）, system? }]，第一个是「默认曲库」
+  playlists: [], // [{ id, name, trackIds（= 本机 tracks.id）, system? }]，第一个是「我喜欢的音乐」
   playlistsReady: false,
   viewPlaylistId: ALL_ID, // 曲库面板当前查看的歌单
   activePlaylistId: null, // 正在播放的歌单（null = 整个曲库）：播放队列只在这个范围里走
@@ -577,6 +580,19 @@ const api = {
     } catch {
       set({ apiMode: 'mock', sources: MOCK_SOURCES });
     }
+  },
+
+  async lyrics(query = {}) {
+    await account.assertActive();
+    const args = Object.fromEntries(['title', 'artist', 'album', 'q'].map(key => [key, String(query[key] || '').slice(0, 300)]));
+    args.duration = Number.isFinite(Number(query.duration)) ? Math.max(0, Number(query.duration)) : 0;
+    if (get().role === 'guest') return rpc('lyrics', args);
+    if (get().apiMode === 'auth') throw new Error(AUTH_HINT);
+    if (get().apiMode !== 'live') return { synced: null, plain: null };
+    const r = await fetch(apiUrl(`/api/lyrics?${new URLSearchParams(args)}`), { headers: authHeaders(), signal: AbortSignal.timeout(12000) });
+    const body = await r.json();
+    if (!r.ok) throw new Error(body.error || `HTTP ${r.status}`);
+    return body;
   },
 
   /** GET /api/search?q=&sources= */
@@ -1370,7 +1386,7 @@ class Session {
       set({ offline: { ...get().offline, ready: true, error: e.message } });
       return console.warn('[library]', e);
     }
-    // 歌单：第一次启动时把已有的歌全部并入「默认曲库」，并清掉指向已删除歌曲的引用
+    // 歌单：创建「我喜欢的音乐」、迁移旧默认曲库，并清掉指向已删除歌曲的引用
     await playlistStore.load(tracks.map((t) => t.id)).catch((e) => console.warn('[playlists]', e));
     if (this.isGuest) return; // 恢复期间已经加入了别人的房间：曲库以房主为准
     const items = await Promise.all(tracks.map(async (t) => fromLocal(t, await LocalLib.coverUrl(t).catch(() => t.coverUrl || null))));
@@ -2181,8 +2197,26 @@ window.__hh = { session, store, api, LocalLib }; // 调试用
 const mediaSession = globalThis.navigator?.mediaSession || null;
 // Android App：通知栏 / 锁屏 / 媒体键 / 桌面小组件全部由原生 PlaybackService 承担（见 nativePlayback.js），
 // WebView 自己的 navigator.mediaSession 在这里不再使用，避免两套会话互相覆盖。
+async function handleNativeWidgetAction(action) {
+  const s = get();
+  if (action === 'favorite') {
+    const item = s.library.find(x => x.id === s.currentId);
+    if (item) await toggleFavorite(item.id);
+  } else if (action === 'mode') {
+    if (s.role === 'guest') return toast('房客不能切换播放模式', 'warn');
+    session.setPlayMode(PLAY_MODES[(PLAY_MODES.indexOf(s.playMode) + 1) % PLAY_MODES.length]);
+  }
+}
 const nativePlayback = isAndroid ? installNativePlayback({
   plugin: nativePlugin('PlaybackSession'), store, get, session, fetchCover, toast,
+  onAction: handleNativeWidgetAction,
+  getCoverKey: item => coverCandidates(item)[0] || '',
+  getSeedColor: async item => {
+    const palettes = await loadCoverPalette(item.id, coverCandidates(item)[0] || '');
+    // A stable accent from the same palette source; native derives both day/night roles.
+    const rgb = palettes?.dark?.['--fsp-accent']?.match(/\d+/g);
+    return rgb?.length === 3 ? '#' + rgb.map(v => Number(v).toString(16).padStart(2, '0')).join('') : '';
+  },
   fallbackArtwork: (title) => fallbackArtwork(title),
 }) : null;
 installPlaybackPersistence({ store, get, session });
@@ -2459,7 +2493,7 @@ async function syncProfile() {
   } catch (e) { console.warn('[profile]', e.message); }
 }
 
-const ASK_PLAYLIST_KEY = 'hh.askPlaylist'; // '0' = 下载 / 导入时不再询问，直接放进默认曲库
+const ASK_PLAYLIST_KEY = 'hh.askPlaylist'; // '0' = 下载 / 导入时不再询问，直接放进曲库，不加入歌单
 const audioFilesOf = (fileList) => [...fileList].filter((f) => f.type.startsWith('audio/') || /\.(mp3|flac|m4a|aac|wav|ogg|opus|webm)$/i.test(f.name));
 const playlistName = (id) => (id === ALL_ID ? ALL_NAME : playlistStore.get(id)?.name || '歌单');
 const playlistNames = (ids) => ids.map((id) => `《${playlistName(id)}》`).join('');
@@ -2470,7 +2504,7 @@ const playlistNames = (ids) => ids.map((id) => `《${playlistName(id)}》`).join
  */
 function askPlaylists({ title, subtitle = '', mode = 'download', preselect = null } = {}) {
   if (get().role === 'guest') return Promise.resolve([]); // 在别人的房间里：歌曲进房主曲库，歌单不适用
-  if (mode !== 'add' && stored(ASK_PLAYLIST_KEY) === '0') return Promise.resolve([INBOX_ID]);
+  if (mode !== 'add' && stored(ASK_PLAYLIST_KEY) === '0') return Promise.resolve([]);
   return new Promise((resolve) => {
     get().playlistPicker?.resolve(null);
     set({ playlistPicker: { title, subtitle, mode, preselect, resolve } });
@@ -2544,7 +2578,9 @@ async function removeItemFromPlaylist(playlistId, itemId) {
 async function addTrackToPlaylists(item) {
   const memberOf = item.localId ? playlistsOf(get().playlists, item.localId) : [];
   const picked = await askPlaylists({ title: '加入歌单', subtitle: item.title, mode: 'add', preselect: memberOf });
-  const fresh = (picked || []).filter(id => !memberOf.includes(id));
+  if (picked === null) return;
+  if (memberOf.includes(FAVORITES_ID) && !picked.includes(FAVORITES_ID)) await playlistStore.removeTracks(FAVORITES_ID, [item.localId]);
+  const fresh = picked.filter(id => !memberOf.includes(id));
   if (fresh.length) await addItemsToPlaylists(fresh, [item.id]);
 }
 
@@ -2567,7 +2603,16 @@ async function importWithPicker(fileList) {
   return session.importFiles(files, { playlists: target });
 }
 
-Object.assign(window.__hh, { playlists: playlistStore, importWithPicker, downloadWithPicker }); // 调试用
+async function toggleFavorite(trackId) {
+  const item = get().library.find(t => t.id === trackId || t.localId === trackId);
+  if (!item) return;
+  const [id] = await localIdsFor([item.id]);
+  if (!id) return;
+  if (playlistStore.get(FAVORITES_ID)?.trackIds.includes(id)) await playlistStore.removeTracks(FAVORITES_ID, [id]);
+  else await playlistStore.addTracks([FAVORITES_ID], [id]);
+}
+
+Object.assign(window.__hh, { playlists: playlistStore, toggleFavorite, importWithPicker, downloadWithPicker }); // 调试用
 
 // ════════════════════════════════════════════════════════════ 下载动作
 async function downloadResult(r, onProgress, { playlists = [] } = {}) {
@@ -2625,7 +2670,7 @@ function saveWhenListed(sourceId, timeout = 20000) {
 // ════════════════════════════════════════════════════════════ 经房主代办的搜索 / 下载（RPC over DataChannel）
 // 手机等非房主设备访问不到 music-service（只对房主电脑本机开放），
 // 加入房间后把请求经 P2P 发给房主，由房主调用本机的 music-service，再把结果 / 进度传回来。
-//   Guest → Host  rpc{id, method: 'health'|'search'|'download', args}
+//   Guest → Host  rpc{id, method: 'health'|'search'|'lyrics'|'download', args}
 //   Host → Guest  rpc-progress{id, p}   rpc-result{id, result | error}
 const rpcPending = new Map();
 function rpc(method, args, onProgress) {
@@ -2650,7 +2695,7 @@ function onRpcReply(m) {
   rpcPending.delete(m.id);
   m.error ? p.reject(new Error(m.error)) : p.resolve(m.result);
 }
-/** Host：执行伙伴的请求。只开放搜索与下载，下载结果进入房主曲库 */
+/** Host：执行伙伴的请求。只开放搜索、歌词与下载，下载结果进入房主曲库 */
 async function handleRpc(m) {
   const reply = (body) => session.send({ type: 'rpc-result', id: m.id, ...body });
   if (get().apiMode !== 'live') return reply({ error: '房主电脑没有启动音乐服务（cd music-service && npm start）' });
@@ -2658,6 +2703,7 @@ async function handleRpc(m) {
     if (m.method === 'health') return reply({ result: { sources: get().sources } });
     if (m.method === 'resolve') return reply({ result: await api.resolve(String(m.args?.url || '').slice(0, 2000)) });
     if (m.method === 'search') return reply({ result: await api.search(String(m.args?.q || '').slice(0, 100), m.args?.sources || []) });
+    if (m.method === 'lyrics') return reply({ result: await api.lyrics(m.args || {}) });
     if (m.method === 'download') {
       const r = m.args?.result;
       if (!r?.id || r.mock) return reply({ error: '无效的曲目' });
@@ -2900,6 +2946,7 @@ function SearchPanel() {
 /** 歌单封面：前 4 首歌的封面拼成 2×2；没有歌时显示图标 */
 function PlaylistCover({ playlist, size = 44, round = 'rounded-xl' }) {
   const library = useStore((s) => s.library);
+  if (playlist.id === FAVORITES_ID) return html`<span class=${cx('grid shrink-0 place-items-center text-white', round)} style=${{ width: size, height: size, flex: '0 0 auto', background: 'linear-gradient(135deg, #d94d79, #783ea8)' }}><${Heart} size=${size * 0.45} fill="currentColor" /></span>`;
   const items = playlist.id === ALL_ID
     ? library.slice(-4).reverse()
     : playlist.trackIds.map((t) => library.find((x) => x.localId === t)).filter(Boolean).slice(0, 4);
@@ -2915,7 +2962,7 @@ function PlaylistCover({ playlist, size = 44, round = 'rounded-xl' }) {
   </span>`;
 }
 
-/** 歌单切换条：全部 / 默认曲库 / 自定义歌单 / 新建 */
+/** 歌单切换条：全部 / 我喜欢的音乐 / 自定义歌单 / 新建 */
 function PlaylistStrip({ view }) {
   const playlists = useStore((s) => s.playlists);
   const libraryCount = useStore((s) => s.library.length);
@@ -2943,7 +2990,7 @@ function PlaylistStrip({ view }) {
   const chips = [{ id: ALL_ID, name: '全部', count: libraryCount }, ...playlists.map((p) => ({ id: p.id, name: p.name, count: p.trackIds.length, system: p.system }))];
   return html`<div class="hh-library-tabs border-b border-ink-700/60 px-3 py-2.5">
     ${!asking && html`<div class="mb-2 flex items-center gap-2 px-1 text-xs text-sand-500">
-      下载 / 导入的歌直接进「默认曲库」<button class="text-host hover:underline" onClick=${restoreAsking}>恢复询问歌单</button>
+      下载 / 导入的歌直接放进曲库，不加入歌单<button class="text-host hover:underline" onClick=${restoreAsking}>恢复询问歌单</button>
     </div>`}
     <div class="scroll-thin -mx-1 flex items-center gap-2 overflow-x-auto px-1 pb-1" role="tablist" aria-label="我的歌单">
       ${chips.map((c) => {
@@ -3017,7 +3064,7 @@ function PlaylistHeader({ view, items, back }) {
           </form>`
         : html`<div class="flex items-center gap-1.5">
             <h3 class="font-semibold">${title}</h3>
-            ${playlist && html`<span class="shrink-0 rounded bg-white/5 px-1.5 text-xs text-sand-400">${playlist.system ? '稍后整理' : playlist.isPublic ? '公开歌单' : '我的歌单'}</span>`}
+            ${playlist && html`<span class="shrink-0 rounded bg-white/5 px-1.5 text-xs text-sand-400">${playlist.system ? '我喜欢的音乐' : playlist.isPublic ? '公开歌单' : '我的歌单'}</span>`}
             ${custom && html`<button class="grid h-7 w-7 shrink-0 place-items-center rounded-full text-sand-500 hover:text-sand-50" onClick=${() => (setName(playlist.name), setRenaming(true))} aria-label="重命名歌单" title="重命名"><${Pencil} size=${13} /></button>`}
       ${custom && !renaming && html`<button class="grid h-9 w-9 shrink-0 place-items-center rounded-full text-sand-500 hover:bg-guest/10 hover:text-guest" onClick=${remove} aria-label="删除歌单" title="删除歌单（歌曲保留）"><${Trash2} size=${15} /></button>`}
           </div>`}
@@ -3094,7 +3141,7 @@ function LibraryPanel() {
           <${ListMusic} size=${14} class="shrink-0" /><span class="truncate">房主正在播放歌单《${roomPlaylist.name}》· ${items.length} 首</span>
         </div>`
       : html`<div class="hh-library-band" role="tablist" aria-label="曲库分类">${[['songs', '歌曲'], ['playlists', '歌单'], ['recent', '最近收听']].map(([id, label]) => html`<button role="tab" aria-selected=${section === id} onClick=${() => { setSection(id); if (id === 'songs') set({ viewPlaylistId: ALL_ID }); }}>${label}</button>`)}</div>
-        ${section === 'playlists' && !expanded && html`<div class="hh-playlist-cards">${playlists.map(p => html`<button class="hh-playlist-card" onClick=${() => openPlaylist(p.id)}><${PlaylistCover} playlist=${p} size=${176} /><strong>${p.name}</strong><small>${p.trackIds.length} 首 · ${p.system ? '默认曲库' : '我的歌单'}</small></button>`)}<button class="hh-playlist-card hh-create-playlist" onClick=${async () => { const name = prompt('新歌单名称'); if (!name?.trim()) return; try { const p = await playlistStore.create(name); openPlaylist(p.id); } catch (e) { toast(e.message, 'warn'); } }}><${Plus} size=${32} /><strong>新建歌单</strong><small>收好此刻的心情</small></button></div>`}
+        ${section === 'playlists' && !expanded && html`<div class="hh-playlist-cards">${playlists.map(p => html`<button class="hh-playlist-card" onClick=${() => openPlaylist(p.id)}><${PlaylistCover} playlist=${p} size=${176} /><strong>${p.name}</strong><small>${p.trackIds.length} 首 · ${p.system ? '我喜欢的音乐' : '我的歌单'}</small></button>`)}<button class="hh-playlist-card hh-create-playlist" onClick=${async () => { const name = prompt('新歌单名称'); if (!name?.trim()) return; try { const p = await playlistStore.create(name); openPlaylist(p.id); } catch (e) { toast(e.message, 'warn'); } }}><${Plus} size=${32} /><strong>新建歌单</strong><small>收好此刻的心情</small></button></div>`}
         ${expanded && html`<${PlaylistHeader} view=${view} items=${items} back=${back} />`}`}
     ${(isGuest || section !== 'playlists' || expanded) && html`
     <div class="hidden grid-cols-[32px_minmax(0,1fr)_88px_72px_56px_76px] gap-3 border-b border-ink-700/60 px-5 py-2 text-xs uppercase tracking-wider text-sand-500 md:grid">
@@ -3352,10 +3399,12 @@ function PlaylistPicker() {
   const [sel, setSel] = useState(() => new Set());
   const [name, setName] = useState('');
   const [skip, setSkip] = useState(false);
+  const [favorite, setFavorite] = useState(false);
   useBackLayer(!!req, () => closePlaylistPicker(null));
   useEffect(() => {
     if (!req) return;
-    setSel(new Set(req.mode === 'add' ? [] : req.preselect || [INBOX_ID]));
+    setSel(new Set((req.mode === 'add' ? [] : req.preselect || []).filter(id => id !== FAVORITES_ID)));
+    setFavorite(!!req.preselect?.includes(FAVORITES_ID));
     setName('');
     setSkip(false);
   }, [req]);
@@ -3371,7 +3420,7 @@ function PlaylistPicker() {
     try {
       const p = await playlistStore.create(name);
       setName('');
-      setSel((s) => new Set([...[...s].filter((id) => req.mode === 'add' || id !== INBOX_ID), p.id])); // 新建的歌单直接选中
+      setSel((s) => new Set([...s, p.id])); // 新建的歌单直接选中
     } catch (err) {
       toast(err.message, 'warn');
     }
@@ -3380,9 +3429,9 @@ function PlaylistPicker() {
     if (skip) {
       try { localStorage.setItem(ASK_PLAYLIST_KEY, '0'); } catch {}
     }
-    closePlaylistPicker([...sel]);
+    closePlaylistPicker([...sel, ...(favorite ? [FAVORITES_ID] : [])]);
   };
-  const count = sel.size;
+  const count = sel.size + (favorite ? 1 : 0);
   const verb = req.mode === 'add' ? '添加' : req.mode === 'import' ? '导入' : '下载';
   return html`<div class="fixed inset-0 z-[75] flex items-end justify-center bg-ink-950/70 backdrop-blur-sm sm:items-center sm:p-6" onClick=${(e) => e.target === e.currentTarget && closePlaylistPicker(null)}>
     <section role="dialog" aria-modal="true" aria-labelledby="pp-title" class="flex max-h-[85vh] w-full max-w-md flex-col overflow-hidden rounded-t-3xl border border-ink-700 bg-ink-900 shadow-2xl sm:rounded-3xl">
@@ -3395,13 +3444,13 @@ function PlaylistPicker() {
         <button class="grid h-8 w-8 place-items-center rounded-full text-sand-400 hover:bg-ink-800 hover:text-sand-50" onClick=${() => closePlaylistPicker(null)} aria-label="取消"><${X} size=${17} /></button>
       </header>
       <div class="scroll-thin flex-1 overflow-y-auto p-2" role="group" aria-label="选择歌单">
-        ${playlists.map((p) => {
+        ${playlists.filter(p => p.id !== FAVORITES_ID).map((p) => {
           const on = sel.has(p.id) || locked.has(p.id);
           return html`<label key=${p.id} class=${cx('flex cursor-pointer items-center gap-3 rounded-xl px-3 py-2.5 hover:bg-white/5', locked.has(p.id) && 'cursor-default opacity-60')}>
             <input type="checkbox" class="h-4 w-4 accent-primary" checked=${on} disabled=${locked.has(p.id)} onChange=${() => toggle(p.id)} />
             <${PlaylistCover} playlist=${p} size=${36} round="rounded-lg" />
             <span class="min-w-0 flex-1">
-              <span class="block truncate text-sm">${p.name}${p.system ? html`<span class="ml-1.5 text-xs text-sand-500">稍后整理</span>` : ''}</span>
+              <span class="block truncate text-sm">${p.name}</span>
               <span class="text-xs text-sand-500 tabular">${p.trackIds.length} 首${locked.has(p.id) ? ' · 已在其中' : ''}</span>
             </span>
           </label>`;
@@ -3413,15 +3462,16 @@ function PlaylistPicker() {
           <button class="shrink-0 rounded-lg border border-host/60 px-3 py-2 text-xs font-medium text-host disabled:opacity-40" disabled=${!name.trim()}>新建</button>
         </form>
       </div>
+      <label class="flex min-h-[44px] items-center gap-2 px-5 text-sm"><input type="checkbox" checked=${favorite} onChange=${e => setFavorite(e.target.checked)} />同时标记为我喜欢</label>
       <footer class="space-y-3 border-t border-ink-700/70 px-5 py-4">
         ${req.mode !== 'add' && html`<label class="flex items-center gap-2 text-xs text-sand-400">
           <input type="checkbox" class="h-3.5 w-3.5 accent-primary" checked=${skip} onChange=${(e) => setSkip(e.target.checked)} />
-          以后不再询问，直接放进「默认曲库」
+          以后不再询问，直接放进曲库，不加入歌单
         </label>`}
         <div class="flex gap-2">
           <button class="flex-1 rounded-xl border border-ink-600 px-4 py-2.5 text-sm text-sand-200 hover:border-sand-400" onClick=${() => closePlaylistPicker(null)}>取消</button>
-          <button class="flex-[2] rounded-xl hh-primary px-4 py-2.5 text-sm font-semibold   disabled:opacity-40" disabled=${!count} onClick=${confirmPick}>
-            ${count ? `${verb}到 ${count} 个歌单` : '至少选一个歌单'}
+          <button class="flex-[2] rounded-xl hh-primary px-4 py-2.5 text-sm font-semibold   disabled:opacity-40" disabled=${req.mode === 'add' && !count && !(locked.has(FAVORITES_ID) && !favorite)} onClick=${confirmPick}>
+            ${count ? `${verb}到 ${count} 个歌单` : req.mode === 'add' ? locked.has(FAVORITES_ID) && !favorite ? '保存修改' : '至少选一个歌单' : '直接放进曲库'}
           </button>
         </div>
       </footer>
@@ -3509,25 +3559,92 @@ function VolumeSlider({ value, onChange, className = 'hh flex-1' }) {
   return html`<input ref=${ref} type="range" class=${className} min="0" max="1" step="0.01" value=${value} style=${{ '--fill': `${value * 100}%` }} aria-label="音量" title="按住圆点拖动调节音量" onInput=${e => onChange(Number(e.target.value))} />`;
 }
 
-function SeekBar() {
+// Sample at <=2px intervals: smooth 20px sine periods with bounded endpoints.
+function wavePath(width, phase = 0) {
+  const end = Math.max(7, width - 7), points = Math.max(1, Math.ceil((end - 7) / 2));
+  return Array.from({ length: points + 1 }, (_, i) => {
+    const x = 7 + (end - 7) * i / points;
+    const y = 22 + 3 * Math.sin((x - 7) * Math.PI / 10 + phase);
+    return `${i ? 'L' : 'M'}${x.toFixed(2)},${y.toFixed(2)}`;
+  }).join(' ');
+}
+
+function WavyProgress({ value, duration, playing, dragging, open }) {
+  const container = useRef(null), path = useRef(null), phase = useRef(0);
+  const [width, setWidth] = useState(0), [waving, setWaving] = useState(false);
+  const clipId = `fsp-wave-${useId().replace(/:/g, '')}`;
+  const known = Number.isFinite(duration) && duration > 0;
+  const ratio = known ? Math.max(0, Math.min(1, (Number.isFinite(value) ? value : 0) / duration)) : 0;
+  const end = Math.max(7, width - 7), x = 7 + ratio * (end - 7);
+  useEffect(() => {
+    const measure = () => setWidth(container.current?.getBoundingClientRect().width || 0);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(container.current);
+    return () => observer.disconnect();
+  }, []);
+  useEffect(() => {
+    const media = window.matchMedia('(prefers-reduced-motion: reduce)');
+    let frame = null, previous = null;
+    const stop = () => { if (frame !== null) cancelAnimationFrame(frame); frame = null; previous = null; };
+    const tick = time => {
+      // Recheck the gates before drawing, including visibility changes queued this frame.
+      if (!allowed()) { stop(); setWaving(false); return; }
+      if (previous !== null) phase.current = (phase.current + Math.min(64, time - previous) * .004) % (Math.PI * 2);
+      previous = time;
+      path.current?.setAttribute('d', wavePath(width, phase.current));
+      frame = requestAnimationFrame(tick);
+    };
+    const allowed = () => playing && open && known && width > 14 && !dragging && document.visibilityState === 'visible' && !media.matches;
+    const update = () => {
+      stop();
+      const active = allowed();
+      setWaving(active);
+      if (active) frame = requestAnimationFrame(tick);
+    };
+    update();
+    document.addEventListener('visibilitychange', update);
+    media.addEventListener('change', update);
+    return () => { stop(); document.removeEventListener('visibilitychange', update); media.removeEventListener('change', update); };
+  }, [playing, open, known, dragging, width]);
+  return html`<span ref=${container} class="fsp-wave" aria-hidden="true">
+    <svg width="100%" height="44" viewBox=${`0 0 ${Math.max(14, width)} 44`} preserveAspectRatio="none" focusable="false" aria-hidden="true">
+      <defs><clipPath id=${clipId} clipPathUnits="userSpaceOnUse"><rect x="0" y="0" width=${known ? x : 0} height="44" /></clipPath></defs>
+      <line x1=${known ? x : 7} y1="22" x2=${end} y2="22" stroke="var(--fsp-on-bg)" strokeOpacity="0.35" strokeWidth="4" strokeLinecap="round" />
+      ${known && html`<g clipPath=${`url(#${clipId})`}>
+        <line class="fsp-wave-flat" x1="7" y1="22" x2=${end} y2="22" stroke="var(--fsp-accent)" strokeWidth="4" strokeLinecap="round" style=${{ opacity: waving ? 0 : 1 }} />
+        <g class="fsp-wave-amplitude" style=${{ transform: `scaleY(${waving ? 1 : 0})` }}><path ref=${path} d=${wavePath(width, phase.current)} fill="none" stroke="var(--fsp-accent)" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" /></g>
+      </g>`}
+      ${known && width > 14 && html`<circle cx=${x} cy="22" r="7" fill="var(--fsp-accent)" />`}
+    </svg>
+  </span>`;
+}
+
+function SeekBar({ stacked = false, open = false }) {
   const duration = useStore((s) => s.duration);
   const loaded = useStore((s) => s.loaded);
   const role = useStore((s) => s.role);
   const conn = useStore((s) => s.conn);
+  const playing = useStore((s) => s.playing);
   const pos = usePosition();
   const [drag, setDrag] = useState(null);
+  const [interacting, setInteracting] = useState(false);
   const v = drag ?? pos;
   const canSeek = loaded && (role !== 'guest' || conn === 'open');
   const commit = () => {
+    setInteracting(false);
     if (drag == null) return;
     session.act('seek', { position: drag });
     setDrag(null);
   };
-  return html`<div class="flex w-full items-center gap-3 text-xs text-sand-400 tabular">
-    <span class="w-10 text-right">${fmtTime(v)}</span>
-    <input type="range" class="hh flex-1" min="0" max=${duration || 0} step="0.1" value=${v} disabled=${!canSeek}
+  const range = html`<input type="range" class="hh flex-1" min="0" max=${duration || 0} step="0.1" value=${v} disabled=${!canSeek}
       style=${{ '--fill': `${duration ? (v / duration) * 100 : 0}%` }} aria-label="播放进度"
-      onInput=${(e) => setDrag(Number(e.target.value))} onPointerUp=${commit} onKeyUp=${commit} onBlur=${commit} />
+      onPointerDown=${() => setInteracting(true)} onPointerCancel=${() => setInteracting(false)}
+      onKeyDown=${e => { if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown'].includes(e.key)) setInteracting(true); }}
+      onInput=${(e) => setDrag(Number(e.target.value))} onPointerUp=${commit} onKeyUp=${commit} onBlur=${commit} />`;
+  return html`<div class=${cx('flex w-full items-center gap-3 text-xs text-sand-400 tabular', stacked && 'fsp-seek')}>
+    <span class="w-10 text-right">${fmtTime(v)}</span>
+    ${stacked ? html`<div class="fsp-seek-track"><${WavyProgress} value=${v} duration=${duration} playing=${playing} dragging=${interacting || drag != null} open=${open} />${range}</div>` : range}
     <span class="w-10">${fmtTime(duration)}</span>
   </div>`;
 }
@@ -4989,48 +5106,206 @@ function UpNextPanel() {
   </section>`;
 }
 
+function LyricsSheet({ item, close, open }) {
+  const s = useStore(s => s), position = usePosition();
+  const [result, setResult] = useState({ key: '', status: 'loading', data: null, error: '' });
+  const [view, setView] = useState('sync'), [revision, setRevision] = useState(0);
+  const force = useRef(false), sheet = useRef(null), list = useRef(null);
+  const query = lyricsQuery(item, item?.duration || s.duration);
+  const key = JSON.stringify([item?.id, query]);
+  const cacheId = item?.localId || item?.id;
+  const [trackOffset, setTrackOffset] = useState(() => ({ id: cacheId, value: lyricsCache.getOffset(cacheId) }));
+  const offset = trackOffset.id === cacheId ? trackOffset.value : 0;
+  const updateOffset = value => setTrackOffset({ id: cacheId, value: lyricsCache.setOffset(cacheId, value) });
+  useBackLayer(true, close);
+  useEffect(() => {
+    const previous = document.activeElement;
+    sheet.current?.querySelector('button:not(:disabled)')?.focus();
+    return () => { if (previous?.isConnected) previous.focus(); };
+  }, []);
+  useEffect(() => {
+    let active = true;
+    const refresh = force.current; force.current = false;
+    setTrackOffset({ id: cacheId, value: lyricsCache.getOffset(cacheId) });
+    setResult({ key, status: 'loading', data: null, error: '' });
+    const apply = data => {
+      if (!active) return;
+      setResult({ key, status: 'ready', data, error: '' });
+      setView(parseLrc(data?.synced).length ? 'sync' : 'plain');
+    };
+    if (!query) apply({ synced: null, plain: null });
+    else {
+      const cached = !refresh && lyricsCache.get(cacheId);
+      if (cached) apply(cached);
+      else api.lyrics(query).then(data => {
+        if (!active) return;
+        lyricsCache.set(cacheId, data); apply(data);
+      }).catch(e => { if (active) setResult({ key, status: 'error', data: null, error: /[\u4e00-\u9fff]/.test(e.message || '') ? e.message : '网络连接失败，请稍后重试' }); });
+    }
+    return () => { active = false; };
+  }, [key, revision]);
+  const current = result.key === key ? result : { status: 'loading', data: null };
+  const lines = useMemo(() => parseLrc(current.data?.synced), [current.data?.synced]);
+  const index = currentLineIndex(lines, position + offset);
+  const synced = view === 'sync' && lines.length > 0;
+  const plain = current.data?.plain || lines.map(line => line.text).join('\n');
+  useEffect(() => {
+    const box = list.current;
+    if (!box) return;
+    const centre = () => {
+      box.style.setProperty('--lyrics-centre-space', `${box.clientHeight / 2}px`);
+      if (!synced || index < 0) return;
+      const row = box.querySelector(`[data-line-index="${index}"]`);
+      if (row) box.scrollTo({ top: Math.max(0, row.offsetTop - (box.clientHeight - row.offsetHeight) / 2), behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+    };
+    centre();
+    const observer = new ResizeObserver(centre); observer.observe(box);
+    return () => observer.disconnect();
+  }, [index, synced, key, lines]);
+  const retry = () => { lyricsCache.remove(cacheId); force.current = true; setRevision(value => value + 1); };
+  const can = !!item && (s.loaded || s.role !== 'guest') && (s.role !== 'guest' || s.conn === 'open');
+  const canSeekLine = !!item && s.loaded && s.role !== 'guest';
+  return html`<section ref=${sheet} class="fsp-lyrics-sheet" aria-label="歌词" onKeyDown=${e => { if (e.key === 'Escape') { e.stopPropagation(); close(); } }}>
+    <div class="fsp-lyrics-heading"><div class="fsp-lyrics-toolbar"><div class="fsp-lyrics-tabs" role="group" aria-label="歌词显示方式"><button disabled=${!lines.length} aria-pressed=${synced} onClick=${() => setView('sync')}>同步</button><button aria-pressed=${!synced} onClick=${() => setView('plain')}>静态</button></div><button class="fsp-lyrics-close" onClick=${close} aria-label="关闭歌词"><${X} size=${20} /></button></div>
+      ${lines.length > 0 && synced && html`<p class="fsp-lyrics-hint fsp-muted">歌词按原版时长匹配，不同步时可微调偏移</p><div class="fsp-lyrics-offset" role="group" aria-label="歌词时间偏移"><button aria-label="歌词偏移减少 0.5 秒" disabled=${offset <= -30} onClick=${() => updateOffset(offset - 0.5)}>-0.5s</button><span class=${cx('fsp-offset-label', offset === 0 && 'fsp-muted')} aria-live="polite">偏移 ${offset > 0 ? '+' : ''}${offset.toFixed(1)}s</span><button aria-label="歌词偏移增加 0.5 秒" disabled=${offset >= 30} onClick=${() => updateOffset(offset + 0.5)}>+0.5s</button><button class="fsp-offset-reset" aria-label="重置歌词偏移" disabled=${offset === 0} onClick=${() => updateOffset(0)}>重置</button></div>`}
+    </div>
+    <div ref=${list} class="fsp-lyrics-scroll" aria-busy=${current.status === 'loading'}><div class=${cx('fsp-lyrics-content', synced && 'fsp-lyrics-content-synced')}>
+      ${current.status === 'loading' ? html`<p class="fsp-lyrics-message" role="status">正在查找歌词…</p>` : current.status === 'error' ? html`<div class="fsp-lyrics-message" role="alert"><p>歌词加载失败</p><p class="text-sm fsp-muted">${current.error}</p><button onClick=${retry}>重新获取</button></div>` : !lines.length && !plain ? html`<div class="fsp-lyrics-message"><p>没有找到歌词</p><button onClick=${retry}>重新获取</button></div>` : synced ? lines.map((line, i) => html`<button key=${`${i}-${line.time}`} data-line-index=${i} class=${cx('fsp-lyrics-line text-lg', index === i && 'fsp-lyrics-current')} aria-current=${index === i ? 'true' : undefined} disabled=${!canSeekLine} onClick=${() => { if (canSeekLine) session.act('seek', { position: Math.max(0, line.time - offset) }); }}>${line.text || '♪'}</button>`) : html`<p class="fsp-lyrics-plain text-lg">${plain}</p>`}
+    </div></div>
+    <footer class="fsp-lyrics-controls"><${SeekBar} stacked=${true} open=${open} /><button class="fsp-lyrics-play" disabled=${!can} onClick=${() => session.act('toggle')} aria-label=${s.playing ? '暂停' : '播放'}><${s.playing ? Pause : Play} size=${24} /></button></footer>
+  </section>`;
+}
+
+function PlayerQueueDrawer({ close }) {
+  const s = useStore(s => s), ref = useRef(null);
+  useBackLayer(true, close);
+  useEffect(() => {
+    const previous = document.activeElement;
+    ref.current?.querySelector('button')?.focus();
+    return () => previous?.isConnected && previous.focus();
+  }, []);
+  return html`<div class="fsp-queue-backdrop fixed inset-0 z-[80] flex items-end justify-center bg-black/60" onClick=${e => e.target === e.currentTarget && close()}>
+    <section ref=${ref} role="dialog" aria-modal="true" aria-label="播放队列" class="fsp-queue-sheet w-full max-w-xl overflow-y-auto rounded-t-3xl border border-ink-700 bg-ink-900 p-5" onKeyDown=${e => {
+      if (e.key === 'Escape') { e.stopPropagation(); close(); }
+      if (e.key === 'Tab') {
+        const buttons = [...ref.current.querySelectorAll('button:not(:disabled),input:not(:disabled)')];
+        const first = buttons[0], last = buttons[buttons.length - 1];
+        if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last?.focus(); }
+        else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first?.focus(); }
+      }
+    }}>
+      <header class="flex items-center justify-between"><h2 class="font-bold">播放队列</h2><button class="grid h-11 w-11 place-items-center" onClick=${close} aria-label="关闭队列"><${X} size=${22} /></button></header>
+      <${UpNextPanel} />
+      <div class="hh-player-side mt-5"><h2 class="hh-eyebrow">两人状态</h2>
+        <div class="hh-presence row" role="status"><span class="hh-person host">${s.me?.name || '你'} · ${s.role === 'guest' ? '房客' : '房主 / 本机'}</span><span class="hh-person guest">${s.peer?.name || '等待好友加入'}</span><span>${s.waitingPeer ? '等待对方缓冲…' : s.conn === 'open' ? '已连接' : s.conn === 'reconnecting' ? '正在重连…' : s.role ? '等待连接' : '本机收听'}</span></div>
+        <${CoListenPill} />
+      </div>
+    </section>
+  </div>`;
+}
+
 function NativePlayer({ open, close, expand }) {
   const s = useStore(s => s), item = s.library.find(x => x.id === s.currentId);
-  const [dy, setDy] = useState(0), start = useRef(null);
+  const [dy, setDy] = useState(0), start = useRef(null), closeTimer = useRef(null);
+  const [queueOpen, setQueueOpen] = useState(false);
+  const closing = useRef(false), miniExpand = useRef(null), closeAction = useRef(close), queueState = useRef(queueOpen);
+  closeAction.current = close; queueState.current = queueOpen;
+  const finishSwipeClose = () => {
+    if (!closing.current) return;
+    closing.current = false; clearTimeout(closeTimer.current);
+    closeAction.current(); setDy(0);
+  };
+  const [colors, setColors] = useState(null);
+  const [theme, setTheme] = useState(() => document.documentElement.dataset.theme === 'light' ? 'light' : 'dark');
+  const [lyricsOpen, setLyricsOpen] = useState(false);
+  const lyricsState = useRef(lyricsOpen); lyricsState.current = lyricsOpen;
+  const coverUrl = coverCandidates(item)[0] || '';
+  const paletteKey = `${item?.id || ''}|${coverUrl}`;
+  useEffect(() => {
+    let active = true;
+    setColors(null);
+    if (item) loadCoverPalette(item.id, coverUrl).then(palettes => { if (active) setColors({ key: paletteKey, palettes }); });
+    return () => { active = false; };
+  }, [paletteKey]);
+  useEffect(() => {
+    const observer = new MutationObserver(() => setTheme(document.documentElement.dataset.theme === 'light' ? 'light' : 'dark'));
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+    return () => observer.disconnect();
+  }, []);
+  const palette = colors?.key === paletteKey ? colors.palettes?.[theme] : null;
   useBackLayer(open, close);
   useEffect(() => {
-    if (!open) return;
-    setDy(0);
-    const overflow = document.body.style.overflow, rootOverflow = document.documentElement.style.overflow; document.body.style.overflow = 'hidden'; document.documentElement.style.overflow = 'hidden';
-    const onKey = e => { if (e.key === 'Escape') close(); };
+    clearTimeout(closeTimer.current); closing.current = false; setDy(0);
+    if (!open) { setQueueOpen(false); setLyricsOpen(false); return; }
+    const overflow = document.body.style.overflow, rootOverflow = document.documentElement.style.overflow;
+    document.body.style.overflow = 'hidden'; document.documentElement.style.overflow = 'hidden';
+    document.querySelector('.fullscreen-player [aria-label="收起播放器"]')?.focus();
+    const onKey = e => {
+      const panel = document.querySelector('.fullscreen-player');
+      if (e.key === 'Escape') {
+        if (get().queueSheetOpen) { set({ queueSheetOpen: false }); return; }
+        if (queueState.current) setQueueOpen(false);
+        else if (lyricsState.current) setLyricsOpen(false);
+        else closeAction.current();
+        return;
+      }
+      if (!panel || !panel.contains(e.target)) return;
+      if (e.key === 'Tab') {
+        const buttons = [...panel.querySelectorAll('button:not(:disabled),input:not(:disabled),summary')].filter(el => el.getClientRects().length);
+        const first = buttons[0], last = buttons[buttons.length - 1];
+        if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last?.focus(); }
+        else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first?.focus(); }
+      }
+    };
     document.addEventListener('keydown', onKey);
-    return () => { document.body.style.overflow = overflow; document.documentElement.style.overflow = rootOverflow; document.removeEventListener('keydown', onKey); };
+    return () => { clearTimeout(closeTimer.current); start.current = null; document.body.style.overflow = overflow; document.documentElement.style.overflow = rootOverflow; document.removeEventListener('keydown', onKey); closing.current = false; miniExpand.current?.focus(); };
   }, [open]);
   const can = !!item && (s.loaded || s.role !== 'guest') && (s.role !== 'guest' || s.conn === 'open');
   const receiving = item && s.role === 'guest' && !s.loaded;
+  const favorite = !!item?.localId && s.playlists.some(p => p.id === FAVORITES_ID && p.trackIds.includes(item.localId));
+  const repeat = s.playMode === 'loopAll' ? '全部循环' : s.playMode === 'loopOne' ? '单曲循环' : '关';
   if (!item && !s.role) return null;
   return html`<div>
-    <div hidden=${open} class="mini-player fixed inset-x-0 z-40 border-t border-ink-700 bg-ink-950/95 px-4 py-2 backdrop-blur-xl" style=${{ paddingLeft: 'max(16px, var(--safe-left))', paddingRight: 'max(16px, var(--safe-right))', bottom: 'calc(64px + var(--safe-bottom, 0px))' }}>
+    <div hidden=${open} class="mini-player fixed inset-x-0 z-40 border-t border-ink-700 bg-ink-950/95 px-4 py-2 backdrop-blur-xl" style=${{ ...(palette && { background: `color-mix(in srgb, ${palette['--fsp-bg']} 35%, var(--color-bg-canvas))` }), paddingLeft: 'max(16px, var(--safe-left))', paddingRight: 'max(16px, var(--safe-right))', bottom: 'calc(64px + var(--safe-bottom, 0px))' }}>
       <div class="mx-auto flex max-w-5xl items-center gap-3">
-        <button class="flex min-w-0 flex-1 items-center gap-3 text-left" onClick=${expand} aria-label="展开播放器"><${Cover} item=${item} size=${44} /><span class="min-w-0"><span class="block truncate text-sm font-semibold">${item?.title || '从曲库选择一首歌'}</span><span class="text-xs text-sand-400">${receiving ? `${item.artist || '好友'} · 正在从好友获取音频…` : s.conn === 'open' ? `${item?.artist || ''} · ♫ 正在一起听` : item?.artist || 'Half&Half'}</span></span></button>
+        <button ref=${miniExpand} class="flex min-w-0 flex-1 items-center gap-3 text-left" onClick=${expand} aria-label="展开播放器"><${Cover} item=${item} size=${44} /><span class="min-w-0"><span class="block truncate text-sm font-semibold">${item?.title || '从曲库选择一首歌'}</span><span class="text-xs text-sand-400">${receiving ? `${item.artist || '好友'} · 正在从好友获取音频…` : s.conn === 'open' ? `${item?.artist || ''} · ♫ 正在一起听` : item?.artist || 'Half&Half'}</span></span></button>
         <${CoListenPill} />
         <button class="p-3 disabled:opacity-30" disabled=${!can} onClick=${() => session.act('toggle')} aria-label=${s.playing ? '暂停' : '播放'}><${s.playing ? Pause : Play} size=${23} /></button>
         <button class="p-3 disabled:opacity-30" disabled=${!can || !s.canNext} onClick=${() => session.act('next')} aria-label="下一首"><${SkipForward} size=${23} /></button>
       </div>
     </div>
-    ${open && html`<section role="dialog" aria-modal="true" aria-label="正在播放" class="fullscreen-player fixed inset-0 z-[65] flex flex-col overflow-y-auto bg-ink-950 p-6" style=${{ paddingTop: 'calc(var(--safe-top, 0px) + 20px)', paddingBottom: 'calc(var(--safe-bottom, 0px) + 24px)', transform: typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'none' : `translateY(${dy}px)`, transition: start.current === null ? 'transform var(--motion-duration-normal) var(--motion-ease-standard)' : 'none' }}
-      onTouchStart=${e => { if (e.target.closest('button,input') || e.currentTarget.scrollTop > 0) return; start.current = e.touches[0].clientY; }}
+    ${open && html`<section role="dialog" aria-modal="true" aria-label="正在播放" class=${cx('fullscreen-player fixed inset-0 z-[65] flex flex-col overflow-hidden p-6', lyricsOpen && 'fsp-lyrics-open')} style=${{ ...palette, transform: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'none' : `translateY(${dy}px)`, ...(start.current !== null && { transition: 'none' }) }}
+      onTransitionEnd=${e => { if (e.target === e.currentTarget && e.propertyName === 'transform') finishSwipeClose(); }}
+      onTouchStart=${e => { if (closing.current || e.target.closest('button,input,summary,details,.fsp-lyrics-sheet') || e.currentTarget.scrollTop > 0 || queueOpen) return; clearTimeout(closeTimer.current); start.current = e.touches[0].clientY; }}
       onTouchMove=${e => { if (start.current !== null) setDy(Math.max(0, e.touches[0].clientY - start.current)); }}
-      onTouchEnd=${() => { start.current = null; if (dy > 100 && window.matchMedia('(prefers-reduced-motion: reduce)').matches) { close(); setDy(0); } else if (dy > 100) { setDy(window.innerHeight); setTimeout(() => { close(); setDy(0); }, 220); } else setDy(0); }} onTouchCancel=${() => { start.current = null; setDy(0); }}>
-      <button class="mx-auto p-3 text-sand-400" onClick=${close} aria-label="收起播放器"><${ChevronDown} size=${28} /></button>
-      <div class="hh-expanded-layout"><div class="hh-expanded-main mx-auto flex w-full max-w-md flex-col items-center justify-center gap-7">
-        <div class="hh-player-art"><${Cover} item=${item} size=${340} round="rounded-2xl" /></div>
-        <div class="w-full text-center"><h2 class="text-xl font-bold">${item?.title || '未在播放'}</h2><p class="mt-2 text-sand-400">${item?.artist || '选择喜欢的音乐'}</p>${receiving && html`<p role="status" class="mt-2 text-sm text-sand-400">正在从好友获取音频…</p>`}<p class="mt-2 text-xs text-sand-400">已完整聆听 ${trackCompletedCount(item)} 次</p></div>
-        <${SeekBar} />
-        <div class="hh-player-transport w-full"><${PlayModeButton} /><button disabled=${!can} onClick=${() => session.act('prev')} aria-label="上一首"><${SkipBack} size=${28} /></button><button data-role=${s.role} class="player-primary rounded-full hh-primary disabled:opacity-30" disabled=${!can} onClick=${() => session.act('toggle')} aria-label=${s.playing ? '暂停' : '播放'}><${s.playing ? Pause : Play} size=${30} /></button><button disabled=${!can || !s.canNext} onClick=${() => session.act('next')} aria-label="下一首"><${SkipForward} size=${28} /></button><button disabled=${s.role === 'guest'} onClick=${() => set({ queueSheetOpen: true })} aria-label="切换歌单" title="切换歌单"><${ListMusic} size=${24} /></button></div>
-        <div class="flex w-full items-center gap-3 text-sand-400"><${s.volume ? Volume2 : VolumeX} size=${20} /><${VolumeSlider} value=${s.volume} onChange=${v => session.setVolume(v)} /></div>
-        <${SyncStatus} />
-      </div><aside class="hh-player-side"><h2 class="hh-eyebrow">两人状态</h2>
-        <div class="hh-presence row" role="status"><span class="hh-person host">${s.me?.name || '你'} · ${s.role === 'guest' ? '房客' : '房主 / 本机'}</span><span class="hh-person guest">${s.peer?.name || '等待好友加入'}</span><span>${s.waitingPeer ? '等待对方缓冲…' : receiving ? '正在接收音频…' : s.conn === 'open' ? '已连接' : s.conn === 'reconnecting' ? '正在重连…' : s.role ? '等待连接' : '本机收听'}</span></div>
-      <${CoListenPill} />
-        <${UpNextPanel} />
-      </aside></div>
+      onTouchEnd=${() => {
+        start.current = null;
+        if (dy <= 100) return setDy(0);
+        if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) { close(); setDy(0); return; }
+        closing.current = true;
+        setDy(window.innerHeight);
+        const token = getComputedStyle(document.documentElement).getPropertyValue('--motion-duration-normal').trim();
+        const duration = parseFloat(token) * (token.endsWith('ms') ? 1 : 1000);
+        if (duration === 0) finishSwipeClose();
+        else closeTimer.current = setTimeout(finishSwipeClose, (Number.isFinite(duration) ? duration : 180) + 60);
+      }} onTouchCancel=${() => { start.current = null; setDy(0); }}>
+      <header class="fsp-header"><button onClick=${close} aria-label="收起播放器"><${ChevronDown} size=${28} /></button><h1>正在播放</h1><div class="fsp-header-actions"><button onClick=${() => setLyricsOpen(value => !value)} aria-label="歌词" aria-pressed=${!!lyricsOpen}><${FileText} size=${20} /><span>歌词</span></button><button onClick=${() => setQueueOpen(true)} aria-label="队列"><${ListMusic} size=${20} /><span>队列</span></button></div></header>
+      <div hidden=${!!lyricsOpen} class="fsp-main mx-auto flex w-full max-w-md flex-col items-center">
+        <div class=${cx('hh-player-art', !s.playing && 'fsp-paused')}><${Cover} item=${item} size=${340} round="rounded-[28px]" /></div>
+        <div class="fsp-metadata w-full text-center"><h2 class="text-2xl font-bold">${item?.title || '未在播放'}</h2><p class="text-base fsp-muted">${item?.artist || '选择喜欢的音乐'}</p><p class="text-xs fsp-muted">已完整聆听 ${trackCompletedCount(item)} 次</p></div>
+        <${SeekBar} stacked=${true} open=${open && !lyricsOpen} />
+        <div class="hh-player-transport w-full"><button disabled=${!can} onClick=${() => session.act('prev')} aria-label="上一首"><${SkipBack} size=${28} /></button><button data-role=${s.role} class="player-primary disabled:opacity-30" disabled=${!can} onClick=${() => session.act('toggle')} aria-label=${s.playing ? '暂停' : '播放'}><${s.playing ? Pause : Play} size=${30} /></button><button disabled=${!can || !s.canNext} onClick=${() => session.act('next')} aria-label="下一首"><${SkipForward} size=${28} /></button></div>
+        <div class="fsp-toggles" role="group" aria-label="播放模式与喜欢">
+          <button disabled=${s.role === 'guest'} aria-label=${`随机播放：${s.playMode === 'shuffle' ? '开' : '关'}`} aria-pressed=${s.playMode === 'shuffle'} onClick=${() => session.setPlayMode(s.playMode === 'shuffle' ? 'order' : 'shuffle')}><${Shuffle} size=${19} /><span>随机</span></button>
+          <button disabled=${s.role === 'guest'} aria-label=${`循环：${repeat}`} aria-pressed=${s.playMode === 'loopAll' || s.playMode === 'loopOne'} onClick=${() => session.setPlayMode(s.playMode === 'loopAll' ? 'loopOne' : s.playMode === 'loopOne' ? 'order' : 'loopAll')}><${s.playMode === 'loopOne' ? Repeat1 : Repeat} size=${19} /><span>${repeat === '关' ? '循环' : repeat}</span></button>
+          <button disabled=${!item || receiving} aria-label="我喜欢的音乐" aria-pressed=${favorite} onClick=${() => toggleFavorite(item.id).catch(e => toast(e.message, 'warn'))}><${Heart} size=${19} fill=${favorite ? 'currentColor' : 'none'} /><span>喜欢</span></button>
+        </div>
+        <div class="fsp-status">${receiving ? html`<div role="status" class="min-w-0 flex-1 truncate text-xs fsp-muted">正在从好友获取音频…</div>` : html`<${SyncStatus} />`}<${CoListenPill} /></div>
+
+      </div>
+      ${lyricsOpen && html`<${LyricsSheet} item=${item} close=${() => setLyricsOpen(false)} open=${open} />`}
     </section>`}
+    ${open && queueOpen && html`<${PlayerQueueDrawer} close=${() => setQueueOpen(false)} />`}
   </div>`;
 }
 
