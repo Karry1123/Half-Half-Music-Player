@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PixelPlayer × Half&Half 截图对比</title>
+<style>
+:root{font-family:system-ui,"Segoe UI","Microsoft YaHei",sans-serif;color:#F7F0E8;background:#0E0C0B}
+body{margin:0;padding:32px 24px}
+h1{font-size:22px;margin:0 0 6px}
+p.lead{color:#b7aaa0;font-size:13px;margin:0 0 28px}
+section{margin-bottom:40px}
+h2{font-size:16px;margin:0 0 12px;color:#D7852F}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:20px;align-items:start}
+figure{margin:0;background:#17130f;border:1px solid #2a2320;border-radius:16px;padding:12px}
+figure img{width:100%;border-radius:12px;display:block}
+figcaption{font-size:12px;color:#b7aaa0;margin-top:8px;line-height:1.6}
+figcaption b{color:#F7F0E8}
+ul{font-size:13px;line-height:1.8;color:#d8ccc2;margin:12px 0 0;padding-left:18px}
+</style>
+</head>
+<body>
+<h1>PixelPlayer × Half&Half 截图对比</h1>
+<p class="lead">左列：PixelPlayer（仓库 README 截图）。右列：Half&Half 当前版本（本地 dashboard.html，412×915 深色）。详细分析见 ../pixelplayer-comparison.md。</p>
+
+<section>
+<h2>1. 正在播放页</h2>
+<div class="row">
+<figure><img src="pp-now-playing.jpg" alt="PixelPlayer Now Playing"><figcaption><b>PixelPlayer</b>：整页背景取自封面色板（primaryContainer）；封面占满宽度、18dp 圆角；标题/艺人字号差明显；波浪进度条、时间在轨道下方；前曲/播放/后曲三大胶囊；底部 shuffle/repeat/favorite 三段胶囊；顶栏有 Now Playing 标题、收起、歌词、队列。</figcaption></figure>
+<figure><img src="hh-now-playing.jpg" alt="Half&Half 正在播放"><figcaption><b>Half&Half</b>：固定暖黑背景，不随封面变色；封面 340px 上限、16px 圆角；标题下还有“已完整聆听 N 次”；时间与直线进度同一行；模式/前曲/播放/后曲/歌单五个控件一排，只有中央填色；音量条常驻；下方紧接“两人状态”与“接下来”卡片，需要滚动。</figcaption></figure>
+</div>
+<ul>
+<li>共同点：方形封面居中、歌名+艺人、进度、前后曲与播放暂停、下拉收起。</li>
+<li>主要差异：封面色板背景、控件分层（主控制三键 vs 五键一排）、进度条形态、顶栏信息。</li>
+</ul>
+</section>
+
+<section>
+<h2>1b. 改造后（2026-11-05，本地未提交版本）</h2>
+<div class="row">
+<figure><img src="hh-now-playing-after.jpg" alt="Half&Half 改造后正在播放"><figcaption><b>正在播放（412×915）</b>：封面取色背景、28px 圆角封面、可见顶栏（收起 / 正在播放 / 歌词 / 队列）、时间在轨道下方的波浪进度、三大胶囊主控制、随机 / 循环 / 喜欢 胶囊组、单行双人状态、音量与次数收进“详情”。</figcaption></figure>
+<figure><img src="hh-now-playing-after-360x640.jpg" alt="Half&Half 改造后 360×640"><figcaption><b>短屏（360×640）</b>：封面按高度预算缩小，主控制仍在首屏。</figcaption></figure>
+</div>
+<div class="row" style="margin-top:20px">
+<figure><img src="hh-lyrics-after.jpg" alt="Half&Half 歌词页"><figcaption><b>歌词页</b>：同步 / 静态切换，当前行加粗高亮并居中，点行可跳转；来源 LRCLIB，经 music-service 代理与本地缓存。</figcaption></figure>
+<figure><img src="hh-queue-after.jpg" alt="Half&Half 队列抽屉"><figcaption><b>队列抽屉</b>：接下来列表、替换播放歌单（房主）、两人状态卡从首屏移入这里。</figcaption></figure>
+</div>
+<div class="row" style="margin-top:20px">
+<figure><img src="hh-playlists-after.jpg" alt="Half&Half 歌单页"><figcaption><b>歌单页</b>：“我喜欢的音乐”固定第一位、爱心封面；“默认曲库”概念已移除（图中残留的空“默认曲库”已在后续轮次改为自动删除）。</figcaption></figure>
+</div>
+</section>
+
+<section>
+<h2>2. 首页 / 发现</h2>
+<div class="row">
+<figure><img src="pp-home.jpg" alt="PixelPlayer Home"><figcaption><b>PixelPlayer</b>：超大标题、圆形主播放键、封面拼贴；mini player 为封面色胶囊；底部三 tab 大圆角浮动栏。</figcaption></figure>
+<figure><img src="hh-home.jpg" alt="Half&Half 发现页"><figcaption><b>Half&Half</b>：Eyebrow + 标题卡片、搜索框、来源筛选、推荐横滑；底部四 tab 贴底栏。整体更偏信息密集的工具型布局。</figcaption></figure>
+</div>
+</section>
+
+<section>
+<h2>3. 曲库列表 + mini player</h2>
+<div class="row">
+<figure><img src="pp-library.jpg" alt="PixelPlayer Library"><figcaption><b>PixelPlayer</b>：胶囊分段 tab、每行独立圆角卡片、封面 16dp 圆角、大字号；mini player 随封面变色并有两个圆按钮。</figcaption></figure>
+<figure><img src="hh-library.jpg" alt="Half&Half 曲库"><figcaption><b>Half&Half</b>：列表行更紧凑、当前播放行高亮；mini player 为固定色条，封面小方图 + 暂停/下一首。</figcaption></figure>
+</div>
+</section>
+
+<section>
+<h2>4. 桌面小组件</h2>
+<div class="row">
+<figure><figcaption style="margin:0 0 8px"><b>PixelPlayer</b>（无 README 截图，按源码归纳）：4×1 bar、4×2 control、2×2 grid 三种专用版式；容器 28dp 圆角、16dp 内边距；背景、文字、按钮全部来自封面色板的日/夜配对；2×2 不显示歌名，改为四格大触控。源码里有波浪进度位图函数，但三种版式目前没有调用。</figcaption></figure>
+<figure><img src="hh-widget-mockup.jpg" alt="Half&Half 小组件提案页"><figcaption><b>Half&Half</b>：已上线 4×2 与 2×2 两种 RemoteViews 小组件，背景已按封面主色做深色渐变；文字与琥珀播放键仍是固定色；2×2 控制行 124dp 预算与 110dp 最小宽度冲突。图为 docs/widget-style-options.html 的风格提案页，不是真机截图。</figcaption></figure>
+</div>
+</section>
+</body>
+</html>
