@@ -15,4 +15,12 @@
     <string name="widget_pause">暂停</string>
     <string name="widget_prev">上一首</string>
     <string name="widget_next">下一首</string>
+    <string name="widget_player_bar_description">正在播放：横条封面、歌名、歌手与播放控制</string>
+    <string name="widget_mode">切换播放模式</string>
+    <string name="widget_mode_order">顺序播放</string>
+    <string name="widget_mode_loop_all">列表循环</string>
+    <string name="widget_mode_loop_one">单曲循环</string>
+    <string name="widget_mode_shuffle">随机播放</string>
+    <string name="widget_favorite">收藏到我喜欢的音乐</string>
+    <string name="widget_unfavorite">从我喜欢的音乐移除</string>
 </resources>

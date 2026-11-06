@@ -37,6 +37,8 @@ public class PlaybackService extends Service {
     public static final String ACTION_TOGGLE = "com.halfhalf.musicplayer.TOGGLE";
     public static final String ACTION_NEXT = "com.halfhalf.musicplayer.NEXT";
     public static final String ACTION_PREV = "com.halfhalf.musicplayer.PREV";
+    public static final String ACTION_FAVORITE = "com.halfhalf.musicplayer.FAVORITE";
+    public static final String ACTION_MODE = "com.halfhalf.musicplayer.MODE";
     public static final String ACTION_STOP = "com.halfhalf.musicplayer.STOP";
     /** Extra carried by MainActivity launch intents from the widget when the service is not alive. */
     public static final String EXTRA_LAUNCH_ACTION = "hh.action";
@@ -103,6 +105,8 @@ public class PlaybackService extends Service {
             case ACTION_PLAY: dispatch("play", 0); break;
             case ACTION_PAUSE: dispatch("pause", 0); break;
             case ACTION_NEXT: dispatch("next", 0); break;
+            case ACTION_FAVORITE: dispatch("favorite", 0); break;
+            case ACTION_MODE: dispatch("mode", 0); break;
             case ACTION_PREV: dispatch("prev", 0); break;
             case ACTION_TOGGLE: dispatch(PlaybackStateStore.load(this).playing ? "pause" : "play", 0); break;
             case ACTION_STOP: dispatch("pause", 0); shutdown(); return START_NOT_STICKY;

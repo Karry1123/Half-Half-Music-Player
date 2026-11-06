@@ -5,6 +5,8 @@ import android.appwidget.AppWidgetProvider;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
+import android.content.res.Configuration;
+import android.graphics.Path;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
@@ -33,6 +35,7 @@ public class PlayerWidgetProvider extends AppWidgetProvider {
     public static final String ACTION_REFRESH = "com.halfhalf.musicplayer.WIDGET_REFRESH";
     private static final int ART_PX = 256;
     private static final LruCache<String, Bitmap> BACKGROUNDS = new LruCache<>(8);
+    private static final LruCache<String, Bitmap> BUTTONS = new LruCache<>(12);
     private static String artworkKey = "";
     private static Bitmap cachedArtwork;
     private static int dominant;
@@ -43,6 +46,7 @@ public class PlayerWidgetProvider extends AppWidgetProvider {
             AppWidgetManager manager = AppWidgetManager.getInstance(context);
             render(context, manager, manager.getAppWidgetIds(new ComponentName(context, PlayerWidgetProvider.class)), R.layout.widget_player);
             render(context, manager, manager.getAppWidgetIds(new ComponentName(context, PlayerWidgetSmallProvider.class)), R.layout.widget_player_small);
+            render(context, manager, manager.getAppWidgetIds(new ComponentName(context, PlayerWidgetBarProvider.class)), R.layout.widget_player_bar);
         } catch (Exception e) {
             Log.w(TAG, "refresh failed: " + e);
         }
@@ -69,38 +73,77 @@ public class PlayerWidgetProvider extends AppWidgetProvider {
         PlaybackStateStore.State s = PlaybackStateStore.load(context);
         Bitmap art = artwork(s);
         for (int id : ids) {
-            Bitmap background = art == null ? null : background(context, manager.getAppWidgetOptions(id), s.trackId, layout);
-            manager.updateAppWidget(id, build(context, s, art, background, layout));
+            Bundle options = manager.getAppWidgetOptions(id);
+            int selectedLayout = layout == R.layout.widget_player_small
+                && options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT, 118) < Math.max(148,
+                    124 + (int) Math.ceil(18 * context.getResources().getConfiguration().fontScale))
+                ? R.layout.widget_player_small_compact : layout;
+            Palette palette = palette(context, art != null, s.seedColor);
+            Bitmap background = art == null && s.seedColor.isEmpty() ? null : background(context, options, s.trackId, selectedLayout, palette);
+            manager.updateAppWidget(id, build(context, s, art, background, selectedLayout, options, palette));
         }
     }
 
-    private static RemoteViews build(Context c, PlaybackStateStore.State s, Bitmap art, Bitmap background, int layout) {
+    private static RemoteViews build(Context c, PlaybackStateStore.State s, Bitmap art, Bitmap background, int layout, Bundle options, Palette palette) {
         RemoteViews v = new RemoteViews(c.getPackageName(), layout);
         boolean hasTrack = !s.title.isEmpty();
         boolean live = s.serviceAlive && s.active;
         v.setImageViewBitmap(R.id.widget_background, background);
         v.setTextViewText(R.id.widget_title, hasTrack ? s.title : c.getString(R.string.widget_empty_title));
-        v.setTextViewText(R.id.widget_artist, hasTrack ? s.artist : c.getString(R.string.widget_empty_hint));
+        boolean small = layout == R.layout.widget_player_small || layout == R.layout.widget_player_small_compact;
+        String trackDescription = hasTrack ? s.title + " \u00b7 " + s.artist : c.getString(R.string.widget_empty_hint);
+        v.setContentDescription(R.id.widget_art, trackDescription);
+        v.setContentDescription(R.id.widget_root, trackDescription);
+        if (!small) v.setTextViewText(R.id.widget_artist, hasTrack ? s.artist : c.getString(R.string.widget_empty_hint));
+        v.setTextColor(R.id.widget_title, palette.title);
+        if (!small) v.setTextColor(R.id.widget_artist, palette.secondary);
+        applyButton(v, R.id.widget_prev, R.id.widget_prev_background, palette.container, palette.icon, s.trackId, palette, small);
+        applyButton(v, R.id.widget_next, R.id.widget_next_background, palette.container, palette.icon, s.trackId, palette, small);
+        applyButton(v, R.id.widget_toggle, R.id.widget_toggle_background, palette.primary, palette.onPrimary, s.trackId, palette, small);
         if (art != null) v.setImageViewBitmap(R.id.widget_art, art);
         else v.setImageViewResource(R.id.widget_art, R.drawable.widget_art_placeholder);
         v.setImageViewResource(R.id.widget_toggle, live && s.playing ? R.drawable.ic_pause : R.drawable.ic_play);
-        v.setContentDescription(R.id.widget_toggle, c.getString(live && s.playing ? R.string.widget_pause : R.string.widget_play));
+        v.setContentDescription(R.id.widget_toggle, (live ? c.getString(s.playing ? R.string.widget_pause : R.string.widget_play) : c.getString(R.string.widget_open_to_resume)) + " \u00b7 " + trackDescription);
 
         if (layout == R.layout.widget_player) {
+            boolean wide = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, 250) >= 300;
+            v.setViewVisibility(R.id.widget_mode_tile, wide ? View.VISIBLE : View.GONE);
+            v.setViewVisibility(R.id.widget_favorite_tile, wide ? View.VISIBLE : View.GONE);
+            boolean order = "order".equals(s.playMode);
+            int modeIcon = "loopAll".equals(s.playMode) ? R.drawable.ic_repeat
+                : "loopOne".equals(s.playMode) ? R.drawable.ic_repeat_one : R.drawable.ic_shuffle;
+            int modeLabel = "loopAll".equals(s.playMode) ? R.string.widget_mode_loop_all
+                : "loopOne".equals(s.playMode) ? R.string.widget_mode_loop_one
+                : "shuffle".equals(s.playMode) ? R.string.widget_mode_shuffle : R.string.widget_mode_order;
+            v.setImageViewResource(R.id.widget_mode, modeIcon);
+            v.setImageViewResource(R.id.widget_favorite, s.favorite ? R.drawable.ic_heart : R.drawable.ic_heart_outline);
+            applyButton(v, R.id.widget_mode, R.id.widget_mode_background,
+                order ? palette.container : palette.primary, order ? palette.icon : palette.onPrimary, s.trackId, palette, false);
+            applyButton(v, R.id.widget_favorite, R.id.widget_favorite_background,
+                s.favorite ? palette.primary : palette.container, s.favorite ? palette.onPrimary : palette.icon, s.trackId, palette, false);
+            v.setInt(R.id.widget_mode, "setAlpha", s.canChangeMode && !order ? 255 : 110);
+            v.setBoolean(R.id.widget_mode, "setEnabled", hasTrack && s.canChangeMode);
+            v.setBoolean(R.id.widget_favorite, "setEnabled", hasTrack);
+            v.setContentDescription(R.id.widget_mode, c.getString(R.string.widget_mode) + " \u00b7 " + c.getString(modeLabel));
+            v.setContentDescription(R.id.widget_favorite, c.getString(s.favorite ? R.string.widget_unfavorite : R.string.widget_favorite));
+            v.setOnClickPendingIntent(R.id.widget_mode, live ? PlaybackService.serviceIntent(c, PlaybackService.ACTION_MODE, 14) : PlaybackService.contentIntent(c, "mode", 14));
+            v.setOnClickPendingIntent(R.id.widget_favorite, live ? PlaybackService.serviceIntent(c, PlaybackService.ACTION_FAVORITE, 15) : PlaybackService.contentIntent(c, "favorite", 15));
             String status;
             if (!hasTrack) status = "";
             else if (!live) status = c.getString(R.string.widget_open_to_resume);
-            else if (s.playing && s.duration > 0) status = clock(s.currentPosition()) + " / " + clock(s.duration) + (s.subtitle.isEmpty() ? "" : " · " + s.subtitle);
+            else if (s.playing && s.duration > 0) status = clock(s.currentPosition()) + " / " + clock(s.duration) + (s.subtitle.isEmpty() ? "" : " \u00b7 " + s.subtitle);
             else if (s.playing) status = s.subtitle.isEmpty() ? c.getString(R.string.widget_playing) : s.subtitle;
             else status = c.getString(R.string.widget_paused);
             v.setTextViewText(R.id.widget_status, status);
             v.setViewVisibility(R.id.widget_status, status.isEmpty() ? View.GONE : View.VISIBLE);
             v.setViewVisibility(R.id.widget_progress, hasTrack && s.duration > 0 ? View.VISIBLE : View.GONE);
-            v.setProgressBar(R.id.widget_progress, 1000,
-                s.duration > 0 ? (int) Math.round(1000 * s.currentPosition() / s.duration) : 0, false);
+            v.setTextColor(R.id.widget_status, palette.secondary);
+            double position = s.currentPosition();
+            v.setImageViewBitmap(R.id.widget_progress, progress(c, options, s.duration > 0 ? position / s.duration : 0, live && s.playing, palette));
+            v.setContentDescription(R.id.widget_progress, clock(position) + " / " + clock(s.duration));
         }
-        v.setInt(R.id.widget_prev, "setAlpha", live && s.canPrev ? 255 : 110);
-        v.setInt(R.id.widget_next, "setAlpha", live && s.canNext ? 255 : 110);
+        v.setBoolean(R.id.widget_prev, "setEnabled", !live || s.canPrev);
+        v.setBoolean(R.id.widget_next, "setEnabled", !live || s.canNext);
         v.setOnClickPendingIntent(R.id.widget_prev, live ? PlaybackService.serviceIntent(c, PlaybackService.ACTION_PREV, 11) : PlaybackService.contentIntent(c, "prev", 11));
         v.setOnClickPendingIntent(R.id.widget_next, live ? PlaybackService.serviceIntent(c, PlaybackService.ACTION_NEXT, 13) : PlaybackService.contentIntent(c, "next", 13));
         v.setOnClickPendingIntent(R.id.widget_toggle, live ? PlaybackService.serviceIntent(c, PlaybackService.ACTION_TOGGLE, 12) : PlaybackService.contentIntent(c, "play", 12));
@@ -121,6 +164,7 @@ public class PlayerWidgetProvider extends AppWidgetProvider {
             artworkKey = key;
             cachedArtwork = s.title.isEmpty() ? null : roundedArtwork(s.artworkPath);
             BACKGROUNDS.evictAll();
+            BUTTONS.evictAll();
             if (cachedArtwork != null) dominant = dominantColour(cachedArtwork);
         }
         return cachedArtwork;
@@ -153,30 +197,135 @@ public class PlayerWidgetProvider extends AppWidgetProvider {
         return count == 0 ? Color.rgb(40, 43, 53) : Color.rgb((int) (neutralR / count), (int) (neutralG / count), (int) (neutralB / count));
     }
 
-    private static Bitmap background(Context c, Bundle options, String trackId, int layout) {
-        boolean small = layout == R.layout.widget_player_small;
+    private static Bitmap background(Context c, Bundle options, String trackId, int layout, Palette palette) {
+        boolean small = layout == R.layout.widget_player_small || layout == R.layout.widget_player_small_compact;
         int widthDp = Math.max(1, options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, small ? 144 : 280));
         int heightDp = Math.max(1, options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT, 148));
         float scale = Math.min(1f, Math.min(400f / widthDp, 200f / heightDp));
         int width = Math.max(1, Math.round(widthDp * scale)), height = Math.max(1, Math.round(heightDp * scale));
-        String key = trackId + "|" + width + "|" + height;
+        String key = artworkKey + "|" + trackId + "|" + palette.dark + "|" + palette.mid + "|" + palette.deep + "|" + width + "|" + height;
         Bitmap bitmap = BACKGROUNDS.get(key);
         if (bitmap != null) return bitmap;
-        float[] hsv = new float[3];
-        Color.colorToHSV(dominant, hsv);
-        // Cap brightness even for white/yellow artwork so cream labels always stay legible.
-        hsv[1] *= .8f;
-        hsv[2] = Math.min(.42f, .13f + hsv[2] * .32f);
-        int mid = Color.HSVToColor(hsv);
-        hsv[2] *= .48f;
-        int deep = Color.HSVToColor(hsv);
         bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
         Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        paint.setShader(new LinearGradient(0, 0, width, height, mid, deep, Shader.TileMode.CLAMP));
+        paint.setShader(new LinearGradient(0, 0, width, height, palette.mid, palette.deep, Shader.TileMode.CLAMP));
         float radiusDp = c.getResources().getDimension(R.dimen.widget_corner_radius) / c.getResources().getDisplayMetrics().density;
         float radius = radiusDp * scale;
         new Canvas(bitmap).drawRoundRect(new RectF(0, 0, width, height), radius, radius, paint);
         BACKGROUNDS.put(key, bitmap);
+        return bitmap;
+    }
+
+    private static final class Palette {
+        int mid, deep, title, secondary, container, icon, primary, onPrimary;
+        boolean dark;
+    }
+
+    private static int tone(float hue, float saturation, float value) {
+        return Color.HSVToColor(new float[] {hue, saturation, value});
+    }
+
+    private static double luminance(int color) {
+        double sum = 0;
+        int[] channels = {Color.red(color), Color.green(color), Color.blue(color)};
+        double[] weights = {.2126, .7152, .0722};
+        for (int i = 0; i < 3; i++) {
+            double v = channels[i] / 255.0;
+            sum += weights[i] * (v <= .04045 ? v / 12.92 : Math.pow((v + .055) / 1.055, 2.4));
+        }
+        return sum;
+    }
+
+    private static double contrast(int a, int b) {
+        double x = luminance(a), y = luminance(b);
+        return (Math.max(x, y) + .05) / (Math.min(x, y) + .05);
+    }
+
+    /** Clamp HSV value until the foreground meets the ratio against both gradient ends. */
+    private static int readable(int color, int a, int b, double ratio, boolean lighten) {
+        float[] hsv = new float[3];
+        Color.colorToHSV(color, hsv);
+        for (int i = 0; i <= 100; i++) {
+            int candidate = Color.HSVToColor(hsv);
+            if (contrast(candidate, a) >= ratio && contrast(candidate, b) >= ratio) return candidate;
+            hsv[2] = Math.max(0, Math.min(1, hsv[2] + (lighten ? .01f : -.01f)));
+        }
+        return lighten ? Color.WHITE : Color.BLACK;
+    }
+
+    private static Palette palette(Context c, boolean artwork, String seedColor) {
+        Palette p = new Palette();
+        p.dark = (c.getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK)
+            == Configuration.UI_MODE_NIGHT_YES;
+        if (!artwork && seedColor.isEmpty()) {
+            p.mid = p.deep = c.getColor(R.color.widget_background);
+            p.title = c.getColor(R.color.widget_text);
+            p.secondary = c.getColor(R.color.widget_text_secondary);
+            p.container = c.getColor(R.color.widget_surface);
+            p.icon = p.title;
+            p.primary = c.getColor(R.color.widget_accent);
+            p.onPrimary = c.getColor(R.color.widget_on_accent);
+            return p;
+        }
+        float[] hsv = new float[3];
+        Color.colorToHSV(seedColor.isEmpty() ? dominant : Color.parseColor(seedColor), hsv);
+        float h = hsv[0], sat = hsv[1];
+        p.mid = tone(h, sat * (p.dark ? .8f : .12f), p.dark ? Math.min(.42f, .13f + hsv[2] * .32f) : .98f);
+        p.deep = tone(h, sat * (p.dark ? .8f : .18f), p.dark ? (.13f + hsv[2] * .32f) * .48f : .88f);
+        p.title = readable(tone(h, sat * .12f, p.dark ? .98f : .12f), p.mid, p.deep, 4.5, p.dark);
+        p.secondary = readable(tone(h, sat * .18f, p.dark ? .8f : .32f), p.mid, p.deep, 4.5, p.dark);
+        p.container = tone(h, sat * .35f, p.dark ? .48f : .78f);
+        p.icon = readable(tone(h, sat * .1f, p.dark ? 1f : .12f), p.container, p.container, 3, p.dark);
+        p.primary = tone(h, sat * .65f, p.dark ? .9f : .45f);
+        p.onPrimary = readable(tone(h, sat * .1f, p.dark ? .08f : 1f), p.primary, p.primary, 3, !p.dark);
+        return p;
+    }
+
+    private static void applyButton(RemoteViews v, int icon, int background, int color,
+            int foreground, String track, Palette p, boolean tile) {
+        String key = artworkKey + "|" + track + "|" + p.dark + "|" + tile + "|" + color;
+        Bitmap bitmap = BUTTONS.get(key);
+        if (bitmap == null) {
+            bitmap = Bitmap.createBitmap(64, 64, Bitmap.Config.ARGB_8888);
+            Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+            paint.setColor(color);
+            float radius = tile ? 14 : 32;
+            new Canvas(bitmap).drawRoundRect(new RectF(0, 0, 64, 64), radius, radius, paint);
+            BUTTONS.put(key, bitmap);
+        }
+        v.setImageViewBitmap(background, bitmap);
+        // XML tint uses the same default SRC_IN mode; replace it with the palette role.
+        v.setInt(icon, "setColorFilter", foreground);
+    }
+
+    private static Bitmap progress(Context c, Bundle options, double fraction, boolean playing, Palette p) {
+        float density = c.getResources().getDisplayMetrics().density;
+        int width = Math.max(1, Math.min(1200, Math.round((options.getInt(
+            AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, 250) - 16) * density)));
+        int height = Math.max(1, Math.min(96, Math.round(16 * density)));
+        float unit = height / 16f;
+        Bitmap bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
+        Canvas canvas = new Canvas(bitmap);
+        Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        paint.setStrokeWidth(4 * unit);
+        paint.setStrokeCap(Paint.Cap.ROUND);
+        float start = Math.min(4 * unit, width / 2f), end = width - start, y = height / 2f;
+        float boundary = start + (end - start) * (float) Math.max(0, Math.min(1, fraction));
+        paint.setColor(p.secondary);
+        canvas.drawLine(boundary, y, end, y, paint);
+        paint.setColor(p.title);
+        paint.setStyle(Paint.Style.STROKE);
+        Path wave = new Path();
+        wave.moveTo(start, y);
+        for (float x = start; x < boundary; x += 1) {
+            // Fade the last wavelength to meet the thumb on the baseline.
+            float envelope = Math.min(1, (boundary - x) / (20 * unit));
+            wave.lineTo(x, y + (playing ? 3 * unit * envelope * (float) Math.sin((x - start) * Math.PI * 2 / (20 * unit)) : 0));
+        }
+        wave.lineTo(boundary, y);
+        canvas.drawPath(wave, paint);
+        paint.setStyle(Paint.Style.FILL);
+        canvas.drawCircle(boundary, y, 4 * unit, paint);
         return bitmap;
     }
 

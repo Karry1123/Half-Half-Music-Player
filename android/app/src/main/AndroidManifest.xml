@@ -63,6 +63,10 @@
             <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_player_small_info" />
         </receiver>
 
+        <receiver android:name=".PlayerWidgetBarProvider" android:exported="true" android:label="@string/widget_player_bar_description">
+            <intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE" /></intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_player_bar_info" />
+        </receiver>
     </application>
 
     <!-- Network -->

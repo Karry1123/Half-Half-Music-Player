@@ -87,6 +87,10 @@ public class PlaybackSessionPlugin extends Plugin {
         s.playing = call.getBoolean("playing", false);
         s.hold = call.getBoolean("hold", s.playing);
         s.canNext = call.getBoolean("canNext", false);
+        s.favorite = call.getBoolean("favorite", false);
+        s.canChangeMode = call.getBoolean("canChangeMode", false);
+        s.playMode = PlaybackStateStore.normalizeMode(call.getString("playMode", "order"));
+        s.seedColor = PlaybackStateStore.normalizeSeed(call.getString("seedColor", ""));
         s.canPrev = call.getBoolean("canPrev", s.active);
         s.trackId = call.getString("trackId", "");
         s.title = call.getString("title", "");

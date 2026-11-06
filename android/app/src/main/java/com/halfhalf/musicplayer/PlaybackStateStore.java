@@ -12,8 +12,9 @@ public final class PlaybackStateStore {
     private static final String PREFS = "hh_playback";
 
     public static final class State {
-        public boolean active, playing, hold, canNext, canPrev, serviceAlive;
+        public boolean active, playing, hold, canNext, canPrev, serviceAlive, favorite, canChangeMode;
         public String trackId = "", title = "", artist = "", subtitle = "", artworkPath = "";
+        public String playMode = "order", seedColor = "";
         public double duration, position;
         /** SystemClock.elapsedRealtime() when `position` was sampled. */
         public long positionAt;
@@ -29,6 +30,14 @@ public final class PlaybackStateStore {
 
     private PlaybackStateStore() {}
 
+    static String normalizeMode(String mode) {
+        return "loopAll".equals(mode) || "loopOne".equals(mode) || "shuffle".equals(mode) ? mode : "order";
+    }
+
+    static String normalizeSeed(String seed) {
+        return seed != null && seed.matches("#[0-9a-fA-F]{6}") ? seed.toLowerCase(java.util.Locale.ROOT) : "";
+    }
+
     private static SharedPreferences prefs(Context c) {
         return c.getApplicationContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE);
     }
@@ -41,6 +50,10 @@ public final class PlaybackStateStore {
         s.hold = p.getBoolean("hold", false);
         s.canNext = p.getBoolean("canNext", false);
         s.canPrev = p.getBoolean("canPrev", false);
+        s.favorite = p.getBoolean("favorite", false);
+        s.canChangeMode = p.getBoolean("canChangeMode", false);
+        s.playMode = normalizeMode(p.getString("playMode", "order"));
+        s.seedColor = normalizeSeed(p.getString("seedColor", ""));
         s.serviceAlive = p.getBoolean("serviceAlive", false);
         s.trackId = p.getString("trackId", "");
         s.title = p.getString("title", "");
@@ -57,6 +70,8 @@ public final class PlaybackStateStore {
         prefs(c).edit()
             .putBoolean("active", s.active).putBoolean("playing", s.playing).putBoolean("hold", s.hold)
             .putBoolean("canNext", s.canNext).putBoolean("canPrev", s.canPrev).putBoolean("serviceAlive", s.serviceAlive)
+            .putBoolean("favorite", s.favorite).putBoolean("canChangeMode", s.canChangeMode)
+            .putString("playMode", normalizeMode(s.playMode)).putString("seedColor", normalizeSeed(s.seedColor))
             .putString("trackId", s.trackId).putString("title", s.title).putString("artist", s.artist)
             .putString("subtitle", s.subtitle).putString("artworkPath", s.artworkPath)
             .putLong("duration", Double.doubleToLongBits(s.duration)).putLong("position", Double.doubleToLongBits(s.position))

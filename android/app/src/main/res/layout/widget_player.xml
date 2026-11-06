@@ -1,120 +1,37 @@
-<?xml version="1.0" encoding="utf-8"?>
-<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:id="@+id/widget_root"
-    android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:background="@drawable/widget_bg"
-    android:clipToOutline="true">
-
-    <ImageView
-        android:id="@+id/widget_background"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:contentDescription="@null"
-        android:scaleType="fitXY" />
-
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:gravity="center_vertical"
-        android:orientation="horizontal"
-        android:padding="12dp">
-
-        <ImageView
-            android:id="@+id/widget_art"
-            android:layout_width="84dp"
-            android:layout_height="84dp"
-            android:contentDescription="@null"
-            android:scaleType="centerCrop"
-            android:src="@drawable/widget_art_placeholder" />
-
-        <LinearLayout
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="12dp"
-            android:layout_weight="1"
-            android:orientation="vertical">
-
-            <TextView
-                android:id="@+id/widget_title"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:ellipsize="end"
-                android:maxLines="1"
-                android:textColor="@color/widget_text"
-                android:textSize="15sp"
-                android:textStyle="bold" />
-
-            <TextView
-                android:id="@+id/widget_artist"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:ellipsize="end"
-                android:maxLines="1"
-                android:textColor="@color/widget_text_secondary"
-                android:textSize="13sp" />
-
-            <TextView
-                android:id="@+id/widget_status"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="2dp"
-                android:ellipsize="end"
-                android:maxLines="1"
-                android:textColor="@color/widget_text_secondary"
-                android:textSize="11sp" />
-
-            <ProgressBar
-                android:id="@+id/widget_progress"
-                style="?android:attr/progressBarStyleHorizontal"
-                android:layout_width="match_parent"
-                android:layout_height="3dp"
-                android:layout_marginTop="5dp"
-                android:indeterminate="false"
-                android:progressDrawable="@drawable/widget_progress"
-                android:progressTint="@color/widget_text"
-                android:progressBackgroundTint="#30F7F0E8"
-                android:visibility="gone" />
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="6dp"
-                android:gravity="center_vertical"
-                android:orientation="horizontal">
-
-                <ImageButton
-                    android:id="@+id/widget_prev"
-                    android:layout_width="40dp"
-                    android:layout_height="40dp"
-                    android:background="@drawable/widget_button_bg"
-                    android:contentDescription="@string/widget_prev"
-                    android:scaleType="centerInside"
-                    android:src="@drawable/ic_skip_previous"
-                    android:tint="@color/widget_text" />
-
-                <ImageButton
-                    android:id="@+id/widget_toggle"
-                    android:layout_width="48dp"
-                    android:layout_height="48dp"
-                    android:layout_marginStart="10dp"
-                    android:layout_marginEnd="10dp"
-                    android:background="@drawable/widget_play_bg"
-                    android:contentDescription="@string/widget_play"
-                    android:scaleType="centerInside"
-                    android:src="@drawable/ic_play"
-                    android:tint="@color/widget_on_accent" />
-
-                <ImageButton
-                    android:id="@+id/widget_next"
-                    android:layout_width="40dp"
-                    android:layout_height="40dp"
-                    android:background="@drawable/widget_button_bg"
-                    android:contentDescription="@string/widget_next"
-                    android:scaleType="centerInside"
-                    android:src="@drawable/ic_skip_next"
-                    android:tint="@color/widget_text" />
+<?xml version='1.0' encoding='utf-8'?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android" android:id="@+id/widget_root" android:layout_width="match_parent" android:layout_height="match_parent" android:background="@drawable/widget_bg" android:clipToOutline="true">
+    <ImageView android:id="@+id/widget_background" android:layout_width="match_parent" android:layout_height="match_parent" android:scaleType="fitXY" android:contentDescription="@null" />
+    <LinearLayout android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="vertical" android:gravity="center_vertical" android:padding="8dp">
+        <LinearLayout android:layout_width="match_parent" android:layout_height="56dp" android:gravity="center_vertical" android:orientation="horizontal">
+            <ImageView android:id="@+id/widget_art" android:layout_width="56dp" android:layout_height="56dp" android:scaleType="centerCrop" android:background="@drawable/widget_tile_bg" android:clipToOutline="true" android:src="@drawable/widget_art_placeholder" android:contentDescription="@null" />
+            <LinearLayout android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:layout_marginStart="10dp" android:orientation="vertical">
+                <TextView android:id="@+id/widget_title" android:layout_width="match_parent" android:layout_height="wrap_content" android:maxLines="1" android:ellipsize="end" android:textSize="15sp" android:textColor="@color/widget_text" android:textStyle="bold" />
+                <TextView android:id="@+id/widget_artist" android:layout_width="match_parent" android:layout_height="wrap_content" android:maxLines="1" android:ellipsize="end" android:textSize="13sp" android:textColor="@color/widget_text" />
+                <TextView android:id="@+id/widget_status" android:layout_width="match_parent" android:layout_height="wrap_content" android:maxLines="1" android:ellipsize="end" android:textSize="11sp" android:textColor="@color/widget_text" />
             </LinearLayout>
+        </LinearLayout>
+        <ImageView android:id="@+id/widget_progress" android:layout_width="match_parent" android:layout_height="16dp" android:layout_marginTop="4dp" android:scaleType="fitXY" android:contentDescription="@null" />
+        <LinearLayout android:layout_width="match_parent" android:layout_height="48dp" android:gravity="center" android:orientation="horizontal">
+            <FrameLayout android:id="@+id/widget_mode_tile" android:layout_width="48dp" android:layout_height="48dp" android:visibility="gone" android:layout_marginEnd="6dp">
+                <ImageView android:id="@+id/widget_mode_background" android:layout_width="match_parent" android:layout_height="match_parent" android:src="@drawable/widget_button_bg" android:scaleType="fitXY" android:contentDescription="@null" />
+                <ImageButton android:id="@+id/widget_mode" android:layout_width="match_parent" android:layout_height="match_parent" android:background="@android:color/transparent" android:scaleType="centerInside" android:src="@drawable/ic_shuffle" android:contentDescription="@string/widget_mode" />
+            </FrameLayout>
+            <FrameLayout android:layout_width="48dp" android:layout_height="48dp">
+                <ImageView android:id="@+id/widget_prev_background" android:layout_width="match_parent" android:layout_height="match_parent" android:src="@drawable/widget_button_bg" android:scaleType="fitXY" android:contentDescription="@null" />
+                <ImageButton android:id="@+id/widget_prev" android:layout_width="match_parent" android:layout_height="match_parent" android:minWidth="48dp" android:minHeight="48dp" android:background="@android:color/transparent" android:scaleType="centerInside" android:src="@drawable/ic_skip_previous" android:tint="@color/widget_text" android:contentDescription="@string/widget_prev" />
+            </FrameLayout>
+            <FrameLayout android:layout_width="48dp" android:layout_height="48dp" android:layout_marginStart="10dp" android:layout_marginEnd="10dp">
+                <ImageView android:id="@+id/widget_toggle_background" android:layout_width="match_parent" android:layout_height="match_parent" android:src="@drawable/widget_play_bg" android:scaleType="fitXY" android:contentDescription="@null" />
+                <ImageButton android:id="@+id/widget_toggle" android:layout_width="match_parent" android:layout_height="match_parent" android:minWidth="48dp" android:minHeight="48dp" android:background="@android:color/transparent" android:scaleType="centerInside" android:src="@drawable/ic_play" android:tint="@color/widget_on_accent" android:contentDescription="@string/widget_play" />
+            </FrameLayout>
+            <FrameLayout android:layout_width="48dp" android:layout_height="48dp">
+                <ImageView android:id="@+id/widget_next_background" android:layout_width="match_parent" android:layout_height="match_parent" android:src="@drawable/widget_button_bg" android:scaleType="fitXY" android:contentDescription="@null" />
+                <ImageButton android:id="@+id/widget_next" android:layout_width="match_parent" android:layout_height="match_parent" android:minWidth="48dp" android:minHeight="48dp" android:background="@android:color/transparent" android:scaleType="centerInside" android:src="@drawable/ic_skip_next" android:tint="@color/widget_text" android:contentDescription="@string/widget_next" />
+            </FrameLayout>
+            <FrameLayout android:id="@+id/widget_favorite_tile" android:layout_width="48dp" android:layout_height="48dp" android:visibility="gone" android:layout_marginStart="6dp">
+                <ImageView android:id="@+id/widget_favorite_background" android:layout_width="match_parent" android:layout_height="match_parent" android:src="@drawable/widget_button_bg" android:scaleType="fitXY" android:contentDescription="@null" />
+                <ImageButton android:id="@+id/widget_favorite" android:layout_width="match_parent" android:layout_height="match_parent" android:background="@android:color/transparent" android:scaleType="centerInside" android:src="@drawable/ic_heart_outline" android:contentDescription="@string/widget_favorite" />
+            </FrameLayout>
         </LinearLayout>
     </LinearLayout>
 </FrameLayout>
