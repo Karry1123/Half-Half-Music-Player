@@ -126,6 +126,10 @@ test('previous summaries use complete previous calendar periods across month/yea
   assert.equal(stats.previousSummary('month', now), 150);
   assert.equal(stats.previousSummary('year', now), null);
   assert.equal(stats.previousSummary('all', now), null);
+  stats.records = [{ id: 'p1', userId: 'alice', trackId: 't', durationPlayed: 10, timestamp: +new Date(2025, 11, 27, 9), localDay: '2025-12-27', completed: 3 }];
+  assert.equal(stats.previousCompleted('week', now), 3);
+  assert.equal(stats.previousCompleted('month', now), 3);
+  assert.equal(stats.previousCompleted('year', now), null);
   assert.equal(stats.summary('year', now), 160);
 });
 

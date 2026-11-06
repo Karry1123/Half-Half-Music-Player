@@ -121,10 +121,10 @@ test('desktop controls tolerate a missing track and disable play and next even w
 });
 
 test('remembered local track renders mini-player metadata with an enabled play button while unloaded', async () => {
-  const { state, session, render } = harness({ version: 1, trackId: 'song', position: 42, playMode: 'order' });
+  const { state, session, render } = harness({ version: 2, trackId: 'song', playMode: 'order' });
   await session.restoreLocal();
   assert.equal(state.currentId, 'song'); assert.equal(state.loaded, false); assert.equal(state.playing, false);
-  assert.equal(session.anchor.position, 42); assert.equal(session.out.intent, false);
+  assert.equal(session.anchor.position, 0); assert.equal(session.out.intent, false);
   const markup = render();
   assert.match(markup, /class="mini-player /); assert.match(markup, /Song/); assert.match(markup, /Artist/);
   const play = [...markup.matchAll(/<button[^>]*>/g)].find(([tag]) => /aria-label="\u64ad\u653e"/.test(tag));

@@ -103,7 +103,10 @@ export function ListeningStatsCards({ stats, tracks = [], me = {}, friends = [],
   const top = [...tracks.map(track => ({ track, plays: count?.(track) ?? 0 })), ...remembered.map(track => ({ track, plays: stats?.completedCount(track.id) || 0 }))]
     .filter(row => row.plays > 0).sort((a, b) => b.plays - a.plays).slice(0, 5);
   const delta = previous == null ? null : Math.floor(seconds / 60) - Math.floor(previous / 60);
-  const comparison = delta === null ? (period === 'year' ? '今年至今' : '全部记录') : delta === 0 ? `与${period === 'week' ? '上周' : '上月'}持平` : `较${period === 'week' ? '上周' : '上月'}${delta > 0 ? '增加' : '减少'} ${Math.abs(delta).toLocaleString()} 分钟`;
+  const compare = (delta, unit) => delta === null ? (period === 'year' ? '今年至今' : '全部记录') : delta === 0 ? `与${period === 'week' ? '上周' : '上月'}持平` : `较${period === 'week' ? '上周' : '上月'}${delta > 0 ? '增加' : '减少'} ${Math.abs(delta).toLocaleString()} ${unit}`;
+  const comparison = compare(delta, '分钟');
+  const previousCompleted = stats?.previousCompleted(period, now);
+  const completedComparison = compare(previousCompleted == null ? null : completed - previousCompleted, '次');
   // Each play session that produced listening time leaves one record; the ratio is lifetime and local only.
   const started = Math.max(stats?.records?.length || 0, localCompleted);
   const rate = started ? Math.round(localCompleted / started * 100) : 0;
@@ -114,7 +117,7 @@ export function ListeningStatsCards({ stats, tracks = [], me = {}, friends = [],
     <div className="grid min-w-0 grid-cols-4 gap-1 rounded-full border border-white/10 bg-white/5 p-1" role="group" aria-label="统计周期">${periods.map(([value, label]) => html`<button key=${value} type="button" aria-pressed=${period === value} onClick=${() => setPeriod(value)} className=${`min-w-0 truncate rounded-full px-1 py-2 text-xs ${period === value ? 'bg-host/20 font-semibold text-host' : 'text-sand-400'}`}>${label}</button>`)}</div>
     <div className="grid min-w-0 grid-cols-2 gap-2">
       <article className=${card}><h3 className=${`${note} text-center`}>收听时长</h3><${StatRing} value=${seconds} kind="duration" period=${period} label="收听时长" /><p className="min-w-0 break-words text-center text-xs text-sand-400 tabular-nums">${comparison}</p></article>
-      <article className=${card}><h3 className=${`${note} text-center`}>听完的歌</h3><${StatRing} value=${completed} kind="completed" period=${period} label="听完的歌" /></article>
+      <article className=${card}><h3 className=${`${note} text-center`}>听完的歌</h3><${StatRing} value=${completed} kind="completed" period=${period} label="听完的歌" /><p className="min-w-0 break-words text-center text-xs text-sand-400 tabular-nums">${completedComparison}</p></article>
     </div>
     <div className=${card}><h3 className="min-w-0 break-words text-sm font-semibold">一起听的里程碑</h3>
       ${Object.entries(coTotals).map(([id, time]) => {

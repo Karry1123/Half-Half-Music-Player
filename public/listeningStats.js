@@ -347,6 +347,12 @@ export class ListeningStats {
     return this.summary(period, +start - 1);
   }
 
+  previousCompleted(period = 'week', now = Date.now()) {
+    if (!['week', 'month'].includes(period)) return null;
+    const { start } = periodBounds(period, now);
+    return this.completedInPeriod(period, +start - 1);
+  }
+
   // Complete local calendar buckets; unreached buckets remain visible with zero time.
   // Month weeks start on Monday and are clipped to the first/last day of the month.
   periodSeries(period = 'week', now = Date.now(), { since } = {}) {
