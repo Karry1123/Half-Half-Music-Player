@@ -8,6 +8,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { PlayQueue, PLAY_MODES } from '../public/playQueue.js';
 import { resolveScope } from '../public/playlists.js';
 import { ListeningStats } from '../public/listeningStats.js';
+import * as statsRing from '../public/statsRing.js';
 
 test('statistics cards render period buckets, two rings, plain comparisons and clean headings', async () => {
   const stats = new ListeningStats({ userId: 'alice', indexedDB: null });
@@ -20,7 +21,7 @@ test('statistics cards render period buckets, two rings, plain comparisons and c
     .replace(/^\uFEFF/, '').replace(/^import .*;\r?\n/gm, '').replace('export function ListeningStatsCards', 'function ListeningStatsCards');
   for (const [period, heading, points] of [['week', '每日收听', 7], ['month', '每周收听', 5], ['year', '每月收听', 12], ['all', '每年收听', 2]]) {
     const Cards = vm.runInNewContext(`${code}; ListeningStatsCards`, {
-      React, htm, Date: class extends Date { static now() { return now; } },
+      ...statsRing, React, htm, Date: class extends Date { static now() { return now; } },
       useState: value => [value === 'week' ? period : value, () => {}],
       useEffect() {}, useRef: () => ({ current: null }),
     });
@@ -29,10 +30,14 @@ test('statistics cards render period buckets, two rings, plain comparisons and c
     assert.equal((markup.match(/class="stats-ring"/g) || []).length, 2);
     assert.equal((markup.match(/class="stats-chart-point"/g) || []).length, points);
     assert.equal((markup.match(/class="stats-chart-peak tabular-nums"/g) || []).length, 1);
-    assert.equal((markup.match(/stroke-width="12"/g) || []).length, 4);
-    assert.match(markup, /stats-ring-draw 800ms ease-out both/);
+    assert.equal((markup.match(/stroke-width="20"/g) || []).length, 4);
+    assert.equal((markup.match(/class="stats-ring-tip"/g) || []).length, 2);
+    assert.match(markup, /feDropShadow/);
+    assert.ok(markup.includes(statsRing.lapCaption("duration", statsRing.lapUnits[period].duration)));
+    assert.ok(markup.includes(statsRing.lapCaption("completed", statsRing.lapUnits[period].completed)));
+    assert.doesNotMatch(markup, /stats-ring-draw/);
     assert.doesNotMatch(markup, /transition:stroke-dashoffset/);
-    assert.match(markup, period === 'all' ? /<span>128<\/span> 次/ : /<span>3<\/span> 次/);
+    assert.match(markup, period === 'all' ? />128 次<\/text>/ : />3 次<\/text>/);
     assert.doesNotMatch(markup, /活跃天数|>一起听<|累计|本机|触摸查看|↑|↓/);
     for (const fill of ['rgb(var(--color-brand-host-rgb) / 0.08)', '#F2C9A0', '#E39A5B', '#C96E2A', '#8A4512']) assert.ok(markup.includes(fill));
     assert.match(markup, /收听热力图例/);
@@ -78,7 +83,7 @@ test('heatmap cells use the five fills at one, five, fifteen and thirty minutes'
   const code = readFileSync(new URL('../public/statsUI.js', import.meta.url), 'utf8')
     .replace(/^\uFEFF/, '').replace(/^import .*;\r?\n/gm, '').replace('export function ListeningStatsCards', 'function ListeningStatsCards');
   const Cards = vm.runInNewContext(`${code}; ListeningStatsCards`, {
-    React, htm, useState: initial => [initial, () => {}], useEffect() {}, useRef: () => ({ current: null }),
+    ...statsRing, React, htm, useState: initial => [initial, () => {}], useEffect() {}, useRef: () => ({ current: null }),
   });
   const markup = renderToStaticMarkup(React.createElement(Cards, { stats }));
   const fills = [...markup.matchAll(/aspect-ratio:1;background:([^";]+)[;]?" title=/g)].map(match => match[1]);

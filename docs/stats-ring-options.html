@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>收听统计 · 圆环方案对照</title>
+<style>
+/* Hard-coded from public/design-tokens.css: light canvas, surfaces, text,
+   borders, brand amber/rose and their brighter/darker palette variants. */
+:root{color-scheme:light;--canvas:#f7f0e8;--surface:#fff;--subtle:#f4eee7;--ink:#221d19;--muted:#6b594a;--border:#dccdbe;--host:#f2a65a;--guest:#ec7a96;--focus:#a32f55}
+*{box-sizing:border-box}body{margin:0;background:var(--canvas);color:var(--ink);font-family:system-ui,-apple-system,"Segoe UI","Noto Sans SC","Microsoft YaHei",sans-serif;line-height:1.6}button,input{font:inherit}button{cursor:pointer}button:focus-visible,input:focus-visible{outline:3px solid var(--focus);outline-offset:4px}main{max-width:1660px;margin:auto;padding:40px 28px 48px}.eyebrow{font-size:12px;color:var(--muted);letter-spacing:.16em}h1{font-size:clamp(26px,3vw,40px);letter-spacing:-.04em;margin:7px 0}h2,h3,p{margin:0}.intro{max-width:760px;color:var(--muted);font-size:14px}.controls{display:grid;grid-template-columns:1fr 1fr 1fr;gap:28px;background:var(--surface);border:1px solid var(--border);border-radius:20px;padding:24px;margin:26px 0 18px}.control-title{font-size:13px;font-weight:650;margin-bottom:10px}.periods{display:flex;background:var(--subtle);padding:4px;border-radius:30px}.periods button{flex:1;border:0;background:none;color:var(--muted);border-radius:25px;padding:9px 6px;font-size:13px}.periods button[aria-pressed="true"]{background:var(--ink);color:white}.range-head{display:flex;justify-content:space-between;gap:8px;font-size:13px}.range-head output{font-weight:700;font-variant-numeric:tabular-nums}input[type=range]{width:100%;margin:14px 0 0;accent-color:#8a460c;height:20px}#songs{accent-color:var(--focus)}.range-scale{display:flex;justify-content:space-between;font-size:11px;color:var(--muted)}.toolbar-note{font-size:12px;color:var(--muted);margin-top:10px}.comparison{display:flex;align-items:center;gap:20px;flex-wrap:wrap;margin:20px 0 28px}.comparison>p{font-size:13px;color:var(--muted);max-width:330px}.weights{display:flex;gap:18px}.weight{display:flex;align-items:center;gap:8px;font-size:12px}.weight svg{width:54px;height:54px}.weight span{display:block;color:var(--muted);font-size:11px}.gallery{display:grid;grid-template-columns:repeat(4,375px);gap:20px;overflow-x:auto;padding:2px 2px 20px;align-items:start}.option{width:375px}.option-heading{display:flex;justify-content:space-between;align-items:center;margin:0 2px 12px}h2{font-size:17px}.letter{display:inline-grid;place-items:center;background:var(--ink);color:white;width:27px;height:27px;border-radius:9px;margin-right:8px;font-size:13px}.width-tag{font-size:11px;color:var(--muted)}.phone{width:375px;border:1px solid var(--border);border-radius:30px;background:var(--subtle);padding:20px 12px 22px;box-shadow:0 8px 24px #221d1908}.phone-top{display:flex;justify-content:space-between;align-items:center;padding:0 8px 18px;font-size:12px;color:var(--muted)}.phone-top strong{color:var(--ink);font-size:15px}.period-label{border:1px solid var(--border);padding:2px 10px;border-radius:30px}.cards{display:grid;grid-template-columns:1fr 1fr;gap:8px}.card{min-width:0;text-align:center;background:white;border:1px solid #dccdbe80;border-radius:18px;padding:16px 5px 13px}.card h3{font-size:13px;font-weight:500;color:var(--muted);margin-bottom:8px}.ring{position:relative;width:100%;max-width:160px;aspect-ratio:1;margin:auto}.ring svg{display:block;width:100%;height:100%;overflow:visible}.center{position:absolute;inset:0;display:flex;flex-direction:column;justify-content:center;align-items:center;pointer-events:none}.number{font-size:23px;font-weight:750;line-height:1.3;letter-spacing:-.04em;font-variant-numeric:tabular-nums}.unit{font-size:11px;color:var(--muted);margin-top:2px}.inside-lap{font-size:9px;margin-top:6px;color:var(--muted)}.badge{position:absolute;right:1px;top:0;background:var(--ink);color:white;border:2px solid white;border-radius:20px;font-size:10px;padding:1px 6px;font-variant-numeric:tabular-nums}.lap-caption{font-size:11px;color:var(--muted);margin-top:12px}.progress-caption{font-size:11px;color:var(--muted);margin-top:3px;font-variant-numeric:tabular-nums}.legend{min-height:42px;padding:15px 6px 0;font-size:11px;color:var(--muted)}.dot{display:inline-block;width:6px;height:6px;background:var(--host);border-radius:50%;margin-right:4px}.dot.muted{background:#c4b3a3;margin-left:12px}.description{padding:18px 5px 12px;font-size:12px;color:var(--muted);line-height:1.9;min-height:98px}.description b{color:var(--ink);font-weight:600}.replay{background:white;border:1px solid var(--border);border-radius:12px;padding:10px 16px;color:var(--ink);font-size:12px;width:100%}.replay:hover{background:var(--subtle)}footer{font-size:12px;color:var(--muted);margin-top:14px}.swatches{display:inline-flex;gap:5px;vertical-align:middle;margin-right:6px}.swatches i{width:10px;height:10px;border-radius:50%;background:var(--host)}.swatches i+i{background:var(--guest)}@media(max-width:850px){main{padding:24px 16px}.controls{grid-template-columns:1fr;gap:20px;padding:18px}.gallery{margin-right:-16px}.comparison{gap:12px}}@media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important}}
+</style>
+</head>
+<body>
+<main>
+<header><div class="eyebrow">HALF &amp; HALF / 设计参考</div><h1>让每一圈，都听得见。</h1><p class="intro">收听统计圆环 · 四种方向，同一组数据。拖动数值观察第二、第三圈的叠加，再切换周期感受完整动效。横向滑动可对照全部方案。</p></header>
+<section class="controls" aria-label="全局演示控制">
+ <div><div class="control-title">统计周期</div><div class="periods" role="group" aria-label="统计周期"><button type="button" data-period="week" aria-pressed="true">本周</button><button type="button" data-period="month" aria-pressed="false">本月</button><button type="button" data-period="year" aria-pressed="false">本年</button><button type="button" data-period="all" aria-pressed="false">全部</button></div><p class="toolbar-note">切换周期保留圈数比例，重新从零播放。</p></div>
+ <div><div class="range-head"><label for="hours">收听时长</label><output id="hours-output" for="hours"></output></div><input id="hours" type="range" min="0" max="350" step="1" value="235"><div class="range-scale"><span>0 圈</span><span>1 圈</span><span>2 圈</span><span>3.5 圈</span></div></div>
+ <div><div class="range-head"><label for="songs">听完的歌</label><output id="songs-output" for="songs"></output></div><input id="songs" type="range" min="0" max="350" step="1" value="165"><div class="range-scale"><span>0 圈</span><span>1 圈</span><span>2 圈</span><span>3.5 圈</span></div></div>
+</section>
+<section class="comparison" aria-label="圆环粗细对比"><p><b>先看粗细</b> · 同为 160 画布、半径 67。方案 A / C / D 用 20，B 外环用 16。</p><div class="weights" id="weights"></div></section>
+<div class="gallery" id="gallery" aria-label="四种圆环方案"></div>
+<footer><span class="swatches"><i></i><i></i></span>沿用项目浅色设计色值 · 所有数值均为演示 · 动效 1.2 秒，随系统“减少动态效果”设置即时显示 · 可离线打开</footer>
+</main>
+<script>
+'use strict';
+const NS = 'http://www.w3.org/2000/svg';
+const periods = {
+ week:{name:'本周',laps:[7,50],previous:'上周',segments:7,calendar:'7 天'},
+ month:{name:'本月',laps:[30,200],previous:'上月',segments:4,calendar:'4 周'},
+ year:{name:'本年',laps:[365,2000],previous:'上年',segments:12,calendar:'12 个月'},
+ all:{name:'全部',laps:[1000,5000],previous:'参考里程碑',segments:10,calendar:'10 个里程刻度'}
+};
+const options = [
+ {id:'A',title:'单环多圈',style:'Apple Watch 风，圆润饱满，圈数徽标清晰。',motion:'后续圈提亮叠加，前缘阴影带出层次。',use:'突出累计成就与超额完成。'},
+ {id:'B',title:'双环同心',style:'外环展示本期，内环以柔和色对比上期。',motion:'外环逐圈叠加，内环同步扫入一次。',use:'关注收听习惯与周期变化。'},
+ {id:'C',title:'粗环 + 刻度',style:'每 10% 一格细刻度，圈单位收进环内。',motion:'粗环越过刻度，叠圈前缘保留柔影。',use:'兼顾进度精度与紧凑阅读。'},
+ {id:'D',title:'分段环',style:'日历式分段，每段按顺序逐渐点亮。',motion:'逐段扫入，超额圈沿相同分段叠加。',use:'强调周、月、年的时间节奏。'}
+];
+// First lap uses the actual brand token. Later laps brighten from that base.
+const palettes = [['#f2a65a','#ffbd7d','#ffd0a0','#ffe0bf'],['#ec7a96','#f59bb0','#fbb6c7','#fdd0db']];
+// Gap includes the round caps (20 units wide), leaving visible space at r=67.
+const SEGMENT_GAP = 6;
+const units = ['小时','次'];
+let period = 'week';
+const reduced = matchMedia('(prefers-reduced-motion: reduce)');
+const views = [];
+function el(tag, attrs, parent) {
+ const node = document.createElementNS(NS,tag);
+ Object.entries(attrs).forEach(([key,value])=>node.setAttribute(key,value));
+ if(parent) parent.appendChild(node);
+ return node;
+}
+function circle(parent,r,width,color,extra={}) {
+ return el('circle',{cx:80,cy:80,r,fill:'none',stroke:color,'stroke-width':width,...extra},parent);
+}
+function point(fraction,r=67) {
+ const a = fraction*Math.PI*2-Math.PI/2;
+ return {x:80+Math.cos(a)*r,y:80+Math.sin(a)*r};
+}
+function format(value,metric) {
+ return value.toLocaleString('zh-CN',{maximumFractionDigits:metric===0?1:0});
+}
+document.getElementById('weights').innerHTML = [12,16,20].map(w=>`<div class="weight"><svg viewBox="0 0 160 160" aria-hidden="true"><circle cx="80" cy="80" r="67" fill="none" stroke="#f2a65a" stroke-width="${w}"/></svg><div><b>${w}</b><span>${w===12?'当前':'候选'}</span></div></div>`).join('');
+for (const option of options) {
+ const section = document.createElement('section');
+ section.className = 'option';
+ section.innerHTML = `<div class="option-heading"><h2><span class="letter">${option.id}</span>${option.title}</h2><span class="width-tag">375 像素</span></div><div class="phone"><div class="phone-top"><strong>收听统计</strong><span class="period-label"></span></div><div class="cards">${['收听时长','听完的歌'].map((name,m)=>`<article class="card"><h3>${name}</h3><div class="ring"><svg viewBox="0 0 160 160" role="img" aria-label="${name}"></svg><div class="center"><span class="number">0</span><span class="unit">${units[m]}</span>${option.id==='C'?'<span class="inside-lap"></span>':''}</div><span class="badge"></span></div><p class="lap-caption"></p><p class="progress-caption"></p></article>`).join('')}</div><div class="legend"></div></div><div class="description"><p><b>风格</b> · ${option.style}</p><p><b>动效</b> · ${option.motion}</p><p><b>适合</b> · ${option.use}</p></div><button type="button" class="replay" aria-label="重播方案 ${option.id} 动效">↻ 重播动效</button>`;
+ document.getElementById('gallery').appendChild(section);
+ const view = {option,section,frame:0,cards:[]};
+ section.querySelectorAll('.card').forEach((card,metric)=>view.cards.push({card,metric,svg:card.querySelector('svg')}));
+ section.querySelector('.replay').addEventListener('click',()=>animate(view));
+ views.push(view);
+}
+function setup(view) {
+ const config = periods[period];
+ view.section.querySelector('.period-label').textContent = config.name;
+ view.section.querySelector('.legend').innerHTML = view.option.id==='B'
+  ? `<span class="dot"></span>外环：本期 <span class="dot muted"></span>内环：${config.previous}（示例 72% / 58%）`
+  : view.option.id==='D' ? `一圈分为 ${config.calendar} · 分段表达结构，亮起比例由数值决定` : '从顶部顺时针出发 · 浅色新圈覆盖旧圈 · 徽标为已完成圈数';
+ for (const data of view.cards) {
+  const {svg,card,metric} = data;
+  const segmented = view.option.id==='D';
+  const width = view.option.id==='B'?16:20;
+  svg.replaceChildren();
+  const defs=el('defs',{},svg);
+  const shadow=el('filter',{id:`shadow-${view.option.id}-${metric}`,x:'-100%',y:'-100%',width:'300%',height:'300%','color-interpolation-filters':'sRGB'},defs);
+  el('feDropShadow',{dx:0,dy:2,stdDeviation:2,'flood-color':'#221d19','flood-opacity':'.32'},shadow);
+  if (segmented) {
+   for(let s=0;s<config.segments;s++) circle(svg,67,width,'#f4eee7',{pathLength:100,'stroke-dasharray':`${100/config.segments-SEGMENT_GAP} 100`,'stroke-linecap':'round',transform:`rotate(${-90+s*360/config.segments+SEGMENT_GAP*1.8} 80 80)`});
+  } else circle(svg,67,width,'#f4eee7');
+  if(view.option.id==='B') {
+   circle(svg,49,6,'#f4eee7');
+   data.inner=circle(svg,49,6,metric===0?'#c4b3a3':'#d6adb9',{pathLength:100,'stroke-dasharray':100,'stroke-dashoffset':100,'stroke-linecap':'round',transform:'rotate(-90 80 80)'});
+  }
+  if(view.option.id==='C') for(let t=0;t<10;t++) {
+   const a=point(t/10,52),b=point(t/10,48);
+   el('line',{x1:a.x,y1:a.y,x2:b.x,y2:b.y,stroke:'#dccdbe','stroke-width':1},svg);
+  }
+  data.layers=[];
+  for(let lap=0;lap<4;lap++) {
+   const group=el('g',{},svg),arcs=[];
+   for(let s=0;s<(segmented?config.segments:1);s++) arcs.push(circle(group,67,width,palettes[metric][lap],{pathLength:100,'stroke-linecap':'round','stroke-dasharray':'0 100','stroke-dashoffset':0,transform:`rotate(${-90+(segmented?s*360/config.segments+SEGMENT_GAP*1.8:0)} 80 80)`}));
+   data.layers.push({group,arcs});
+  }
+  data.tip=el('circle',{r:width/2,fill:palettes[metric][0],filter:`url(#shadow-${view.option.id}-${metric})`,visibility:'hidden'},svg);
+  data.width=width;
+  const caption=`一圈 = ${config.laps[metric].toLocaleString('zh-CN')} ${units[metric]}`;
+  card.querySelector('.lap-caption').textContent=caption;
+  if(view.option.id==='C') card.querySelector('.inside-lap').textContent=caption;
+ }
+}
+function target(metric) {
+ const ratio=Number(document.getElementById(metric===0?'hours':'songs').value)/100;
+ const raw=ratio*periods[period].laps[metric];
+ return metric===0?Math.round(raw*10)/10:Math.round(raw);
+}
+function draw(view,amount) {
+ const config=periods[period];
+ for(const data of view.cards) {
+  const {card,metric}=data,value=target(metric)*amount,progress=value/config.laps[metric];
+  const segmented=view.option.id==='D', n=config.segments, gap=SEGMENT_GAP;
+  let tipFraction=progress;
+  for(let lap=0;lap<data.layers.length;lap++) {
+   const fill=Math.max(0,Math.min(1,progress-lap));
+   const {group,arcs}=data.layers[lap];
+   group.setAttribute('visibility',fill>0?'visible':'hidden');
+   arcs.forEach((arc,s)=>{
+    const length=segmented?Math.max(0,Math.min(100/n-gap,fill*100-s*100/n-gap/2)):fill*100;
+    arc.setAttribute('visibility',length>0?'visible':'hidden');
+    arc.setAttribute('stroke-dasharray',`${length} 100`);
+   });
+  }
+  const active=Math.max(0,Math.ceil(progress)-1),fraction=progress-active;
+  if(segmented && progress>0) {
+   // Stop the shadowed round tip at the preceding segment edge while in a gap.
+   const s=Math.min(n-1,Math.floor(fraction*n));
+   const local=fraction*100-s*100/n;
+   tipFraction=local<gap/2 && s>0 ? s/n-gap/200 : (s*100/n+gap/2+Math.max(0,Math.min(100/n-gap,local-gap/2)))/100;
+  }
+  const p=point(tipFraction);
+  data.tip.setAttribute('cx',p.x);data.tip.setAttribute('cy',p.y);
+  data.tip.setAttribute('fill',palettes[metric][Math.min(3,active)]);
+  data.tip.setAttribute('visibility',progress>0 && (!segmented || fraction*100>gap/2)?'visible':'hidden');
+  if(data.inner) data.inner.setAttribute('stroke-dashoffset',100-(metric===0?72:58)*amount);
+  card.querySelector('.number').textContent=format(value,metric);
+  const completed=Math.floor(progress+1e-9);
+  card.querySelector('.badge').textContent=`×${completed}`;
+  card.querySelector('.badge').hidden=completed<1;
+  card.querySelector('.progress-caption').textContent=`${format(progress*100,1)}% · ${progress.toFixed(2)} 圈`;
+  data.svg.setAttribute('aria-label',`${metric===0?'收听时长':'听完的歌'}：${format(value,metric)} ${units[metric]}，${progress.toFixed(2)} 圈`);
+ }
+}
+function animate(view) {
+ cancelAnimationFrame(view.frame);
+ draw(view,0);
+ if(reduced.matches){draw(view,1);return;}
+ let start;
+ const step=time=>{
+  start??=time;
+  const t=Math.min(1,(time-start)/1200);
+  draw(view,1-Math.pow(1-t,3));
+  if(t<1)view.frame=requestAnimationFrame(step);
+ };
+ view.frame=requestAnimationFrame(step);
+}
+function updateOutputs() {
+ ['hours','songs'].forEach((id,m)=>{
+  const value=target(m),laps=value/periods[period].laps[m];
+  document.getElementById(`${id}-output`).textContent=`${format(value,m)} ${units[m]} · ${laps.toFixed(2)} 圈`;
+  document.getElementById(id).setAttribute('aria-valuetext',`${format(value,m)} ${units[m]}，${laps.toFixed(2)} 圈`);
+ });
+}
+document.querySelectorAll('[data-period]').forEach(button=>button.addEventListener('click',()=>{
+ period=button.dataset.period;
+ document.querySelectorAll('[data-period]').forEach(b=>b.setAttribute('aria-pressed',String(b===button)));
+ updateOutputs();views.forEach(view=>{setup(view);animate(view);});
+}));
+['hours','songs'].forEach(id=>document.getElementById(id).addEventListener('input',()=>{
+ updateOutputs();views.forEach(view=>{cancelAnimationFrame(view.frame);draw(view,1);});
+}));
+reduced.addEventListener('change',()=>views.forEach(animate));
+updateOutputs();views.forEach(view=>{setup(view);animate(view);});
+</script>
+</body>
+</html>

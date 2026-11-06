@@ -1,0 +1,695 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>收听统计 · 单环多圈</title><style>/* Shared primitive, semantic and component tokens: 暖光同频. */
+:root {
+  color-scheme: light;
+  --p-neutral-0: #ffffff;
+  --p-neutral-0-rgb: 255 255 255;
+  --p-neutral-50: #f7f0e8;
+  --p-neutral-50-rgb: 247 240 232;
+  --p-neutral-100: #f4eee7;
+  --p-neutral-100-rgb: 244 238 231;
+  --p-neutral-200: #dccdbe;
+  --p-neutral-200-rgb: 220 205 190;
+  --p-neutral-300: #c4b3a3;
+  --p-neutral-300-rgb: 196 179 163;
+  --p-neutral-400: #ab9886;
+  --p-neutral-400-rgb: 171 152 134;
+  --p-neutral-500: #86745f;
+  --p-neutral-500-rgb: 134 116 95;
+  --p-neutral-600: #6b594a;
+  --p-neutral-600-rgb: 107 89 74;
+  --p-neutral-700: #3e352d;
+  --p-neutral-700-rgb: 62 53 45;
+  --p-neutral-750: #2e2721;
+  --p-neutral-750-rgb: 46 39 33;
+  --p-neutral-800: #221d19;
+  --p-neutral-800-rgb: 34 29 25;
+  --p-neutral-850: #1b1714;
+  --p-neutral-850-rgb: 27 23 20;
+  --p-neutral-900: #151210;
+  --p-neutral-900-rgb: 21 18 16;
+  --p-neutral-950: #0e0c0b;
+  --p-neutral-950-rgb: 14 12 11;
+  --p-amber-50: #fff1df;
+  --p-amber-50-rgb: 255 241 223;
+  --p-amber-300: #f2a65a;
+  --p-amber-300-rgb: 242 166 90;
+  --p-amber-400: #e99544;
+  --p-amber-400-rgb: 233 149 68;
+  --p-amber-500: #d7852f;
+  --p-amber-500-rgb: 215 133 47;
+  --p-amber-800: #8a460c;
+  --p-amber-800-rgb: 138 70 12;
+  --p-amber-900: #713805;
+  --p-amber-900-rgb: 113 56 5;
+  --p-amber-950: #342417;
+  --p-amber-950-rgb: 52 36 23;
+  --p-rose-50: #fdebf1;
+  --p-rose-50-rgb: 253 235 241;
+  --p-rose-300: #ec7a96;
+  --p-rose-300-rgb: 236 122 150;
+  --p-rose-400: #dc6684;
+  --p-rose-400-rgb: 220 102 132;
+  --p-rose-700: #a32f55;
+  --p-rose-700-rgb: 163 47 85;
+  --p-rose-800: #872342;
+  --p-rose-800-rgb: 135 35 66;
+  --p-rose-950: #351d27;
+  --p-rose-950-rgb: 53 29 39;
+  --p-green-50: #e8f5ed;
+  --p-green-50-rgb: 232 245 237;
+  --p-green-300: #71d6a4;
+  --p-green-300-rgb: 113 214 164;
+  --p-green-800: #146c43;
+  --p-green-800-rgb: 20 108 67;
+  --p-green-950: #123326;
+  --p-green-950-rgb: 18 51 38;
+  --p-yellow-50: #fff3d6;
+  --p-yellow-50-rgb: 255 243 214;
+  --p-yellow-300: #f4c46a;
+  --p-yellow-300-rgb: 244 196 106;
+  --p-yellow-800: #855000;
+  --p-yellow-800-rgb: 133 80 0;
+  --p-yellow-950: #382b13;
+  --p-yellow-950-rgb: 56 43 19;
+  --p-red-50: #fdecef;
+  --p-red-50-rgb: 253 236 239;
+  --p-red-300: #ff99a4;
+  --p-red-300-rgb: 255 153 164;
+  --p-red-800: #b42332;
+  --p-red-800-rgb: 180 35 50;
+  --p-red-950: #3b1e25;
+  --p-red-950-rgb: 59 30 37;
+  --p-black-rgb: 0 0 0;
+  --p-white-rgb: 255 255 255;
+  --p-space-0: 0;
+  --p-space-1: 4px;
+  --p-space-2: 8px;
+  --p-space-3: 12px;
+  --p-space-4: 16px;
+  --p-space-5: 20px;
+  --p-space-6: 24px;
+  --p-space-8: 32px;
+  --p-space-10: 40px;
+  --p-space-12: 48px;
+  --p-space-16: 64px;
+  --p-space-half: 2px;
+  --p-radius-xs: 4px;
+  --p-radius-sm: 8px;
+  --p-radius-md: 12px;
+  --p-radius-lg: 16px;
+  --p-radius-xl: 24px;
+  --p-radius-pill: 999px;
+  --p-radius-circle: 50%;
+  --p-border-thin: 1px;
+  --p-border-strong: 2px;
+  --p-size-control-compact: 36px;
+  --p-size-control-default: 44px;
+  --p-size-control-large: 48px;
+  --p-size-icon-sm: 16px;
+  --p-size-icon-md: 20px;
+  --p-size-icon-lg: 24px;
+  --p-size-avatar-sm: 24px;
+  --p-size-avatar-md: 40px;
+  --p-size-avatar-lg: 48px;
+  --gradient-together: linear-gradient(90deg,var(--color-brand-host),var(--color-brand-guest));
+  --font-sans: system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+  --font-mono: ui-monospace,SFMono-Regular,Consolas,"Liberation Mono",monospace;
+  --shadow-0: none;
+  --shadow-focus: 0 0 0 2px var(--color-bg-surface),0 0 0 4px var(--color-focus);
+  --blur-header: 12px;
+  --motion-ease-standard: cubic-bezier(0.2,0,0,1);
+  --motion-ease-enter: cubic-bezier(0.2,0.8,0.2,1);
+  --motion-ease-exit: cubic-bezier(0.4,0,1,1);
+  --motion-press-scale: 0.98;
+  --motion-disc-period: 18s linear;
+  --motion-status-period: 1600ms;
+  --toast-duration: 4000ms;
+  --color-disc-groove: rgb(var(--p-white-rgb) / 4%);
+  --color-avatar-light: var(--p-neutral-0);
+  --color-avatar-light-rgb: var(--p-neutral-0-rgb);
+  --color-avatar-dark: var(--p-neutral-950);
+  --color-avatar-dark-rgb: var(--p-neutral-950-rgb);
+  --font-weight-regular: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+  --text-caption-size: 0.75rem;
+  --text-caption-line: 1.5;
+  --text-small-size: 0.875rem;
+  --text-small-line: 1.5;
+  --text-body-size: 1rem;
+  --text-body-line: 1.5;
+  --text-title-sm-size: 1.25rem;
+  --text-title-sm-line: 1.4;
+  --text-title-size: 1.5rem;
+  --text-title-line: 1.3334;
+  --text-display-size: 2rem;
+  --text-display-line: 1.25;
+  --text-hero-size: clamp(2rem,5vw,3rem);
+  --text-hero-line: 1.25;
+  --tracking-default: 0;
+  --tracking-latin-label: 0.06em;
+  --tracking-code: 0.12em;
+  --space-inline-xs: var(--p-space-1);
+  --space-inline-sm: var(--p-space-2);
+  --space-inline-md: var(--p-space-3);
+  --space-stack-sm: var(--p-space-2);
+  --space-stack-md: var(--p-space-4);
+  --space-stack-lg: var(--p-space-6);
+  --space-section: var(--p-space-8);
+  --space-page: var(--p-space-4);
+  --radius-control: var(--p-radius-md);
+  --radius-card: var(--p-radius-lg);
+  --radius-sheet: var(--p-radius-xl);
+  --size-touch-target: var(--p-size-control-default);
+  --size-input: var(--p-size-control-large);
+  --size-control: var(--p-size-control-default);
+  --z-base: 0;
+  --z-sticky: 20;
+  --z-safe-area: 25;
+  --z-player: 30;
+  --z-full-player: 35;
+  --z-scrim: 40;
+  --z-drawer: 41;
+  --z-nested-scrim: 50;
+  --z-nested-dialog: 51;
+  --z-drag: 60;
+  --z-toast: 70;
+  --z-debug: 75;
+  --z-unlock: 80;
+  --z-invitation: 90;
+  --z-update: 200;
+  --motion-duration-instant: 0ms;
+  --motion-duration-fast: 120ms;
+  --motion-duration-normal: 180ms;
+  --motion-duration-slow: 240ms;
+  --breakpoint-sm: 480px;
+  --breakpoint-md: 768px;
+  --breakpoint-lg: 1024px;
+  --breakpoint-xl: 1280px;
+  --safe-top: var(--safe-area-inset-top,env(safe-area-inset-top,0px));
+  --safe-right: var(--safe-area-inset-right,env(safe-area-inset-right,0px));
+  --safe-bottom: var(--safe-area-inset-bottom,env(safe-area-inset-bottom,0px));
+  --safe-left: var(--safe-area-inset-left,env(safe-area-inset-left,0px));
+  --avatar-size-sm: var(--p-size-avatar-sm);
+  --avatar-size-md: var(--p-size-avatar-md);
+  --avatar-size-lg: var(--p-size-avatar-lg);
+  --connection-gap: var(--p-space-3);
+  --connection-padding: var(--p-space-3) var(--p-space-4);
+  --connection-dot-size: var(--p-space-2);
+  --lobby-max-width: 760px;
+  --lobby-gap: var(--p-space-6);
+  --lobby-card-padding: var(--p-space-6);
+  --now-padding: var(--p-space-6);
+  --now-gap: var(--p-space-6);
+  --now-disc-size: 200px;
+  --now-visualizer-height: var(--p-space-16);
+  --player-play-size: 72px;
+  --player-control-size: 44px;
+  --player-control-gap: var(--p-space-2);
+  --player-range-hit-height: 44px;
+  --player-track-height: var(--p-space-1);
+  --player-thumb-size: var(--p-space-5);
+  --playlist-row-min-height: var(--p-space-16);
+  --playlist-thumb-size: var(--p-space-10);
+  --playlist-row-gap: var(--p-space-3);
+  --drawer-width: 560px;
+  --drawer-padding: var(--p-space-4);
+  --search-thumb-size: 52px;
+  --search-action-min-width: 88px;
+  --download-card-padding: var(--p-space-4);
+  --download-card-gap: var(--p-space-3);
+  --download-thumb-size: var(--p-space-10);
+  --toast-max-width: 480px;
+  --toast-gap: var(--p-space-2);
+  --toast-padding: var(--p-space-3) var(--p-space-4);
+  --toast-radius: var(--radius-control);
+  --avatar-size-sm: var(--p-space-6);
+  --avatar-size-md: var(--p-space-10);
+  --avatar-size-lg: var(--p-space-12);
+  --unlock-padding: var(--p-space-4);
+  --unlock-gap: var(--p-space-3);
+  --unlock-max-width: 560px;
+  --debug-width: 320px;
+  --debug-max-height: 70dvh;
+  --debug-padding: var(--p-space-3);
+  --debug-font-size: var(--text-caption-size);
+  --color-bg-canvas: var(--p-neutral-50);
+  --color-bg-canvas-rgb: var(--p-neutral-50-rgb);
+  --color-bg-surface: var(--p-neutral-0);
+  --color-bg-surface-rgb: var(--p-neutral-0-rgb);
+  --color-bg-subtle: var(--p-neutral-100);
+  --color-bg-subtle-rgb: var(--p-neutral-100-rgb);
+  --color-bg-raised: var(--p-neutral-0);
+  --color-bg-raised-rgb: var(--p-neutral-0-rgb);
+  --color-text-primary: var(--p-neutral-800);
+  --color-text-primary-rgb: var(--p-neutral-800-rgb);
+  --color-text-secondary: var(--p-neutral-600);
+  --color-text-secondary-rgb: var(--p-neutral-600-rgb);
+  --color-text-disabled: var(--p-neutral-500);
+  --color-text-disabled-rgb: var(--p-neutral-500-rgb);
+  --color-border-subtle: var(--p-neutral-200);
+  --color-border-subtle-rgb: var(--p-neutral-200-rgb);
+  --color-border-control: var(--p-neutral-500);
+  --color-border-control-rgb: var(--p-neutral-500-rgb);
+  --color-focus: var(--p-rose-700);
+  --color-focus-rgb: var(--p-rose-700-rgb);
+  --color-role-host: var(--p-amber-800);
+  --color-role-host-rgb: var(--p-amber-800-rgb);
+  --color-role-host-bg: var(--p-amber-50);
+  --color-role-host-bg-rgb: var(--p-amber-50-rgb);
+  --color-role-guest: var(--p-rose-700);
+  --color-role-guest-rgb: var(--p-rose-700-rgb);
+  --color-role-guest-bg: var(--p-rose-50);
+  --color-role-guest-bg-rgb: var(--p-rose-50-rgb);
+  --color-brand-host: var(--p-amber-300);
+  --color-brand-host-rgb: var(--p-amber-300-rgb);
+  --color-brand-guest: var(--p-rose-300);
+  --color-brand-guest-rgb: var(--p-rose-300-rgb);
+  --color-action-primary-bg: var(--p-amber-800);
+  --color-action-primary-bg-rgb: var(--p-amber-800-rgb);
+  --color-action-primary-hover: var(--p-amber-900);
+  --color-action-primary-hover-rgb: var(--p-amber-900-rgb);
+  --color-action-primary-active: var(--p-amber-900);
+  --color-action-primary-active-rgb: var(--p-amber-900-rgb);
+  --color-action-primary-fg: var(--p-neutral-0);
+  --color-action-primary-fg-rgb: var(--p-neutral-0-rgb);
+  --color-action-secondary-bg: var(--p-neutral-100);
+  --color-action-secondary-bg-rgb: var(--p-neutral-100-rgb);
+  --color-action-secondary-fg: var(--p-neutral-800);
+  --color-action-secondary-fg-rgb: var(--p-neutral-800-rgb);
+  --color-action-guest-bg: var(--p-rose-700);
+  --color-action-guest-bg-rgb: var(--p-rose-700-rgb);
+  --color-action-guest-fg: var(--p-neutral-0);
+  --color-action-guest-fg-rgb: var(--p-neutral-0-rgb);
+  --color-selected-bg: var(--p-rose-50);
+  --color-selected-bg-rgb: var(--p-rose-50-rgb);
+  --color-selected-indicator: var(--p-rose-700);
+  --color-selected-indicator-rgb: var(--p-rose-700-rgb);
+  --color-status-success-fg: var(--p-green-800);
+  --color-status-success-fg-rgb: var(--p-green-800-rgb);
+  --color-status-success-bg: var(--p-green-50);
+  --color-status-success-bg-rgb: var(--p-green-50-rgb);
+  --color-status-warning-fg: var(--p-yellow-800);
+  --color-status-warning-fg-rgb: var(--p-yellow-800-rgb);
+  --color-status-warning-bg: var(--p-yellow-50);
+  --color-status-warning-bg-rgb: var(--p-yellow-50-rgb);
+  --color-status-error-fg: var(--p-red-800);
+  --color-status-error-fg-rgb: var(--p-red-800-rgb);
+  --color-status-error-bg: var(--p-red-50);
+  --color-status-error-bg-rgb: var(--p-red-50-rgb);
+  --color-status-info-fg: var(--p-rose-700);
+  --color-status-info-fg-rgb: var(--p-rose-700-rgb);
+  --color-status-info-bg: var(--p-rose-50);
+  --color-status-info-bg-rgb: var(--p-rose-50-rgb);
+  --color-status-neutral-fg: var(--p-neutral-600);
+  --color-status-neutral-fg-rgb: var(--p-neutral-600-rgb);
+  --color-status-neutral-bg: var(--p-neutral-100);
+  --color-status-neutral-bg-rgb: var(--p-neutral-100-rgb);
+  --color-player-track: var(--p-neutral-500);
+  --color-player-track-rgb: var(--p-neutral-500-rgb);
+  --color-player-fill: var(--p-amber-800);
+  --color-player-fill-rgb: var(--p-amber-800-rgb);
+  --color-player-thumb: var(--p-neutral-0);
+  --color-player-thumb-rgb: var(--p-neutral-0-rgb);
+  --color-scrim: rgb(var(--p-black-rgb) / 40%);
+  --color-safe-area: var(--p-neutral-50);
+  --color-safe-area-rgb: var(--p-neutral-50-rgb);
+  --color-toast-bg: var(--p-neutral-800);
+  --color-toast-bg-rgb: var(--p-neutral-800-rgb);
+  --color-toast-fg: var(--p-neutral-0);
+  --color-toast-fg-rgb: var(--p-neutral-0-rgb);
+  --color-disc-bg: var(--p-neutral-950);
+  --color-disc-bg-rgb: var(--p-neutral-950-rgb);
+  --color-disc-ring: var(--p-neutral-800);
+  --color-disc-ring-rgb: var(--p-neutral-800-rgb);
+  --color-debug-bg: var(--p-neutral-950);
+  --color-debug-bg-rgb: var(--p-neutral-950-rgb);
+  --color-debug-fg: var(--p-neutral-50);
+  --color-debug-fg-rgb: var(--p-neutral-50-rgb);
+  --color-debug-muted: var(--p-neutral-400);
+  --color-debug-muted-rgb: var(--p-neutral-400-rgb);
+  --shadow-1: 0 1px 2px rgb(var(--p-black-rgb) / 6%);
+  --shadow-2: 0 8px 24px rgb(var(--p-black-rgb) / 10%);
+  --shadow-3: 0 16px 48px rgb(var(--p-black-rgb) / 18%);
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --color-bg-canvas: var(--p-neutral-950);
+  --color-bg-canvas-rgb: var(--p-neutral-950-rgb);
+  --color-bg-surface: var(--p-neutral-900);
+  --color-bg-surface-rgb: var(--p-neutral-900-rgb);
+  --color-bg-subtle: var(--p-neutral-850);
+  --color-bg-subtle-rgb: var(--p-neutral-850-rgb);
+  --color-bg-raised: var(--p-neutral-800);
+  --color-bg-raised-rgb: var(--p-neutral-800-rgb);
+  --color-text-primary: var(--p-neutral-50);
+  --color-text-primary-rgb: var(--p-neutral-50-rgb);
+  --color-text-secondary: var(--p-neutral-400);
+  --color-text-secondary-rgb: var(--p-neutral-400-rgb);
+  --color-text-disabled: var(--p-neutral-500);
+  --color-text-disabled-rgb: var(--p-neutral-500-rgb);
+  --color-border-subtle: var(--p-neutral-750);
+  --color-border-subtle-rgb: var(--p-neutral-750-rgb);
+  --color-border-control: var(--p-neutral-500);
+  --color-border-control-rgb: var(--p-neutral-500-rgb);
+  --color-focus: var(--p-rose-300);
+  --color-focus-rgb: var(--p-rose-300-rgb);
+  --color-role-host: var(--p-amber-300);
+  --color-role-host-rgb: var(--p-amber-300-rgb);
+  --color-role-host-bg: var(--p-amber-950);
+  --color-role-host-bg-rgb: var(--p-amber-950-rgb);
+  --color-role-guest: var(--p-rose-300);
+  --color-role-guest-rgb: var(--p-rose-300-rgb);
+  --color-role-guest-bg: var(--p-rose-950);
+  --color-role-guest-bg-rgb: var(--p-rose-950-rgb);
+  --color-brand-host: var(--p-amber-300);
+  --color-brand-host-rgb: var(--p-amber-300-rgb);
+  --color-brand-guest: var(--p-rose-300);
+  --color-brand-guest-rgb: var(--p-rose-300-rgb);
+  --color-action-primary-bg: var(--p-amber-300);
+  --color-action-primary-bg-rgb: var(--p-amber-300-rgb);
+  --color-action-primary-hover: var(--p-amber-400);
+  --color-action-primary-hover-rgb: var(--p-amber-400-rgb);
+  --color-action-primary-active: var(--p-amber-500);
+  --color-action-primary-active-rgb: var(--p-amber-500-rgb);
+  --color-action-primary-fg: var(--p-neutral-900);
+  --color-action-primary-fg-rgb: var(--p-neutral-900-rgb);
+  --color-action-secondary-bg: var(--p-neutral-800);
+  --color-action-secondary-bg-rgb: var(--p-neutral-800-rgb);
+  --color-action-secondary-fg: var(--p-neutral-50);
+  --color-action-secondary-fg-rgb: var(--p-neutral-50-rgb);
+  --color-action-guest-bg: var(--p-rose-300);
+  --color-action-guest-bg-rgb: var(--p-rose-300-rgb);
+  --color-action-guest-fg: var(--p-neutral-900);
+  --color-action-guest-fg-rgb: var(--p-neutral-900-rgb);
+  --color-selected-bg: var(--p-rose-950);
+  --color-selected-bg-rgb: var(--p-rose-950-rgb);
+  --color-selected-indicator: var(--p-rose-300);
+  --color-selected-indicator-rgb: var(--p-rose-300-rgb);
+  --color-status-success-fg: var(--p-green-300);
+  --color-status-success-fg-rgb: var(--p-green-300-rgb);
+  --color-status-success-bg: var(--p-green-950);
+  --color-status-success-bg-rgb: var(--p-green-950-rgb);
+  --color-status-warning-fg: var(--p-yellow-300);
+  --color-status-warning-fg-rgb: var(--p-yellow-300-rgb);
+  --color-status-warning-bg: var(--p-yellow-950);
+  --color-status-warning-bg-rgb: var(--p-yellow-950-rgb);
+  --color-status-error-fg: var(--p-red-300);
+  --color-status-error-fg-rgb: var(--p-red-300-rgb);
+  --color-status-error-bg: var(--p-red-950);
+  --color-status-error-bg-rgb: var(--p-red-950-rgb);
+  --color-status-info-fg: var(--p-rose-300);
+  --color-status-info-fg-rgb: var(--p-rose-300-rgb);
+  --color-status-info-bg: var(--p-rose-950);
+  --color-status-info-bg-rgb: var(--p-rose-950-rgb);
+  --color-status-neutral-fg: var(--p-neutral-400);
+  --color-status-neutral-fg-rgb: var(--p-neutral-400-rgb);
+  --color-status-neutral-bg: var(--p-neutral-800);
+  --color-status-neutral-bg-rgb: var(--p-neutral-800-rgb);
+  --color-player-track: var(--p-neutral-500);
+  --color-player-track-rgb: var(--p-neutral-500-rgb);
+  --color-player-fill: var(--p-amber-300);
+  --color-player-fill-rgb: var(--p-amber-300-rgb);
+  --color-player-thumb: var(--p-neutral-50);
+  --color-player-thumb-rgb: var(--p-neutral-50-rgb);
+  --color-scrim: rgb(var(--p-black-rgb) / 64%);
+  --color-safe-area: var(--p-neutral-950);
+  --color-safe-area-rgb: var(--p-neutral-950-rgb);
+  --color-toast-bg: var(--p-neutral-50);
+  --color-toast-bg-rgb: var(--p-neutral-50-rgb);
+  --color-toast-fg: var(--p-neutral-900);
+  --color-toast-fg-rgb: var(--p-neutral-900-rgb);
+  --color-disc-bg: var(--p-neutral-950);
+  --color-disc-bg-rgb: var(--p-neutral-950-rgb);
+  --color-disc-ring: var(--p-neutral-800);
+  --color-disc-ring-rgb: var(--p-neutral-800-rgb);
+  --color-debug-bg: var(--p-neutral-950);
+  --color-debug-bg-rgb: var(--p-neutral-950-rgb);
+  --color-debug-fg: var(--p-neutral-50);
+  --color-debug-fg-rgb: var(--p-neutral-50-rgb);
+  --color-debug-muted: var(--p-neutral-400);
+  --color-debug-muted-rgb: var(--p-neutral-400-rgb);
+  --shadow-1: 0 1px 3px rgb(var(--p-black-rgb) / 28%);
+  --shadow-2: 0 8px 24px rgb(var(--p-black-rgb) / 36%);
+  --shadow-3: 0 16px 48px rgb(var(--p-black-rgb) / 48%);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --color-bg-canvas: var(--p-neutral-950);
+    --color-bg-canvas-rgb: var(--p-neutral-950-rgb);
+    --color-bg-surface: var(--p-neutral-900);
+    --color-bg-surface-rgb: var(--p-neutral-900-rgb);
+    --color-bg-subtle: var(--p-neutral-850);
+    --color-bg-subtle-rgb: var(--p-neutral-850-rgb);
+    --color-bg-raised: var(--p-neutral-800);
+    --color-bg-raised-rgb: var(--p-neutral-800-rgb);
+    --color-text-primary: var(--p-neutral-50);
+    --color-text-primary-rgb: var(--p-neutral-50-rgb);
+    --color-text-secondary: var(--p-neutral-400);
+    --color-text-secondary-rgb: var(--p-neutral-400-rgb);
+    --color-text-disabled: var(--p-neutral-500);
+    --color-text-disabled-rgb: var(--p-neutral-500-rgb);
+    --color-border-subtle: var(--p-neutral-750);
+    --color-border-subtle-rgb: var(--p-neutral-750-rgb);
+    --color-border-control: var(--p-neutral-500);
+    --color-border-control-rgb: var(--p-neutral-500-rgb);
+    --color-focus: var(--p-rose-300);
+    --color-focus-rgb: var(--p-rose-300-rgb);
+    --color-role-host: var(--p-amber-300);
+    --color-role-host-rgb: var(--p-amber-300-rgb);
+    --color-role-host-bg: var(--p-amber-950);
+    --color-role-host-bg-rgb: var(--p-amber-950-rgb);
+    --color-role-guest: var(--p-rose-300);
+    --color-role-guest-rgb: var(--p-rose-300-rgb);
+    --color-role-guest-bg: var(--p-rose-950);
+    --color-role-guest-bg-rgb: var(--p-rose-950-rgb);
+    --color-brand-host: var(--p-amber-300);
+    --color-brand-host-rgb: var(--p-amber-300-rgb);
+    --color-brand-guest: var(--p-rose-300);
+    --color-brand-guest-rgb: var(--p-rose-300-rgb);
+    --color-action-primary-bg: var(--p-amber-300);
+    --color-action-primary-bg-rgb: var(--p-amber-300-rgb);
+    --color-action-primary-hover: var(--p-amber-400);
+    --color-action-primary-hover-rgb: var(--p-amber-400-rgb);
+    --color-action-primary-active: var(--p-amber-500);
+    --color-action-primary-active-rgb: var(--p-amber-500-rgb);
+    --color-action-primary-fg: var(--p-neutral-900);
+    --color-action-primary-fg-rgb: var(--p-neutral-900-rgb);
+    --color-action-secondary-bg: var(--p-neutral-800);
+    --color-action-secondary-bg-rgb: var(--p-neutral-800-rgb);
+    --color-action-secondary-fg: var(--p-neutral-50);
+    --color-action-secondary-fg-rgb: var(--p-neutral-50-rgb);
+    --color-action-guest-bg: var(--p-rose-300);
+    --color-action-guest-bg-rgb: var(--p-rose-300-rgb);
+    --color-action-guest-fg: var(--p-neutral-900);
+    --color-action-guest-fg-rgb: var(--p-neutral-900-rgb);
+    --color-selected-bg: var(--p-rose-950);
+    --color-selected-bg-rgb: var(--p-rose-950-rgb);
+    --color-selected-indicator: var(--p-rose-300);
+    --color-selected-indicator-rgb: var(--p-rose-300-rgb);
+    --color-status-success-fg: var(--p-green-300);
+    --color-status-success-fg-rgb: var(--p-green-300-rgb);
+    --color-status-success-bg: var(--p-green-950);
+    --color-status-success-bg-rgb: var(--p-green-950-rgb);
+    --color-status-warning-fg: var(--p-yellow-300);
+    --color-status-warning-fg-rgb: var(--p-yellow-300-rgb);
+    --color-status-warning-bg: var(--p-yellow-950);
+    --color-status-warning-bg-rgb: var(--p-yellow-950-rgb);
+    --color-status-error-fg: var(--p-red-300);
+    --color-status-error-fg-rgb: var(--p-red-300-rgb);
+    --color-status-error-bg: var(--p-red-950);
+    --color-status-error-bg-rgb: var(--p-red-950-rgb);
+    --color-status-info-fg: var(--p-rose-300);
+    --color-status-info-fg-rgb: var(--p-rose-300-rgb);
+    --color-status-info-bg: var(--p-rose-950);
+    --color-status-info-bg-rgb: var(--p-rose-950-rgb);
+    --color-status-neutral-fg: var(--p-neutral-400);
+    --color-status-neutral-fg-rgb: var(--p-neutral-400-rgb);
+    --color-status-neutral-bg: var(--p-neutral-800);
+    --color-status-neutral-bg-rgb: var(--p-neutral-800-rgb);
+    --color-player-track: var(--p-neutral-500);
+    --color-player-track-rgb: var(--p-neutral-500-rgb);
+    --color-player-fill: var(--p-amber-300);
+    --color-player-fill-rgb: var(--p-amber-300-rgb);
+    --color-player-thumb: var(--p-neutral-50);
+    --color-player-thumb-rgb: var(--p-neutral-50-rgb);
+    --color-scrim: rgb(var(--p-black-rgb) / 64%);
+    --color-safe-area: var(--p-neutral-950);
+    --color-safe-area-rgb: var(--p-neutral-950-rgb);
+    --color-toast-bg: var(--p-neutral-50);
+    --color-toast-bg-rgb: var(--p-neutral-50-rgb);
+    --color-toast-fg: var(--p-neutral-900);
+    --color-toast-fg-rgb: var(--p-neutral-900-rgb);
+    --color-disc-bg: var(--p-neutral-950);
+    --color-disc-bg-rgb: var(--p-neutral-950-rgb);
+    --color-disc-ring: var(--p-neutral-800);
+    --color-disc-ring-rgb: var(--p-neutral-800-rgb);
+    --color-debug-bg: var(--p-neutral-950);
+    --color-debug-bg-rgb: var(--p-neutral-950-rgb);
+    --color-debug-fg: var(--p-neutral-50);
+    --color-debug-fg-rgb: var(--p-neutral-50-rgb);
+    --color-debug-muted: var(--p-neutral-400);
+    --color-debug-muted-rgb: var(--p-neutral-400-rgb);
+    --shadow-1: 0 1px 3px rgb(var(--p-black-rgb) / 28%);
+    --shadow-2: 0 8px 24px rgb(var(--p-black-rgb) / 36%);
+    --shadow-3: 0 16px 48px rgb(var(--p-black-rgb) / 48%);
+  }
+}
+@media (min-width: 768px) { :root { --space-page: var(--p-space-6); } }
+@media (min-width: 1024px) { :root { --player-play-size: 64px; } }
+
+*{box-sizing:border-box}body{margin:0;background:var(--color-bg-canvas);color:var(--color-text-primary);font-family:system-ui,"Microsoft YaHei",sans-serif;line-height:1.6}main{max-width:840px;padding:36px 20px;margin:auto}h1{font-size:32px;letter-spacing:-.04em;margin:8px 0}p{margin:0}.eyebrow,.intro,footer{color:var(--color-text-secondary);font-size:13px}.eyebrow{letter-spacing:.15em}.toolbar{display:flex;gap:8px;flex-wrap:wrap;margin:24px 0 16px}button{font:inherit;color:inherit;background:var(--color-bg-surface);border:1px solid var(--color-border-subtle);border-radius:20px;padding:7px 15px;cursor:pointer}button[aria-pressed=true]{background:var(--color-text-primary);color:var(--color-bg-surface)}button:focus-visible,input:focus-visible{outline:3px solid var(--color-brand-guest);outline-offset:3px}.preview{max-width:420px;margin:24px auto;background:var(--color-bg-subtle);padding:18px 12px;border-radius:28px;border:1px solid var(--color-border-subtle)}.preview h2{font-size:16px;margin:0 4px 16px}.cards{display:grid;grid-template-columns:1fr 1fr;gap:8px}.card{min-width:0;padding:16px 5px;border-radius:18px;background:var(--color-bg-canvas);text-align:center;border:1px solid var(--color-border-subtle)}h3{font-size:12px;font-weight:500;color:var(--color-text-secondary);margin:0 0 12px}.comparison{font-size:11px;color:var(--color-text-secondary);margin-top:12px}.controls{background:var(--color-bg-surface);border:1px solid var(--color-border-subtle);padding:20px;border-radius:20px;display:grid;grid-template-columns:1fr 1fr;gap:24px}label{display:block;font-size:13px}output{display:block;font-size:12px;font-variant-numeric:tabular-nums;color:var(--color-text-secondary)}input{width:100%;accent-color:var(--color-brand-host)}#completed{accent-color:var(--color-brand-guest)}.presets{display:flex;gap:8px;flex-wrap:wrap;margin-top:16px}.presets button{font-size:12px}footer{margin-top:24px}.scale{font-size:11px;color:var(--color-text-secondary)}@media(max-width:480px){main{padding:24px 12px}.controls{grid-template-columns:1fr;gap:16px}h1{font-size:27px}}
+</style></head><body><main>
+<div class="eyebrow">HALF &amp; HALF / OPTION A</div><h1>每一圈，都是听过的时光。</h1>
+<p class="intro">单环多圈 · 从顶部顺时针累积，新圈用同色浅 tint 覆盖。徽标记录所有已完成的圈。</p>
+<div class="toolbar" role="group" aria-label="统计周期"><button data-period="week" aria-pressed="true">本周</button><button data-period="month" aria-pressed="false">本月</button><button data-period="year" aria-pressed="false">本年</button><button data-period="all" aria-pressed="false">全部</button><button id="theme" aria-pressed="false">深色</button><button id="replay">↻ 重播</button></div>
+<section class="preview" aria-label="最终统计卡片"><h2>收听统计</h2><div class="cards"><article class="card"><h3>收听时长</h3><div id="duration-ring"></div><p class="comparison" id="comparison">较上周增加 113 分钟</p></article><article class="card"><h3>听完的歌</h3><div id="completed-ring"></div></article></div></section>
+<section class="controls" aria-label="演示数值"><div><label for="duration">收听时长</label><output id="duration-output" for="duration"></output><input id="duration" type="range" min="0" max="40000" step="any" value="2350"><div class="scale">0 → 40 圈</div></div><div><label for="completed">听完的歌</label><output id="completed-output" for="completed"></output><input id="completed" type="range" min="0" max="40000" step="any" value="1650"><div class="scale">0 → 40 圈</div></div></section>
+<div class="presets" role="group" aria-label="极端数值预设"><button data-preset="0">0</button><button data-preset="0.003">极小</button><button data-preset="1">整圈</button><button data-preset="2">2 圈</button><button data-preset="5">5 圈</button><button data-preset="12">12 圈</button><button data-preset="40">40 圈</button><button data-preset="big">大数字</button></div>
+<footer>所有数值均为演示 · 拖动模拟实时增量，切换周期与重播从零开始 · 动效 1.2 秒 · 跟随系统减少动态效果设置 · 可离线打开</footer>
+</main><script type="module">
+// copied from public/statsRing.js — keep in sync
+// Values are seconds for duration and song counts for completed.
+export const lapUnits = {
+  week: { duration: 7 * 3600, completed: 50 },
+  month: { duration: 30 * 3600, completed: 200 },
+  year: { duration: 365 * 3600, completed: 2000 },
+  all: { duration: 1000 * 3600, completed: 5000 },
+};
+export const ringRadius = 66; // 20-wide stroke plus room for the soft tip shadow.
+export const ringStyles = `
+.stats-ring-box{position:relative;width:100%;max-width:160px;margin:auto;color:var(--color-text-primary)}
+.stats-ring{display:block;width:100%;overflow:visible}
+.stats-ring-number{font-weight:750;font-variant-numeric:tabular-nums;fill:currentColor}
+.stats-ring-caption{fill:var(--color-text-secondary)}
+.stats-ring-badge{position:absolute;right:0;top:0;border-radius:20px;padding:1px 6px;font-size:10px;font-weight:700;background:var(--color-text-primary);color:var(--color-bg-surface);border:2px solid var(--color-bg-surface)}
+@media(prefers-reduced-motion:reduce){.stats-ring{animation:none}}
+`;
+const safeValue = value => Number.isFinite(value) ? Math.max(0, value) : 0;
+export function ringModel(value, perLap) {
+  const progress = perLap > 0 && Number.isFinite(perLap) ? safeValue(value) / perLap : 0;
+  // Correct floating point noise at exact lap boundaries without swallowing tiny values.
+  const nearest = Math.round(progress);
+  const normalized = nearest > 0 && Math.abs(progress - nearest) < 1e-10 ? nearest : progress;
+  const laps = Math.floor(normalized), fraction = normalized - laps;
+  const arcs = [];
+  const arc = (lapIndex, fraction) => ({ lapIndex, fraction, tint: Math.min(lapIndex, 2) * 18 });
+  for (let i = Math.max(0, laps - 2); i < laps; i++) arcs.push(arc(i, 1));
+  if (fraction > 0) arcs.push(arc(laps, Math.max(0.02, fraction)));
+  return { laps, fraction, badge: laps ? `×${laps}` : '', arcs };
+}
+export function lapColour(kind, tint = 0) {
+  const base = `var(--color-brand-${kind === 'duration' ? 'host' : 'guest'})`;
+  return tint ? `color-mix(in srgb, ${base}, rgb(var(--p-white-rgb)) ${tint}%)` : base;
+}
+export function ringHue(kind, alpha) {
+  return `rgb(var(--color-brand-${kind === 'duration' ? 'host' : 'guest'}-rgb) / ${alpha})`;
+}
+export function ringTip(arc) {
+  const angle = arc.fraction * Math.PI * 2 - Math.PI / 2;
+  return { x: 80 + Math.cos(angle) * ringRadius, y: 80 + Math.sin(angle) * ringRadius };
+}
+export function formatCentre(kind, value) {
+  value = safeValue(value);
+  if (!value) return '0';
+  if (kind !== 'duration') return `${Math.floor(value).toLocaleString('zh-CN')} 次`;
+  const minutes = Math.floor(value / 60);
+  return minutes >= 60 ? `${Math.floor(minutes / 60)}小时${minutes % 60}分` : `${minutes}分`;
+}
+export function centreFontSize(label) {
+  // CJK glyphs consume a full em; digits/punctuation use a conservative .65 em.
+  const width = [...label].reduce((sum, char) => sum + (/[^\x00-\xff]/.test(char) ? 1 : 0.65), 0);
+  return Math.min(23, 96 / Math.max(1, width));
+}
+export function lapCaption(kind, perLap) {
+  return `一圈 = ${(kind === 'duration' ? perLap / 3600 : perLap).toLocaleString('zh-CN')} ${kind === 'duration' ? '小时' : '次'}`;
+}
+export function sweep(from, to, duration, onFrame) {
+  if (globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches || globalThis.document?.hidden || duration <= 0) {
+    onFrame(to);
+    return () => {};
+  }
+  let frame, start, cancelled = false;
+  const step = time => {
+    if (cancelled) return;
+    start ??= time;
+    const t = Math.min(1, Math.max(0, (time - start) / duration));
+    onFrame(t === 1 ? to : from + (to - from) * (1 - (1 - t) ** 3));
+    if (t < 1) frame = globalThis.requestAnimationFrame(step);
+  };
+  onFrame(from);
+  frame = globalThis.requestAnimationFrame(step);
+  return () => { cancelled = true; globalThis.cancelAnimationFrame(frame); };
+}
+// end copied block
+const style = document.createElement('style'); style.textContent = ringStyles; document.head.append(style);
+const NS = 'http://www.w3.org/2000/svg';
+let period = 'week';
+const kinds = ['duration', 'completed'];
+const views = kinds.map(kind => ({ kind, value: 0, cancel: () => {}, host: document.getElementById(`${kind}-ring`) }));
+function el(tag, attrs, parent) {
+  const node = document.createElementNS(NS, tag);
+  for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, value);
+  parent.append(node); return node;
+}
+function draw(view, value) {
+  view.value = value;
+  const { kind, host } = view, perLap = lapUnits[period][kind];
+  const model = ringModel(value, perLap), leading = model.arcs.at(-1);
+  const number = formatCentre(kind, value), shadowId = `stats-ring-shadow-${kind}`;
+  const box = document.createElement('div'); box.className = 'stats-ring-box';
+  const label = kind === 'duration' ? '收听时长' : '听完的歌';
+  const svg = el('svg', { viewBox:'0 0 160 160', class:'stats-ring', role:'img', 'aria-label':`${label}：${number}，${model.laps} 圈已完成` }, box);
+  const defs = el('defs', {}, svg);
+  const filter = el('filter', { id:shadowId, x:'-100%', y:'-100%', width:'300%', height:'300%', 'color-interpolation-filters':'sRGB' }, defs);
+  el('feDropShadow', { dx:0, dy:2, stdDeviation:2, 'flood-color':ringHue(kind, 0.35) }, filter);
+  const circle = { cx:80, cy:80, r:ringRadius, fill:'none', 'stroke-width':20 };
+  el('circle', { ...circle, stroke:ringHue(kind, 0.12) }, svg);
+  for (const arc of model.arcs) el('circle', { ...circle, pathLength:100, stroke:lapColour(kind, arc.tint), 'stroke-linecap':arc.fraction === 1 ? 'butt' : 'round', 'stroke-dasharray':`${arc.fraction * 100} 100`, transform:'rotate(-90 80 80)' }, svg);
+  if (leading) {
+    const tip = ringTip(leading);
+    el('circle', { class:'stats-ring-tip', cx:tip.x, cy:tip.y, r:10, fill:lapColour(kind, leading.tint), filter:`url(#${shadowId})` }, svg);
+  }
+  el('text', { class:'stats-ring-number', x:80, y:79, 'text-anchor':'middle', 'dominant-baseline':'middle', 'font-size':centreFontSize(number) }, svg).textContent = number;
+  el('text', { class:'stats-ring-caption', x:80, y:99, 'text-anchor':'middle', 'font-size':8 }, svg).textContent = lapCaption(kind, perLap);
+  if (model.badge) { const badge = document.createElement('span'); badge.className = 'stats-ring-badge'; badge.textContent = model.badge; box.append(badge); }
+  host.replaceChildren(box);
+}
+function update(reset = false) {
+  for (const view of views) {
+    view.cancel();
+    const input = document.getElementById(view.kind), target = Number(input.value) / 1000 * lapUnits[period][view.kind];
+    const output = document.getElementById(`${view.kind}-output`);
+    output.textContent = `${formatCentre(view.kind, target)} · ${(target / lapUnits[period][view.kind]).toFixed(3)} 圈`;
+    input.setAttribute('aria-valuetext', output.textContent);
+    view.cancel = sweep(reset ? 0 : view.value, target, 1200, value => draw(view, value));
+  }
+}
+function selectPeriod(next) {
+  period = next;
+  document.querySelectorAll('[data-period]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.period === period)));
+  document.getElementById('comparison').textContent = {week:'较上周增加 113 分钟',month:'较上月增加 113 分钟',year:'今年至今',all:'全部记录'}[period];
+}
+document.querySelectorAll('[data-period]').forEach(button => button.addEventListener('click', () => { selectPeriod(button.dataset.period); update(true); }));
+for (const kind of kinds) document.getElementById(kind).addEventListener('input', () => update());
+document.querySelectorAll('[data-preset]').forEach(button => button.addEventListener('click', () => {
+  const preset = button.dataset.preset;
+  if (preset === 'big') selectPeriod('all');
+  for (const kind of kinds) document.getElementById(kind).value = preset === 'big' ? (kind === 'duration' ? (2340 * 3600 + 15 * 60) / lapUnits.all.duration * 1000 : 12345 / lapUnits.all.completed * 1000) : Number(preset) * 1000;
+  update(preset === 'big');
+}));
+document.getElementById('theme').addEventListener('click', event => {
+  const dark = document.documentElement.dataset.theme !== 'dark';
+  document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+  event.currentTarget.setAttribute('aria-pressed', String(dark));
+  event.currentTarget.textContent = dark ? '浅色' : '深色';
+});
+document.getElementById('replay').addEventListener('click', () => update(true));
+matchMedia('(prefers-reduced-motion: reduce)').addEventListener('change', () => update());
+update(true);
+</script></body></html>

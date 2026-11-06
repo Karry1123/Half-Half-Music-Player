@@ -1,20 +1,7 @@
 ﻿import React, { useEffect, useRef, useState } from 'react';
 import htm from 'htm';
+import { lapUnits, ringModel, ringRadius, ringStyles, lapColour, ringHue, ringTip, formatCentre, centreFontSize, lapCaption, sweep } from './statsRing.js';
 const html = htm.bind(React.createElement);
-function CountUp({ value }) {
-  const [number, setNumber] = useState(value);
-  useEffect(() => {
-    if (globalThis.document?.hidden || globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches) { setNumber(value); return; }
-    let frame, start;
-    const step = time => { start ??= time; const progress = Math.min(1, (time - start) / 650); setNumber(Math.round(value * (1 - (1 - progress) ** 3))); if (progress < 1) frame = requestAnimationFrame(step); };
-    const visibility = () => { if (document.hidden) { cancelAnimationFrame(frame); setNumber(value); } };
-    document.addEventListener('visibilitychange', visibility);
-    frame = requestAnimationFrame(step);
-    return () => { cancelAnimationFrame(frame); document.removeEventListener('visibilitychange', visibility); };
-  }, [value]);
-  return html`<span>${number}</span>`;
-}
-
 const card = 'min-w-0 space-y-3 rounded-2xl border border-white/10 bg-white/5 p-3 sm:p-4';
 const note = 'min-w-0 break-words text-xs text-sand-400';
 const periods = [['week', '本周'], ['month', '本月'], ['year', '本年'], ['all', '全部']];
@@ -25,16 +12,31 @@ const durationLabel = seconds => {
 };
 const heatColours = ['rgb(var(--color-brand-host-rgb) / 0.08)', '#F2C9A0', '#E39A5B', '#C96E2A', '#8A4512'];
 const chartTitles = { week: '每日收听', month: '每周收听', year: '每月收听', all: '每年收听' };
-// Goals: week/month/year = 7/30/365 hours and 50/200/2000 completions; all is full.
-const goals = { week: [7 * 3600, 50], month: [30 * 3600, 200], year: [365 * 3600, 2000] };
-// All-time completions fill toward the next milestone.
-const completionMilestone = count => [10, 50, 100, 200, 500, 1000, 2000, 5000].find(n => count < n) || Math.ceil((count + 1) / 5000) * 5000;
-function StatRing({ progress, children, label, colour = 'text-host' }) {
-  return html`<div className=${`relative mx-auto w-full max-w-40 ${colour}`}>
-    <svg viewBox="0 0 160 160" className="block w-full" role="img" aria-label=${label}>
-      <circle cx="80" cy="80" r="67" fill="none" stroke="currentColor" strokeWidth="12" opacity="0.12" />
-      <circle className="stats-ring" cx="80" cy="80" r="67" pathLength="100" fill="none" stroke="currentColor" strokeWidth="12" strokeLinecap="round" strokeDasharray="100" transform="rotate(-90 80 80)" style=${{ strokeDashoffset: 100 - Math.min(1, Math.max(0, progress)) * 100 }} />
-    </svg><div className="absolute inset-0 flex items-center justify-center px-3 text-center text-sm font-bold tabular-nums sm:text-base">${children}</div>
+function StatRing({ value, kind, period, label }) {
+  const [rendered, setRendered] = useState(value);
+  const previous = useRef(null);
+  useEffect(() => {
+    const from = previous.current?.period === period ? previous.current.value : 0;
+    return sweep(from, value, 1200, next => {
+      previous.current = { period, value: next };
+      setRendered(next);
+    });
+  }, [value, period]);
+  const perLap = lapUnits[period][kind];
+  const model = ringModel(rendered, perLap);
+  const leading = model.arcs.at(-1);
+  const tip = leading && ringTip(leading);
+  const number = formatCentre(kind, rendered);
+  const shadowId = `stats-ring-shadow-${kind}`;
+  return html`<div className="stats-ring-box">
+    <svg viewBox="0 0 160 160" className="stats-ring" role="img" aria-label=${`${label}：${number}，${model.laps} 圈已完成`}>
+      <defs><filter id=${shadowId} x="-100%" y="-100%" width="300%" height="300%" colorInterpolationFilters="sRGB"><feDropShadow dx="0" dy="2" stdDeviation="2" floodColor=${ringHue(kind, 0.35)} /></filter></defs>
+      <circle cx="80" cy="80" r=${ringRadius} fill="none" stroke=${ringHue(kind, 0.12)} strokeWidth="20" />
+      ${model.arcs.map(arc => html`<circle key=${arc.lapIndex} cx="80" cy="80" r=${ringRadius} pathLength="100" fill="none" stroke=${lapColour(kind, arc.tint)} strokeWidth="20" strokeLinecap=${arc.fraction === 1 ? 'butt' : 'round'} strokeDasharray=${`${arc.fraction * 100} 100`} transform="rotate(-90 80 80)" />`)}
+      ${leading && html`<circle className="stats-ring-tip" cx=${tip.x} cy=${tip.y} r="10" fill=${lapColour(kind, leading.tint)} filter=${`url(#${shadowId})`} />`}
+      <text className="stats-ring-number" x="80" y="79" textAnchor="middle" dominantBaseline="middle" fontSize=${centreFontSize(number)}>${number}</text>
+      <text className="stats-ring-caption" x="80" y="99" textAnchor="middle" fontSize="8">${lapCaption(kind, perLap)}</text>
+    </svg>${model.badge && html`<span className="stats-ring-badge">${model.badge}</span>`}
   </div>`;
 }
 
@@ -107,12 +109,12 @@ export function ListeningStatsCards({ stats, tracks = [], me = {}, friends = [],
   const rate = started ? Math.round(localCompleted / started * 100) : 0;
   const avatar = name => html`<span className="grid h-8 w-8 shrink-0 place-items-center rounded-full border border-white/10 bg-host/20 text-xs">${String(name || '听').slice(0, 1)}</span>`;
   return html`<section className="mb-4 min-w-0 space-y-4 rounded-3xl border border-white/10 bg-gradient-to-br from-host/10 via-white/5 to-guest/10 p-3 sm:p-5">
-    <style>@keyframes stats-ring-draw { from { stroke-dashoffset: 100; } } .stats-ring { animation: stats-ring-draw 800ms ease-out both; will-change: stroke-dashoffset; } @media (prefers-reduced-motion: reduce) { .stats-ring { animation: none !important; will-change: auto; } }</style>
+    <style>${ringStyles}</style>
     <h2 className="min-w-0 truncate font-semibold">收听统计</h2>
     <div className="grid min-w-0 grid-cols-4 gap-1 rounded-full border border-white/10 bg-white/5 p-1" role="group" aria-label="统计周期">${periods.map(([value, label]) => html`<button key=${value} type="button" aria-pressed=${period === value} onClick=${() => setPeriod(value)} className=${`min-w-0 truncate rounded-full px-1 py-2 text-xs ${period === value ? 'bg-host/20 font-semibold text-host' : 'text-sand-400'}`}>${label}</button>`)}</div>
     <div className="grid min-w-0 grid-cols-2 gap-2">
-      <article className=${card}><h3 className=${`${note} text-center`}>收听时长</h3><${StatRing} key=${`duration-${period}`} progress=${period === 'all' ? 1 : seconds / goals[period][0]} label="收听时长目标进度">${durationLabel(seconds)}<//><p className="min-w-0 break-words text-center text-xs text-sand-400 tabular-nums">${comparison}</p></article>
-      <article className=${card}><h3 className=${`${note} text-center`}>听完的歌</h3><${StatRing} key=${`completed-${period}`} progress=${completed / (period === 'all' ? completionMilestone(completed) : goals[period][1])} label="听完歌曲里程碑进度" colour="text-guest"><span><${CountUp} value=${completed} /> 次</span><//></article>
+      <article className=${card}><h3 className=${`${note} text-center`}>收听时长</h3><${StatRing} value=${seconds} kind="duration" period=${period} label="收听时长" /><p className="min-w-0 break-words text-center text-xs text-sand-400 tabular-nums">${comparison}</p></article>
+      <article className=${card}><h3 className=${`${note} text-center`}>听完的歌</h3><${StatRing} value=${completed} kind="completed" period=${period} label="听完的歌" /></article>
     </div>
     <div className=${card}><h3 className="min-w-0 break-words text-sm font-semibold">一起听的里程碑</h3>
       ${Object.entries(coTotals).map(([id, time]) => {
