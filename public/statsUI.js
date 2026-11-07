@@ -13,30 +13,35 @@ const durationLabel = seconds => {
 const heatColours = ['rgb(var(--color-brand-host-rgb) / 0.08)', '#F2C9A0', '#E39A5B', '#C96E2A', '#8A4512'];
 const chartTitles = { week: '每日收听', month: '每周收听', year: '每月收听', all: '每年收听' };
 function StatRing({ value, kind, period, label }) {
-  const [rendered, setRendered] = useState(value);
-  const previous = useRef(null);
+  const perLap = lapUnits[period][kind];
+  // Interpolate normalized geometry separately: period changes also change the lap scale.
+  const target = { value, progress: value / perLap };
+  const [rendered, setRendered] = useState(target);
+  const previous = useRef(target);
   useEffect(() => {
-    const from = previous.current?.period === period ? previous.current.value : 0;
-    return sweep(from, value, 1200, next => {
-      previous.current = { period, value: next };
+    const from = previous.current;
+    if (from.value === value && from.progress === target.progress) return;
+    return sweep(0, 1, 600, fraction => {
+      const next = { value: from.value + (value - from.value) * fraction,
+        progress: from.progress + (target.progress - from.progress) * fraction };
+      previous.current = next;
       setRendered(next);
     });
-  }, [value, period]);
-  const perLap = lapUnits[period][kind];
-  const model = ringModel(rendered, perLap);
+  }, [value, perLap]);
+  const model = ringModel(rendered.progress, 1);
   const leading = model.arcs.at(-1);
   const tip = leading && ringTip(leading);
-  const number = formatCentre(kind, rendered);
+  const number = formatCentre(kind, rendered.value);
   const shadowId = `stats-ring-shadow-${kind}`;
   return html`<div className="stats-ring-box">
     <svg viewBox="0 0 160 160" className="stats-ring" role="img" aria-label=${`${label}：${number}，${model.laps} 圈已完成`}>
       <defs><filter id=${shadowId} x="-100%" y="-100%" width="300%" height="300%" colorInterpolationFilters="sRGB"><feDropShadow dx="0" dy="2" stdDeviation="2" floodColor=${ringHue(kind, 0.35)} /></filter></defs>
       <circle cx="80" cy="80" r=${ringRadius} fill="none" stroke=${ringHue(kind, 0.12)} strokeWidth="20" />
-      ${model.arcs.map(arc => html`<circle key=${arc.lapIndex} cx="80" cy="80" r=${ringRadius} pathLength="100" fill="none" stroke=${lapColour(kind, arc.tint)} strokeWidth="20" strokeLinecap=${arc.fraction === 1 ? 'butt' : 'round'} strokeDasharray=${`${arc.fraction * 100} 100`} transform="rotate(-90 80 80)" />`)}
-      ${leading && html`<circle className="stats-ring-tip" cx=${tip.x} cy=${tip.y} r="10" fill=${lapColour(kind, leading.tint)} filter=${`url(#${shadowId})`} />`}
+      ${[0, 1, 2].map(slot => { const arc = model.arcs[slot] || { fraction: 0, tint: 0 }; return html`<circle key=${slot} opacity=${model.arcs[slot] ? 1 : 0} cx="80" cy="80" r=${ringRadius} pathLength="100" fill="none" stroke=${lapColour(kind, arc.tint)} strokeWidth="20" strokeLinecap=${arc.fraction === 1 ? 'butt' : 'round'} strokeDasharray=${`${arc.fraction * 100} 100`} transform="rotate(-90 80 80)" />`; })}
+      <circle className="stats-ring-tip" opacity=${leading ? 1 : 0} cx=${tip?.x ?? 80} cy=${tip?.y ?? 14} r="10" fill=${lapColour(kind, leading?.tint)} filter=${`url(#${shadowId})`} />
       <text className="stats-ring-number" x="80" y="79" textAnchor="middle" dominantBaseline="middle" fontSize=${centreFontSize(number)}>${number}</text>
       <text className="stats-ring-caption" x="80" y="99" textAnchor="middle" fontSize="8">${lapCaption(kind, perLap)}</text>
-    </svg>${model.badge && html`<span className="stats-ring-badge">${model.badge}</span>`}
+    </svg><span className="stats-ring-badge" hidden=${!model.badge}>${model.badge}</span>
   </div>`;
 }
 

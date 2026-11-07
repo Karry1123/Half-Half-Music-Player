@@ -15,6 +15,9 @@ public final class PlaybackStateStore {
         public boolean active, playing, hold, canNext, canPrev, serviceAlive, favorite, canChangeMode;
         public String trackId = "", title = "", artist = "", subtitle = "", artworkPath = "";
         public String playMode = "order", seedColor = "";
+        public boolean lyricsEnabled = true;
+        public String lyrics = "", lyricLines = "[]", currentLine = "";
+        public double lyricOffset;
         public double duration, position;
         /** SystemClock.elapsedRealtime() when `position` was sampled. */
         public long positionAt;
@@ -59,6 +62,11 @@ public final class PlaybackStateStore {
         s.title = p.getString("title", "");
         s.artist = p.getString("artist", "");
         s.subtitle = p.getString("subtitle", "");
+        s.lyricsEnabled = p.getBoolean("lyricsEnabled", true);
+        s.lyrics = p.getString("lyrics", "");
+        s.lyricLines = p.getString("lyricLines", "[]");
+        s.currentLine = p.getString("currentLine", "");
+        s.lyricOffset = Double.longBitsToDouble(p.getLong("lyricOffset", 0L));
         s.artworkPath = p.getString("artworkPath", "");
         s.duration = Double.longBitsToDouble(p.getLong("duration", 0L));
         s.position = Double.longBitsToDouble(p.getLong("position", 0L));
@@ -74,6 +82,9 @@ public final class PlaybackStateStore {
             .putString("playMode", normalizeMode(s.playMode)).putString("seedColor", normalizeSeed(s.seedColor))
             .putString("trackId", s.trackId).putString("title", s.title).putString("artist", s.artist)
             .putString("subtitle", s.subtitle).putString("artworkPath", s.artworkPath)
+            .putBoolean("lyricsEnabled", s.lyricsEnabled).putString("lyrics", s.lyrics)
+            .putString("lyricLines", s.lyricLines).putString("currentLine", s.currentLine)
+            .putLong("lyricOffset", Double.doubleToLongBits(s.lyricOffset))
             .putLong("duration", Double.doubleToLongBits(s.duration)).putLong("position", Double.doubleToLongBits(s.position))
             .putLong("positionAt", s.positionAt)
             .apply();

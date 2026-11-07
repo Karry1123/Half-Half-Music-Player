@@ -30,7 +30,7 @@ test('statistics cards render period buckets, two rings, plain comparisons and c
     assert.equal((markup.match(/class="stats-ring"/g) || []).length, 2);
     assert.equal((markup.match(/class="stats-chart-point"/g) || []).length, points);
     assert.equal((markup.match(/class="stats-chart-peak tabular-nums"/g) || []).length, 1);
-    assert.equal((markup.match(/stroke-width="20"/g) || []).length, 4);
+    assert.equal((markup.match(/stroke-width="20"/g) || []).length, 8);
     assert.equal((markup.match(/class="stats-ring-tip"/g) || []).length, 2);
     assert.match(markup, /feDropShadow/);
     assert.ok(markup.includes(statsRing.lapCaption("duration", statsRing.lapUnits[period].duration)));

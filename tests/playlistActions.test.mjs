@@ -74,6 +74,48 @@ test('add mode can remove an existing favorite without changing other playlist m
 });
 
 const flatten = node => Array.isArray(node) ? node.flatMap(flatten) : node && typeof node === 'object' ? [node, ...flatten(node.props?.children)] : [];
+for (const playlistId of ['favorites', 'custom']) test(`song picker bulk selection follows the filter for ${playlistId}`, async () => {
+  const state = { addSongsPlaylistId: playlistId, playlists: [{ id: playlistId, name: 'Playlist', trackIds: ['saved-a'] }], library: [
+    { id: 'a', localId: 'saved-a', title: 'Already added' },
+    { id: 'b', localId: 'saved-b', title: 'Blue one' },
+    { id: 'c', localId: 'saved-c', title: 'Blue two' },
+    { id: 'd', localId: 'saved-d', title: 'Other song' },
+  ] };
+  const values = [], mutations = []; let cursor = 0;
+  const Component = vm.runInNewContext(`${between('function PlaylistSongPicker(', '/** "放到哪个歌单"')}; PlaylistSongPicker`, {
+    useStore: fn => fn(state), useEffect() {}, useBackLayer() {},
+    useState: initial => { const i = cursor++; if (!(i in values)) values[i] = typeof initial === 'function' ? initial() : initial; return [values[i], v => values[i] = typeof v === 'function' ? v(values[i]) : v]; },
+    html: htm.bind(React.createElement), X: () => null, Cover: () => null, set() {},
+    addItemsToPlaylists: async (targets, tracks) => { mutations.push([[...targets], [...tracks]]); return tracks.length; },
+  });
+  const render = () => { cursor = 0; return flatten(Component()); };
+  let nodes = render();
+  const bulk = () => nodes.find(n => n.type === 'button' && /^(全选|取消全选)$/.test(n.props.children));
+  const search = value => { nodes.find(n => n.type === 'input' && n.props['aria-label'] === '搜索曲库歌曲').props.onInput({ target: { value } }); nodes = render(); };
+  const checks = () => nodes.filter(n => n.type === 'input' && n.props.type === 'checkbox');
+  assert.equal(checks().length, 3, 'existing playlist members are excluded');
+  checks()[2].props.onChange(); // Preserve a selection outside the following search.
+  search('Blue');
+  bulk().props.onClick(); nodes = render();
+  assert.equal(bulk().props.children, '取消全选');
+  assert.ok(checks().every(n => n.props.checked));
+  assert.deepEqual([...values[1]], ['d', 'b', 'c']);
+  checks()[0].props.onChange(); nodes = render();
+  assert.equal(bulk().props.children, '全选', 'individual toggles update the bulk action');
+  bulk().props.onClick(); nodes = render();
+  bulk().props.onClick(); nodes = render();
+  assert.deepEqual([...values[1]], ['d'], 'deselect all affects only filtered results');
+  search('no match');
+  assert.equal(bulk().props.disabled, true);
+  search('');
+  bulk().props.onClick(); nodes = render();
+  values[2] = true; nodes = render();
+  assert.equal(bulk().props.disabled, true, 'bulk action is disabled while adding');
+  values[2] = false; nodes = render();
+  await nodes.find(n => n.type === 'button' && String(n.props.children).includes('确认')).props.onClick();
+  assert.deepEqual(mutations, [[[playlistId], ['b', 'c', 'd']]]);
+});
+
 for (const mode of ['download', 'import', 'add']) test(`favorite checkbox works in ${mode} picker`, () => {
   const req = { mode, title: '选择歌单', preselect: mode === 'add' ? ['favorites'] : [] };
   const state = { playlistPicker: req, playlists: [{ id: 'favorites', name: '我喜欢的音乐', trackIds: ['saved'] }, { id: 'other', name: 'Other', trackIds: [] }] };

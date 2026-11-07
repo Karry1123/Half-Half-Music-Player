@@ -21,6 +21,8 @@ import android.os.Looper;
 import android.os.PowerManager;
 import android.os.SystemClock;
 import android.util.Log;
+import org.json.JSONArray;
+import org.json.JSONObject;
 
 /**
  * Foreground service that owns the MediaSession, the MediaStyle playback notification and the wake
@@ -54,6 +56,9 @@ public class PlaybackService extends Service {
     private boolean foreground;
     private String artworkPath = "";
     private Bitmap artwork;
+    private String lyricTrack = "", lyricSource = "", displayedLine = "", metadataKey = "";
+    private JSONArray lyricCues = new JSONArray();
+    private long lastLyricUpdate = -1000;
 
     public static PlaybackService running() { return instance; }
 
@@ -144,14 +149,9 @@ public class PlaybackService extends Service {
         PlaybackStateStore.State s = PlaybackStateStore.load(this);
         if (!s.active) { shutdown(); return; }
         loadArtwork(s.artworkPath);
-        session.setMetadata(new MediaMetadata.Builder()
-            .putString(MediaMetadata.METADATA_KEY_TITLE, s.title.isEmpty() ? "Half&Half" : s.title)
-            .putString(MediaMetadata.METADATA_KEY_ARTIST, s.artist)
-            .putString(MediaMetadata.METADATA_KEY_ALBUM, s.subtitle.isEmpty() ? "Half&Half" : s.subtitle)
-            .putLong(MediaMetadata.METADATA_KEY_DURATION, Math.round(s.duration * 1000))
-            .putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, artwork)
-            .putBitmap(MediaMetadata.METADATA_KEY_ART, artwork)
-            .build());
+        updateLyricLine(s);
+        publishMetadata(s);
+        scheduleLyrics(s);
         long actions = PlaybackState.ACTION_PLAY | PlaybackState.ACTION_PAUSE | PlaybackState.ACTION_PLAY_PAUSE
             | PlaybackState.ACTION_STOP | PlaybackState.ACTION_SEEK_TO;
         if (s.canNext) actions |= PlaybackState.ACTION_SKIP_TO_NEXT;
@@ -182,6 +182,91 @@ public class PlaybackService extends Service {
         PlayerWidgetProvider.refreshAll(this);
     }
 
+    /** Native boundary scheduling keeps lyrics moving even when the WebView is background-throttled. */
+    public void applyLyrics() {
+        handler.post(lyricTick);
+    }
+
+    private final Runnable lyricTick = () -> {
+        PlaybackStateStore.State s = PlaybackStateStore.load(this);
+        if (!s.active) return;
+        updateLyricLine(s);
+        if (publishMetadata(s)) notifications.notify(NOTIFICATION_ID, buildNotification(s));
+        scheduleLyrics(s);
+    };
+
+    private void updateLyricLine(PlaybackStateStore.State s) {
+        boolean newTrack = !lyricTrack.equals(s.trackId);
+        if (newTrack || !lyricSource.equals(s.lyricLines)) {
+            lyricTrack = s.trackId; lyricSource = s.lyricLines;
+            try { lyricCues = new JSONArray(lyricSource); }
+            catch (Exception ignored) { lyricCues = new JSONArray(); }
+        }
+        String line = s.lyricsEnabled ? s.currentLine : "";
+        if (s.lyricsEnabled && lyricCues.length() > 0) {
+            line = "";
+            double position = s.currentPosition() + s.lyricOffset;
+            for (int i = 0; i < lyricCues.length(); i++) {
+                JSONObject cue = lyricCues.optJSONObject(i);
+                if (cue == null || cue.optDouble("time", Double.MAX_VALUE) > position) break;
+                line = cue.optString("text", "");
+            }
+        }
+        long now = SystemClock.elapsedRealtime();
+        if (newTrack || !s.lyricsEnabled || s.lyrics.isEmpty() || now - lastLyricUpdate >= 1000) {
+            if (!line.equals(displayedLine) || newTrack) {
+                displayedLine = line; lastLyricUpdate = now;
+            }
+        }
+    }
+
+    private void scheduleLyrics(PlaybackStateStore.State s) {
+        handler.removeCallbacks(lyricTick);
+        if (!s.active || !s.lyricsEnabled || lyricCues.length() == 0) return;
+        long now = SystemClock.elapsedRealtime();
+        // A seek/offset change can arrive within the throttle window, even while paused.
+        long delay = Math.max(1, 1000 - (now - lastLyricUpdate));
+        if (delay <= 1) {
+            if (!s.playing) return;
+            double position = s.currentPosition() + s.lyricOffset;
+            delay = Long.MAX_VALUE;
+            for (int i = 0; i < lyricCues.length(); i++) {
+                JSONObject cue = lyricCues.optJSONObject(i);
+                double time = cue == null ? -1 : cue.optDouble("time", -1);
+                if (time > position) { delay = Math.max(1, (long) Math.ceil((time - position) * 1000)); break; }
+            }
+            if (delay == Long.MAX_VALUE) return;
+        }
+        handler.postDelayed(lyricTick, delay);
+    }
+
+    private String lyricSubtitle(PlaybackStateStore.State s) {
+        if (!s.lyricsEnabled) return "";
+        if (!displayedLine.isEmpty()) return displayedLine;
+        return lyricCues.length() == 0 ? s.lyrics.split("\\n", 2)[0] : "";
+    }
+
+    private boolean publishMetadata(PlaybackStateStore.State s) {
+        String lyric = lyricSubtitle(s);
+        String description = s.lyricsEnabled ? s.lyrics : "";
+        String key = new JSONArray().put(s.trackId).put(s.title).put(s.artist).put(s.subtitle)
+            .put(String.valueOf(s.duration)).put(s.artworkPath).put(lyric).put(description).toString();
+        if (key.equals(metadataKey)) return false;
+        metadataKey = key;
+        session.setMetadata(new MediaMetadata.Builder()
+            .putString(MediaMetadata.METADATA_KEY_TITLE, s.title.isEmpty() ? "Half&Half" : s.title)
+            .putString(MediaMetadata.METADATA_KEY_ARTIST, s.artist)
+            .putString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE, s.title.isEmpty() ? "Half&Half" : s.title)
+            .putString(MediaMetadata.METADATA_KEY_DISPLAY_SUBTITLE, lyric.isEmpty() ? s.artist : lyric)
+            .putString(MediaMetadata.METADATA_KEY_DISPLAY_DESCRIPTION, description.isEmpty() ? s.subtitle : description)
+            .putString(MediaMetadata.METADATA_KEY_ALBUM, s.subtitle.isEmpty() ? "Half&Half" : s.subtitle)
+            .putLong(MediaMetadata.METADATA_KEY_DURATION, Math.round(s.duration * 1000))
+            .putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, artwork)
+            .putBitmap(MediaMetadata.METADATA_KEY_ART, artwork)
+            .build());
+        return true;
+    }
+
     private final Runnable detach = () -> {
         if (!foreground) return;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) stopForeground(STOP_FOREGROUND_DETACH);
@@ -210,6 +295,7 @@ public class PlaybackService extends Service {
     }
 
     private void shutdown() {
+        handler.removeCallbacks(lyricTick);
         handler.removeCallbacks(detach);
         handler.removeCallbacks(tick);
         if (wakeLock.isHeld()) wakeLock.release();
@@ -233,7 +319,7 @@ public class PlaybackService extends Service {
             : new Notification.Builder(this).setPriority(Notification.PRIORITY_LOW);
         b.setSmallIcon(R.drawable.ic_stat_music)
             .setContentTitle(s.title.isEmpty() ? "Half&Half" : s.title)
-            .setContentText(s.artist)
+            .setContentText(lyricSubtitle(s).isEmpty() ? s.artist : lyricSubtitle(s))
             .setSubText(s.subtitle)
             .setContentIntent(contentIntent(this, null, 0))
             .setDeleteIntent(serviceIntent(this, ACTION_STOP, 5))

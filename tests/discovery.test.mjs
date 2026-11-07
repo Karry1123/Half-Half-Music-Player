@@ -45,3 +45,68 @@ test('sorted playback keeps its queue order through queue synchronization', asyn
   assert.equal(current, 'c');
   assert.deepEqual([...session.scopeIds()], ['c','b','a']);
 });
+import { discoverySnapshot, loadDiscovery, DiscoverSections } from '../public/discoveryUI.js';
+import React from 'react';
+import htm from 'htm';
+import { renderToStaticMarkup } from 'react-dom/server';
+
+test('discovery first mount has only skeletons; remount reuses real songs without demo fallback', async () => {
+  const client = { required: true, request: async () => ({ tracks: [{ title: 'Real song', artist: 'Artist' }] }) };
+  const render = () => renderToStaticMarkup(React.createElement(DiscoverSections, {
+    client, fallback: [{ title: 'Demo song' }], onPick() {},
+  }));
+  const first = render();
+  assert.match(first, /aria-busy="true"/);
+  assert.doesNotMatch(first, /Demo song|Real song/);
+  await loadDiscovery(client);
+  const next = render();
+  assert.match(next, /Real song/);
+  assert.doesNotMatch(next, /Demo song|animate-pulse/);
+});
+
+test('discovery deduplicates requests, skips fresh fetches and preserves identity for unchanged or failed refreshes', async () => {
+  let resolve, calls = 0;
+  const client = { required: true, request: () => { calls++; return new Promise(r => { resolve = r; }); } };
+  const pending = loadDiscovery(client);
+  assert.equal(loadDiscovery(client), pending);
+  resolve({ tracks: [{ title: 'Song', completed: 1 }] });
+  const initial = await pending;
+  assert.equal(await loadDiscovery(client), initial);
+  assert.equal(calls, 1);
+  const refresh = loadDiscovery(client, { force: true });
+  assert.equal(discoverySnapshot(client), initial, 'cached songs remain during refresh');
+  resolve({ tracks: [{ title: 'Song', completed: 1 }] });
+  assert.equal(await refresh, initial, 'unchanged data must not trigger React updates');
+  client.request = async () => { throw new Error('Offline'); };
+  assert.equal(await loadDiscovery(client, { force: true }), initial);
+  client.request = async () => ({ tracks: [] });
+  assert.deepEqual((await loadDiscovery(client, { force: true })).tracks, [], 'authoritative empty results clear stale songs');
+});
+
+test('legacy discovery never displays the demo catalog', () => {
+  const markup = renderToStaticMarkup(React.createElement(DiscoverSections, {
+    client: { required: false }, fallback: [{ title: 'Demo song' }], onPick() {},
+  }));
+  assert.doesNotMatch(markup, /Demo song|animate-pulse/);
+});
+
+test('discovery memo receives a stable pick callback that forwards to the latest parent handler', () => {
+  const source = readFileSync(new URL('../public/discoveryUI.js', import.meta.url), 'utf8')
+    .replace(/^import .*;\r?\n/gm, '').replace(/^export /gm, '');
+  let pickReference, callback;
+  const Discover = vm.runInNewContext(`${source}; DiscoverSections`, {
+    React, htm, Music2: () => null, Flame: () => null, X: () => null,
+    useRef: initial => pickReference ||= { current: initial },
+    useCallback: fn => callback ||= fn,
+    useState: initial => [typeof initial === 'function' ? initial() : initial, () => {}], useEffect() {},
+  });
+  const client = { required: false }, calls = [];
+  const first = Discover({ client, onPick: query => calls.push(`old:${query}`) });
+  const second = Discover({ client, onPick: query => calls.push(`new:${query}`) });
+  const firstCards = React.Children.toArray(first.props.children).find(child => child.props?.tracks);
+  const secondCards = React.Children.toArray(second.props.children).find(child => child.props?.tracks);
+  assert.equal(firstCards.props.onPick, secondCards.props.onPick);
+  assert.equal(firstCards.props.tracks, secondCards.props.tracks);
+  firstCards.props.onPick('song');
+  assert.deepEqual(calls, ['new:song']);
+});

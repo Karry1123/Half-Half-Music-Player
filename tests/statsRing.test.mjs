@@ -105,8 +105,9 @@ test('React ring has no zero tip/badge, full laps close cleanly, and many laps s
   });
   const render = value => renderToStaticMarkup(React.createElement(StatRing, { value, kind: 'completed', period: 'week', label: '听完的歌' }));
   const zero = render(0);
-  assert.equal((zero.match(/<circle /g) || []).length, 1);
-  assert.doesNotMatch(zero, /stats-ring-tip|stats-ring-badge/);
+  assert.equal((zero.match(/<circle /g) || []).length, 5);
+  assert.match(zero, /stats-ring-tip" opacity="0"/);
+  assert.match(zero, /stats-ring-badge" hidden=""/);
   assert.match(zero, />0<\/text>/);
   assert.match(render(0.15), /stroke-dasharray="2 100"/);
   assert.match(render(50), /stroke-linecap="butt" stroke-dasharray="100 100"/);
@@ -115,20 +116,31 @@ test('React ring has no zero tip/badge, full laps close cleanly, and many laps s
   assert.match(many, />×40<\/span>/);
 });
 
-test('live changes start at the rendered progress; switching period starts from zero', () => {
-  let stored, reference = { current: null }, effect, cancel;
+test('period switches and rapid interruptions preserve the currently rendered value and geometry', () => {
+  let stored, reference, effect, advance;
   const calls = [];
   const StatRing = vm.runInNewContext(`${uiSource}; StatRing`, {
     ...ring, React, htm,
     useState: initial => [stored ?? initial, next => { stored = next; }],
-    useRef: () => reference, useEffect: fn => { effect = fn; },
-    sweep(from, to, duration, onFrame) { calls.push([from, to, duration]); onFrame(from); cancel = onFrame; return () => {}; },
+    useRef: initial => reference ||= { current: initial }, useEffect: fn => { effect = fn; },
+    sweep(from, to, duration, onFrame) { calls.push([from, to, duration]); onFrame(from); advance = onFrame; return () => {}; },
   });
-  const render = (value, period) => { StatRing({ value, period, kind: 'completed', label: '听完的歌' }); effect(); };
-  render(100, 'week'); cancel(60);
-  render(120, 'week'); cancel(120);
+  const render = (value, period) => { StatRing({ value, period, kind: 'completed', label: 'Count' }); effect(); };
+  render(100, 'week');
+  assert.equal(calls.length, 0, 'initial display must not flash back to zero');
   render(200, 'month');
-  assert.deepEqual(calls, [[0, 100, 1200], [60, 120, 1200], [0, 200, 1200]]);
+  assert.equal(stored.value, 100);
+  assert.equal(stored.progress, 2, 'period scale must not jump before animation');
+  advance(0.5);
+  assert.equal(stored.value, 150);
+  assert.equal(stored.progress, 1.5);
+  render(400, 'year');
+  assert.equal(stored.value, 150);
+  assert.equal(stored.progress, 1.5, 'interrupted transition starts where it stopped');
+  advance(1);
+  assert.equal(stored.value, 400);
+  assert.ok(Math.abs(stored.progress - 0.2) < 1e-12);
+  assert.deepEqual(calls, [[0, 1, 600], [0, 1, 600]]);
 });
 
 test('offline showcase embeds the module verbatim and exposes the required controls', () => {

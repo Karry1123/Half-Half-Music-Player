@@ -100,7 +100,14 @@ public class PlaybackSessionPlugin extends Plugin {
         s.position = call.getDouble("position", 0.0);
         s.positionAt = SystemClock.elapsedRealtime();
         s.serviceAlive = prev.serviceAlive;
-        if (s.trackId.equals(prev.trackId)) s.artworkPath = prev.artworkPath;
+        if (s.trackId.equals(prev.trackId)) {
+            s.artworkPath = prev.artworkPath;
+            s.lyricsEnabled = prev.lyricsEnabled;
+            s.lyrics = prev.lyrics;
+            s.lyricLines = prev.lyricLines;
+            s.currentLine = prev.currentLine;
+            s.lyricOffset = prev.lyricOffset;
+        }
         else {
             File cached = artworkFile(c, s.trackId);
             s.artworkPath = cached.isFile() ? cached.getAbsolutePath() : "";
@@ -110,6 +117,25 @@ public class PlaybackSessionPlugin extends Plugin {
         if (s.active) PlaybackService.push(c, s.hold);
         else if (live != null) live.apply();
         else PlayerWidgetProvider.refreshAll(c);
+        call.resolve();
+    }
+
+    /** Lyric-only updates do not restart the service, rewrite playback position, or refresh widgets. */
+    @PluginMethod public void updateLyrics(PluginCall call) {
+        Context c = getContext();
+        PlaybackStateStore.State s = PlaybackStateStore.load(c);
+        if (!s.trackId.equals(call.getString("trackId", ""))) { call.resolve(); return; }
+        s.lyricsEnabled = call.getBoolean("enabled", s.lyricsEnabled);
+        s.lyrics = call.getString("lyrics", s.lyrics);
+        if (s.lyrics.length() > 60000) s.lyrics = s.lyrics.substring(0, 60000);
+        if (call.getArray("lines") != null) s.lyricLines = call.getArray("lines").toString();
+        double offset = call.getDouble("offset", s.lyricOffset);
+        s.lyricOffset = Double.isFinite(offset) ? Math.max(-30, Math.min(30, offset)) : 0;
+        s.currentLine = call.getString("currentLine", s.currentLine);
+        if (!s.lyricsEnabled) { s.lyrics = ""; s.lyricLines = "[]"; s.currentLine = ""; }
+        PlaybackStateStore.save(c, s);
+        PlaybackService live = PlaybackService.running();
+        if (live != null) live.applyLyrics();
         call.resolve();
     }
 

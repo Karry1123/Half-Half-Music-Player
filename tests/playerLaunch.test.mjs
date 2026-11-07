@@ -20,7 +20,7 @@ const between = (start, end) => {
 function harness(saved = null) {
   // Exercise the real initial state even with an old selection in storage.
   const state = vm.runInNewContext(`${between('const store = createStore(', 'const useStore =')}; store`, {
-    createStore: value => value, loadProfile: () => ({ name: 'Listener' }), MOCK_SOURCES: [], ALL_ID: 'all', restoreDownloads,
+    createStore: value => value, loadProfile: () => ({ name: 'Listener' }), stored: () => '', MOCK_SOURCES: [], ALL_ID: 'all', restoreDownloads,
     localStorage: { getItem: key => key === 'hh.currentId' ? 'previous-track' : null },
   });
   const track = { id: 'song', hash: 'hash', title: 'Song', artist: 'Artist', duration: 100 };

@@ -19,6 +19,7 @@
 <link rel="stylesheet" href="./design-tokens.css" />
 <title>Half&amp;Half · 同步听歌</title>
 <link rel="icon" type="image/svg+xml" href="./icon.svg" />
+<link rel="manifest" href="./manifest.webmanifest" />
 <!--
   Half&Half Music Player · All-in-One Dashboard（单文件，无需构建）
 
@@ -82,7 +83,7 @@
   .hh-primary[data-role="guest"], .hh-guest { background: var(--color-action-guest-bg); color: var(--color-action-guest-fg); }
   @media (hover: hover) { .hh-primary:hover:not(:disabled) { background: var(--color-action-primary-hover); filter: none; } }
   .hh-primary:active:not(:disabled) { background: var(--color-action-primary-active); transform: scale(var(--motion-press-scale)); }
-  .brand-halves { background: linear-gradient(90deg, var(--color-brand-host) 50%, var(--color-brand-guest) 50%); border-radius: var(--p-radius-circle); }
+  .brand-halves { background: url("./icon.svg") center / contain no-repeat; border-radius: 22%; }
   .avatar-link { display: inline-block; height: 2px; width: 28px; margin: 0 var(--p-space-1); background: repeating-linear-gradient(90deg, var(--color-border-control) 0 4px, transparent 4px 8px); }
   .avatar-link[data-state="open"] { background: var(--gradient-together); }
   .avatar-link[data-alone="true"] { visibility: hidden; }
@@ -378,6 +379,7 @@ const store = createStore({
   link: null, // { kind: 'lan'|'p2p'|'relay', rtt, protocol }：当前实际走的路径
   ice: null, // 当前 ICE 配置摘要（连接设置面板用）
   connSettingsOpen: false,
+  externalLyricsEnabled: stored('hh.externalLyrics') !== 'false',
   addSongsPlaylistId: null,
   queueState: null,
   cloudOpen: false,
@@ -2209,6 +2211,7 @@ async function handleNativeWidgetAction(action) {
 }
 const nativePlayback = isAndroid ? installNativePlayback({
   plugin: nativePlugin('PlaybackSession'), store, get, session, fetchCover, toast,
+  lyricsCache, fetchLyrics: query => api.lyrics(query),
   onAction: handleNativeWidgetAction,
   getCoverKey: item => coverCandidates(item)[0] || '',
   getSeedColor: async item => {
@@ -3372,6 +3375,13 @@ function PlaylistSongPicker() {
   const available = library.filter(t => !playlist.trackIds.includes(t.localId));
   const visible = available.filter(t => `${t.title} ${t.artist || ''}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()));
   const toggle = id => setSelected(previous => { const next = new Set(previous); next.has(id) ? next.delete(id) : next.add(id); return next; });
+  const allVisibleSelected = visible.length > 0 && visible.every(t => selected.has(t.id));
+  const toggleVisible = () => setSelected(previous => {
+    const next = new Set(previous);
+    const clear = visible.every(t => previous.has(t.id));
+    for (const track of visible) clear ? next.delete(track.id) : next.add(track.id);
+    return next;
+  });
   const confirm = async () => {
     setBusy(true);
     try {
@@ -3383,6 +3393,7 @@ function PlaylistSongPicker() {
     <section role="dialog" aria-modal="true" aria-label="添加歌曲到歌单" class="flex max-h-[85vh] w-full max-w-md flex-col overflow-hidden rounded-t-3xl border border-ink-700 bg-ink-900 p-4 sm:rounded-3xl">
       <header class="flex items-center justify-between gap-3"><h2 class="font-semibold">添加歌曲 · ${playlist.name}</h2><button onClick=${close} disabled=${busy} aria-label="关闭添加歌曲"><${X} size=${18} /></button></header>
       <input class="my-3 rounded-xl border border-ink-600 bg-ink-850 p-3" aria-label="搜索曲库歌曲" placeholder="搜索歌名或歌手" value=${query} onInput=${e => setQuery(e.target.value)} />
+      <div class="mb-2 flex items-center justify-between text-sm"><span class="text-sand-400">${visible.length} 首可选歌曲</span><button class="rounded-lg border border-ink-600 px-3 py-2 disabled:opacity-40" disabled=${busy || !visible.length} onClick=${toggleVisible}>${allVisibleSelected ? '取消全选' : '全选'}</button></div>
       <div class="scroll-thin min-h-0 flex-1 overflow-y-auto" role="group" aria-label="选择歌曲">
         ${visible.map(t => html`<label key=${t.id} class="flex items-center gap-3 rounded-xl p-2"><input type="checkbox" checked=${selected.has(t.id)} disabled=${busy} onChange=${() => toggle(t.id)} /><${Cover} item=${t} size=${40} /><span class="min-w-0"><strong class="block text-sm">${t.title}</strong><small class="text-sand-400">${t.artist || '未知歌手'}</small></span></label>`)}
         ${!visible.length && html`<p class="p-5 text-sm text-sand-400">${available.length ? '没有匹配的歌曲' : '曲库中的歌曲已全部在此歌单中，可先到发现页下载或导入歌曲。'}</p>`}
@@ -4009,6 +4020,7 @@ function ConnSettingsModal() {
   useBackLayer(useStore(s => s.connSettingsOpen), () => set({ connSettingsOpen: false }));
   const open = useStore((s) => s.connSettingsOpen);
   const ice = useStore((s) => s.ice);
+  const externalLyrics = useStore(s => s.externalLyricsEnabled);
   const [form, setForm] = useState(loadIceSettings);
   const [test, setTest] = useState(null);
   const [svc, setSvc] = useState({ api: stored('hh.api'), token: accessToken() });
@@ -4099,6 +4111,14 @@ function ConnSettingsModal() {
       </header>
 
       <div class="scroll-thin space-y-4 overflow-y-auto px-4 py-4 text-sm sm:px-5">
+        <section class=${card}>
+          <label class="flex items-center justify-between gap-3"><span>蓝牙/车机歌词</span><input type="checkbox" checked=${externalLyrics} onChange=${e => {
+            const enabled = e.target.checked;
+            try { localStorage.setItem('hh.externalLyrics', String(enabled)); } catch {}
+            set({ externalLyricsEnabled: enabled });
+          }} /></label>
+          <p class="text-xs text-sand-500">向支持的外接设备显示歌词；歌词页的时间偏移也会应用到外接设备。</p>
+        </section>
         <section class=${card}>
           <label class="flex items-center justify-between gap-3"><span>通话/播报结束后自动继续</span><input type="checkbox" checked=${autoContinue} onChange=${e => {
             const enabled = e.target.checked; setAutoContinue(enabled);
@@ -5115,6 +5135,8 @@ function LyricsSheet({ item, close, open }) {
   const key = JSON.stringify([item?.id, query]);
   const cacheId = item?.localId || item?.id;
   const [trackOffset, setTrackOffset] = useState(() => ({ id: cacheId, value: lyricsCache.getOffset(cacheId) }));
+  const [armed, setArmed] = useState(null);
+  const gesture = useRef({ moved: false, x: 0, y: 0 });
   const offset = trackOffset.id === cacheId ? trackOffset.value : 0;
   const updateOffset = value => setTrackOffset({ id: cacheId, value: lyricsCache.setOffset(cacheId, value) });
   useBackLayer(true, close);
@@ -5154,23 +5176,40 @@ function LyricsSheet({ item, close, open }) {
     if (!box) return;
     const centre = () => {
       box.style.setProperty('--lyrics-centre-space', `${box.clientHeight / 2}px`);
-      if (!synced || index < 0) return;
+      if (!synced || index < 0 || armed !== null) return;
       const row = box.querySelector(`[data-line-index="${index}"]`);
       if (row) box.scrollTo({ top: Math.max(0, row.offsetTop - (box.clientHeight - row.offsetHeight) / 2), behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
     };
     centre();
     const observer = new ResizeObserver(centre); observer.observe(box);
     return () => observer.disconnect();
-  }, [index, synced, key, lines]);
+  }, [index, synced, key, lines, armed]);
+  useEffect(() => { setArmed(null); }, [key, view, revision]);
+  useEffect(() => {
+    if (armed === null) return;
+    const timer = window.setTimeout(() => setArmed(null), 4000);
+    const outside = event => {
+      if (!event.target.closest?.(`[data-line-index="${armed}"]`)) setArmed(null);
+    };
+    document.addEventListener('pointerdown', outside);
+    return () => { window.clearTimeout(timer); document.removeEventListener('pointerdown', outside); };
+  }, [armed]);
   const retry = () => { lyricsCache.remove(cacheId); force.current = true; setRevision(value => value + 1); };
   const can = !!item && (s.loaded || s.role !== 'guest') && (s.role !== 'guest' || s.conn === 'open');
   const canSeekLine = !!item && s.loaded && s.role !== 'guest';
-  return html`<section ref=${sheet} class="fsp-lyrics-sheet" aria-label="歌词" onKeyDown=${e => { if (e.key === 'Escape') { e.stopPropagation(); close(); } }}>
+  return html`<section ref=${sheet} class="fsp-lyrics-sheet" aria-label="歌词" onKeyDown=${e => { if (e.key === 'Escape') { e.stopPropagation(); if (armed !== null) setArmed(null); else close(); } }}>
     <div class="fsp-lyrics-heading"><div class="fsp-lyrics-toolbar"><div class="fsp-lyrics-tabs" role="group" aria-label="歌词显示方式"><button disabled=${!lines.length} aria-pressed=${synced} onClick=${() => setView('sync')}>同步</button><button aria-pressed=${!synced} onClick=${() => setView('plain')}>静态</button></div><button class="fsp-lyrics-close" onClick=${close} aria-label="关闭歌词"><${X} size=${20} /></button></div>
-      ${lines.length > 0 && synced && html`<p class="fsp-lyrics-hint fsp-muted">歌词按原版时长匹配，不同步时可微调偏移</p><div class="fsp-lyrics-offset" role="group" aria-label="歌词时间偏移"><button aria-label="歌词偏移减少 0.5 秒" disabled=${offset <= -30} onClick=${() => updateOffset(offset - 0.5)}>-0.5s</button><span class=${cx('fsp-offset-label', offset === 0 && 'fsp-muted')} aria-live="polite">偏移 ${offset > 0 ? '+' : ''}${offset.toFixed(1)}s</span><button aria-label="歌词偏移增加 0.5 秒" disabled=${offset >= 30} onClick=${() => updateOffset(offset + 0.5)}>+0.5s</button><button class="fsp-offset-reset" aria-label="重置歌词偏移" disabled=${offset === 0} onClick=${() => updateOffset(0)}>重置</button></div>`}
+      ${lines.length > 0 && synced && html`<p class="fsp-lyrics-hint fsp-muted">歌词按原版时长匹配，不同步时可微调偏移</p><div class="fsp-lyrics-offset" role="group" aria-label="歌词时间偏移"><button aria-label="歌词偏移减少 0.5 秒" disabled=${offset <= -30} onClick=${() => updateOffset(offset - 0.5)}>-0.5s</button><span class=${cx('fsp-offset-label', offset === 0 && 'fsp-muted')} aria-live="polite">偏移 ${offset > 0 ? '+' : ''}${Math.round(offset * 1000)}ms</span><button aria-label="歌词偏移增加 0.5 秒" disabled=${offset >= 30} onClick=${() => updateOffset(offset + 0.5)}>+0.5s</button><button class="fsp-offset-reset" aria-label="重置歌词偏移" disabled=${offset === 0} onClick=${() => updateOffset(0)}>重置</button></div>`}
     </div>
-    <div ref=${list} class="fsp-lyrics-scroll" aria-busy=${current.status === 'loading'}><div class=${cx('fsp-lyrics-content', synced && 'fsp-lyrics-content-synced')}>
-      ${current.status === 'loading' ? html`<p class="fsp-lyrics-message" role="status">正在查找歌词…</p>` : current.status === 'error' ? html`<div class="fsp-lyrics-message" role="alert"><p>歌词加载失败</p><p class="text-sm fsp-muted">${current.error}</p><button onClick=${retry}>重新获取</button></div>` : !lines.length && !plain ? html`<div class="fsp-lyrics-message"><p>没有找到歌词</p><button onClick=${retry}>重新获取</button></div>` : synced ? lines.map((line, i) => html`<button key=${`${i}-${line.time}`} data-line-index=${i} class=${cx('fsp-lyrics-line text-lg', index === i && 'fsp-lyrics-current')} aria-current=${index === i ? 'true' : undefined} disabled=${!canSeekLine} onClick=${() => { if (canSeekLine) session.act('seek', { position: Math.max(0, line.time - offset) }); }}>${line.text || '♪'}</button>`) : html`<p class="fsp-lyrics-plain text-lg">${plain}</p>`}
+    <div ref=${list} class="fsp-lyrics-scroll" aria-busy=${current.status === 'loading'}
+      onPointerDown=${e => { gesture.current = { moved: false, x: e.clientX, y: e.clientY }; }}
+      onPointerMove=${e => { if (Math.hypot(e.clientX - gesture.current.x, e.clientY - gesture.current.y) > 8) { gesture.current.moved = true; setArmed(null); } }}
+      onPointerCancel=${() => { gesture.current.moved = true; setArmed(null); }}
+      onScroll=${() => { gesture.current.moved = true; setArmed(null); }}><div class=${cx('fsp-lyrics-content', synced && 'fsp-lyrics-content-synced')}>
+      ${current.status === 'loading' ? html`<p class="fsp-lyrics-message" role="status">正在查找歌词…</p>` : current.status === 'error' ? html`<div class="fsp-lyrics-message" role="alert"><p>歌词加载失败</p><p class="text-sm fsp-muted">${current.error}</p><button onClick=${retry}>重新获取</button></div>` : !lines.length && !plain ? html`<div class="fsp-lyrics-message"><p>没有找到歌词</p><button onClick=${retry}>重新获取</button></div>` : synced ? lines.map((line, i) => html`<div key=${`${i}-${line.time}`} data-line-index=${i} class=${cx('fsp-lyrics-line text-lg', index === i && 'fsp-lyrics-current', armed === i && 'fsp-lyrics-armed')} aria-current=${index === i ? 'true' : undefined}>
+        <button class="fsp-lyrics-line-text" disabled=${!canSeekLine} aria-pressed=${armed === i} onClick=${e => { if (canSeekLine && (!gesture.current.moved || e?.detail === 0)) setArmed(i); }}>${line.text || '♪'}</button>
+        ${armed === i && canSeekLine && html`<button class="fsp-lyrics-seek" aria-label=${`跳转到 ${line.text || '此句歌词'}`} onClick=${e => { e.stopPropagation(); if (gesture.current.moved && e.detail !== 0) return; session.act('seek', { position: Math.max(0, line.time - offset) }); setArmed(null); }}><${Play} size=${18} /></button>`}
+      </div>`) : html`<p class="fsp-lyrics-plain text-lg">${plain}</p>`}
     </div></div>
     <footer class="fsp-lyrics-controls"><${SeekBar} stacked=${true} open=${open} /><button class="fsp-lyrics-play" disabled=${!can} onClick=${() => session.act('toggle')} aria-label=${s.playing ? '暂停' : '播放'}><${s.playing ? Pause : Play} size=${24} /></button></footer>
   </section>`;

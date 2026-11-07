@@ -1,4 +1,5 @@
 import { PLAY_MODES } from './playQueue.js';
+import { installNativeLyrics } from './nativeLyrics.js';
 
 // Android (Capacitor): one bridge between the player state and the system playback UI.
 // The native PlaybackService owns the MediaSession, the MediaStyle notification (artwork, seek bar,
@@ -52,7 +53,7 @@ export function blobToBase64(blob) {
  * @param {(item: object) => Promise<Blob|null>} deps.fetchCover
  * @param {(title: string) => string} deps.fallbackArtwork  data: URL
  */
-export function installNativePlayback({ plugin, store, get, session, fetchCover, fallbackArtwork, toast = () => {}, onAction = () => false, getSeedColor = async () => '', getCoverKey = item => item?.cover || '', doc = globalThis.document, warn = console.warn }) {
+export function installNativePlayback({ plugin, store, get, session, fetchCover, fallbackArtwork, lyricsCache, fetchLyrics, toast = () => {}, onAction = () => false, getSeedColor = async () => '', getCoverKey = item => item?.cover || '', doc = globalThis.document, warn = console.warn }) {
   let ready = false;
   const queued = [];
   const lastAction = new Map(), inFlight = new Set();
@@ -142,17 +143,25 @@ export function installNativePlayback({ plugin, store, get, session, fetchCover,
   session.out?.audio?.addEventListener?.('ratechange', push);
   const onVisible = () => { if (!doc?.hidden) { startFailed = false; push(); } };
   doc?.addEventListener?.('visibilitychange', onVisible);
+  let disposeLyrics;
 
   return {
     /** Call once the library is restored: queued actions (widget launch, early media keys) run now. */
     markReady() {
       ready = true;
       push();
+      if (!disposeLyrics && lyricsCache && fetchLyrics && plugin.updateLyrics) {
+        disposeLyrics = installNativeLyrics({ plugin: { updateLyrics: payload => {
+          pending = pending.then(() => plugin.updateLyrics(payload));
+          return pending;
+        } }, store, get, session, cache: lyricsCache, fetchLyrics, warn });
+      }
       for (const a of queued.splice(0)) perform(a);
     },
     push,
     dispose() {
       disposed = true; ++artworkToken;
+      disposeLyrics?.();
       unsubscribe?.();
       session.out?.audio?.removeEventListener?.('seeked', push);
       session.out?.audio?.removeEventListener?.('ratechange', push);

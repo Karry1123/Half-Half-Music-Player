@@ -8,30 +8,35 @@ import { parseLrc, currentLineIndex, lyricsQuery } from '../public/lyrics.js';
 const source = readFileSync(new URL('../public/dashboard.html', import.meta.url), 'utf8');
 const between = (a,b) => source.slice(source.indexOf(a),source.indexOf(b,source.indexOf(a)));
 const flatten = n => Array.isArray(n) ? n.flatMap(flatten) : n && typeof n === 'object' ? [n,...flatten(n.props?.children)] : [];
-function sheetHarness({offset=0,position=10,role=null,data={synced:'[00:05]First\n[00:10]Second',plain:null},status='ready',cached=null,request=async()=>data,reduced=false,item={id:'song',title:'Song',artist:'Artist',duration:100}}={}) {
+function sheetHarness({armed=null,offset=0,position=10,role=null,data={synced:'[00:05]First\n[00:10]Second',plain:null},status='ready',cached=null,request=async()=>data,reduced=false,item={id:'song',title:'Song',artist:'Artist',duration:100}}={}) {
  const state={role,loaded:true,conn:'open',duration:100,playing:true}, key=JSON.stringify([item?.id,lyricsQuery(item,item?.duration||state.duration)]);
  const effects=[],changes=[],seeks=[],requests=[],cacheWrites=[],scrolls=[],offsetWrites=[];
- const slots=[{key,status,data,error:'服务暂时不可用'},'sync',0,{id:item?.localId || item?.id,value:offset}];
+ const slots=[{key,status,data,error:'服务暂时不可用'},'sync',0,{id:item?.localId || item?.id,value:offset},armed];
+ const timers=[],listeners=new Map();
  let focused=0,returned=0;
  const old={isConnected:true,focus:()=>returned++}, row={offsetTop:180,offsetHeight:48};
  const node={style:{setProperty(){}},querySelector:selector=>selector.includes('button')?{focus:()=>focused++}:row,scrollTo:opts=>scrolls.push(opts),clientHeight:200};
  const Component=vm.runInNewContext(`${between('function LyricsSheet(', 'function PlayerQueueDrawer(')};LyricsSheet`,{
-  useStore:fn=>fn(state),usePosition:()=>position,useState:()=>{const i=4-slots.length;return [slots.shift(),v=>changes.push([i,v])];},useRef:initial=>({current:initial===null?node:initial}),useEffect:fn=>effects.push(fn),useMemo:fn=>fn(),useBackLayer(){},
-  ResizeObserver:class { observe(){} disconnect(){} }, document:{activeElement:old},window:{matchMedia:()=>({matches:reduced})},
+  useStore:fn=>fn(state),usePosition:()=>position,useState:()=>{const i=5-slots.length;return [slots.shift(),v=>changes.push([i,v])];},useRef:initial=>({current:initial===null?node:initial}),useEffect:fn=>effects.push(fn),useMemo:fn=>fn(),useBackLayer(){},
+  ResizeObserver:class { observe(){} disconnect(){} }, document:{activeElement:old,addEventListener:(name,fn)=>listeners.set(name,fn),removeEventListener:name=>listeners.delete(name)},window:{matchMedia:()=>({matches:reduced}),setTimeout:(fn,ms)=>{timers.push({fn,ms});return timers.length;},clearTimeout(){}},
   html:htm.bind(React.createElement),cx:(...args)=>args.filter(Boolean).join(' '),parseLrc,currentLineIndex,lyricsQuery,
   lyricsCache:{getOffset:()=>offset,setOffset:(id,value)=>{const clamped=Math.max(-30,Math.min(30,value));offsetWrites.push([id,clamped]);return clamped;},get:()=>cached,set:(id,value)=>cacheWrites.push([id,value]),remove(){}},api:{lyrics:q=>{requests.push(q);return request(q);}},
   session:{act:(action,args)=>seeks.push([action,args])},X:()=>null,SeekBar:()=>null,Pause:()=>null,Play:()=>null,
  });
  const tree=Component({item,close(){},open:true});
- return {tree,effects,changes,seeks,requests,cacheWrites,scrolls,offsetWrites,focused:()=>focused,returned:()=>returned};
+ return {tree,effects,changes,seeks,requests,cacheWrites,scrolls,offsetWrites,timers,listeners,focused:()=>focused,returned:()=>returned};
 }
-test('synced sheet highlights the current line; only host/solo may seek by tapping lyrics',()=>{
+test('synced sheet highlights the current line; first tap only arms and explicit button seeks',()=>{
  for(const role of [null,'host','guest']) {
   const h=sheetHarness({role}), nodes=flatten(h.tree), lines=nodes.filter(n=>n.props?.['data-line-index']!==undefined);
   assert.equal(lines.length,2); assert.equal(lines[1].props['aria-current'],'true');
-  assert.equal(lines[0].props.disabled,role==='guest'); lines[0].props.onClick();
-  assert.equal(h.seeks.length,role==='guest'?0:1);
-  if(role!=='guest') assert.equal(h.seeks[0][1].position,5);
+  const text=nodes.find(n=>n.props?.class==='fsp-lyrics-line-text');
+  assert.equal(text.props.disabled,role==='guest'); text.props.onClick();
+  assert.equal(h.seeks.length,0);
+  assert.equal(h.changes.length,role==='guest'?0:1);
+  const armedSheet=sheetHarness({role,armed:0}),button=flatten(armedSheet.tree).find(n=>n.props?.class==='fsp-lyrics-seek');
+  assert.equal(!!button,role!=='guest');
+  if(button) { button.props.onClick({stopPropagation(){},detail:1}); assert.equal(armedSheet.seeks[0][1].position,5); }
   const seek=nodes.find(n=>n.type?.name==='SeekBar'); assert.equal(seek.props.stacked,true);assert.equal(seek.props.open,true);
  }
 });
@@ -43,6 +48,19 @@ test('static-only and empty/error/loading states disable sync and offer the expe
   assert.match(strings,options.status==='loading'?/正在查找歌词/:options.status==='error'?/歌词加载失败/:options.data.plain?/Static only/:/没有找到歌词/);
   if(options.status==='error'||!options.status&&!options.data.plain) assert.match(strings,/重新获取/);
  }
+});
+
+test('scroll gestures never arm or seek; armed rows expire and outside taps disarm',()=>{
+ const h=sheetHarness(),nodes=flatten(h.tree),scroll=nodes.find(n=>n.props?.class==='fsp-lyrics-scroll');
+ const text=nodes.find(n=>n.props?.class==='fsp-lyrics-line-text');
+ scroll.props.onPointerDown({clientX:0,clientY:0});scroll.props.onPointerMove({clientX:0,clientY:30});
+ text.props.onClick({detail:1});assert.ok(!h.changes.some(([,value])=>value===0));assert.equal(h.seeks.length,0);
+ scroll.props.onPointerDown({clientX:0,clientY:0});scroll.props.onScroll();text.props.onClick({detail:1});
+ assert.ok(!h.changes.some(([,value])=>value===0));
+ const active=sheetHarness({armed:0});const cleanup=active.effects[4]();
+ assert.equal(active.timers[0].ms,4000);active.timers[0].fn();assert.equal(active.changes.at(-1)[1],null);
+ active.listeners.get('pointerdown')({target:{closest:()=>null}});assert.equal(active.changes.at(-1)[1],null);
+ active.effects[2]();assert.equal(active.scrolls.length,0);cleanup();assert.equal(active.listeners.size,0);
 });
 test('cache is used before fetch; late track responses are ignored after cleanup',async()=>{
  const data={plain:'Cached'}, hit=sheetHarness({cached:data}); hit.effects[1]();
@@ -84,7 +102,9 @@ test('host handles lyrics RPC with the existing reply/error channel',async()=>{
 test('offset controls advance highlighting, persist half-second changes and correct tap-to-seek',()=>{
  const h=sheetHarness({offset:1,position:9}),nodes=flatten(h.tree);
  assert.equal(nodes.find(n=>n.props?.['data-line-index']===1).props['aria-current'],'true');
- nodes.find(n=>n.props?.['data-line-index']===0).props.onClick(); assert.equal(h.seeks[0][1].position,4);
+ const armedSheet=sheetHarness({offset:1,position:9,armed:0});
+ flatten(armedSheet.tree).find(n=>n.props?.class==='fsp-lyrics-seek').props.onClick({stopPropagation(){},detail:1});
+ assert.equal(armedSheet.seeks[0][1].position,4);
  nodes.find(n=>n.props?.['aria-label']==='歌词偏移增加 0.5 秒').props.onClick();
  assert.deepEqual(h.offsetWrites.at(-1),['song',1.5]); assert.equal(h.changes.at(-1)[1].value,1.5);
  nodes.find(n=>n.props?.['aria-label']==='歌词偏移减少 0.5 秒').props.onClick(); assert.deepEqual(h.offsetWrites.at(-1),['song',0.5]);

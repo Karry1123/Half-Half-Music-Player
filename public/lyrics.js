@@ -31,6 +31,8 @@ export function lyricsQuery(track = {}, duration = track.duration) {
 }
 const shape = data => ({ synced: typeof data?.synced === 'string' ? data.synced : null, plain: typeof data?.plain === 'string' ? data.plain : null, ...(data?.source === 'lrclib' && { source: 'lrclib' }) });
 export function createLyricsCache({ storage, now = Date.now, maxChars = 500000, maxEntries = 100, ttl = 86400000, key = 'hh.lyrics.v1' } = {}) {
+  const listeners = new Set();
+  const changed = id => listeners.forEach(listener => listener(id));
   const backend = () => storage === undefined ? globalThis.localStorage : storage;
   const clampOffset = value => Number.isFinite(Number(value)) ? Math.max(-30, Math.min(30, Number(value))) : 0;
   const fresh = entry => entry?.data && typeof entry.data === 'object' && now() - entry.at < ttl;
@@ -47,6 +49,7 @@ export function createLyricsCache({ storage, now = Date.now, maxChars = 500000, 
     try { backend()?.setItem(key, JSON.stringify(entries)); } catch {}
   };
   return {
+    subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
     get(id) {
       const entries = read(), index = entries.findIndex(entry => entry.id === id);
       if (index < 0 || !fresh(entries[index])) return null;
@@ -57,10 +60,12 @@ export function createLyricsCache({ storage, now = Date.now, maxChars = 500000, 
       if (!id) return;
       const entries = read(), offset = clampOffset(entries.find(entry => entry.id === id)?.offset);
       write([...entries.filter(entry => entry.id !== id), { id, at: now(), data: shape(data), offset }]);
+      changed(id);
     },
     // Refresh lyrics without losing the listener's timing correction.
     remove(id) {
       write(read().flatMap(entry => entry.id !== id ? [entry] : clampOffset(entry.offset) ? [{ ...entry, data: null }] : []));
+      changed(id);
     },
     getOffset(id) { return clampOffset(read().find(entry => entry.id === id)?.offset); },
     setOffset(id, value) {
@@ -68,6 +73,7 @@ export function createLyricsCache({ storage, now = Date.now, maxChars = 500000, 
       if (!id) return offset;
       const entries = read(), previous = entries.find(entry => entry.id === id);
       write([...entries.filter(entry => entry.id !== id), { ...(previous || { id, at: 0, data: null }), offset }]);
+      changed(id);
       return offset;
     },
   };
