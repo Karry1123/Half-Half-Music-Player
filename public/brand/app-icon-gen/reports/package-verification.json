@@ -1,0 +1,75 @@
+{
+  "status": "ok",
+  "out": "C:\\Users\\KARRYX~1\\AppData\\Local\\Temp\\claude\\a182095638e4e301\\1252936d-df6c-457f-90f6-3cce520be51a\\scratchpad\\build\\half-half-v3",
+  "style_report": "tmp/reports/style-report.json",
+  "reports_dir": "tmp/reports",
+  "target_platforms": [
+    "Web",
+    "Android"
+  ],
+  "canvas": {
+    "width": 1024,
+    "height": 1024
+  },
+  "preview_svg": "half-half-v3.preview.svg",
+  "preview_png": {
+    "width": 1024,
+    "height": 1024,
+    "visible_pixels": 1006147,
+    "visible_bounds": {
+      "min_x": 0,
+      "min_y": 0,
+      "max_x": 1023,
+      "max_y": 1023
+    }
+  },
+  "app_svg": "half-half-v3.svg",
+  "app_png": {
+    "width": 1024,
+    "height": 1024,
+    "visible_pixels": 1048576,
+    "visible_bounds": {
+      "min_x": 0,
+      "min_y": 0,
+      "max_x": 1023,
+      "max_y": 1023
+    }
+  },
+  "generic_assets": {
+    "layers": [
+      "layers/01-background.svg",
+      "layers/02-capsule.svg",
+      "layers/03-wave.svg"
+    ]
+  },
+  "apple_adapter": null,
+  "generated_files_manifest_validation": {
+    "status": "valid",
+    "files": [
+      "half-half-v3.preview.svg",
+      "half-half-v3.preview.png",
+      "half-half-v3.svg",
+      "half-half-v3.png",
+      "layers/01-background.svg",
+      "layers/02-capsule.svg",
+      "layers/03-wave.svg",
+      "tmp/README.md",
+      "tmp/reports/style-report.json",
+      "tmp/reports/package-verification.json",
+      "tmp/reports/reference-diff.png",
+      "tmp/reports/reference-overlay.png",
+      "tmp/reports/reference-side-by-side.png",
+      "tmp/reports/visual-review.json"
+    ],
+    "problems": []
+  },
+  "visual_review": null,
+  "outcome": {
+    "pixel_status": "not_required",
+    "route_status": "generic_assets_ready",
+    "review_required": false
+  },
+  "reference_comparison": null,
+  "warnings": [],
+  "failures": []
+}

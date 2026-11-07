@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import htm from 'htm';
-import { AlertTriangle, Check, CloudDownload, Cloud, FileArchive, Headphones, KeyRound, Loader2, LogOut, RefreshCw, X } from 'lucide-react';
+import { AlertTriangle, Check, CloudDownload, Cloud, FileArchive, KeyRound, Loader2, LogOut, RefreshCw, X } from 'lucide-react';
 import { createPlaylistZip, saveZip } from './playlistZip.js';
 import { pushBackLayer } from './mobileRuntime.js';
 const html = htm.bind(React.createElement);
@@ -17,11 +17,7 @@ function useBack(open, close) {
 }
 
 function Logo({ size = 64 }) {
-  return html`<div className="relative shrink-0" style=${{ width: size, height: size }}>
-    <span className="absolute inset-0 rounded-full" style=${{ background: 'linear-gradient(90deg, var(--color-brand-host) 50%, var(--color-brand-guest) 50%)' }} />
-    <span className="absolute inset-[30%] rounded-full bg-ink-950" />
-    <${Headphones} size=${Math.round(size * 0.36)} className="absolute inset-0 m-auto text-sand-50" />
-  </div>`;
+  return html`<img src="./icon.svg" alt="Half&Half" className="shrink-0" width=${size} height=${size} />`;
 }
 
 function Alert({ children, tone = 'warn' }) {

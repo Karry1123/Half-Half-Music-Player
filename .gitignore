@@ -1,5 +1,6 @@
 node_modules/
 dist/
+tmp/
 
 # 本地配置与账号 Cookie（含登录凭据，绝不能提交）
 .env

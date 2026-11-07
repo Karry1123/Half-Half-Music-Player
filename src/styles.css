@@ -56,7 +56,7 @@ a { color: inherit; }
 .lobby { min-height: 100%; display: grid; place-items: center; padding: calc(var(--space-section) + var(--safe-top)) max(var(--space-page), var(--safe-right)) calc(var(--space-section) + var(--safe-bottom)) max(var(--space-page), var(--safe-left)); position: relative; isolation: isolate; }
 .lobby-inner { width: min(var(--lobby-max-width), 100%); display: grid; gap: var(--lobby-gap); }
 .brand { display: flex; align-items: center; gap: var(--space-inline-md); font-weight: var(--font-weight-bold); }
-.brand-mark { width: 28px; height: 28px; border-radius: var(--p-radius-circle); background: linear-gradient(90deg, var(--color-brand-host) 50%, var(--color-brand-guest) 50%); flex: none; }
+.brand-mark { width: 28px; height: 28px; border-radius: 22%; background: url("/icon.svg") center / contain no-repeat; flex: none; }
 .lobby h1 { font-size: var(--text-hero-size); line-height: var(--text-hero-line); margin: 0; font-weight: var(--font-weight-bold); }
 .lobby h1 .amp { color: var(--color-role-host); }
 .lobby-sub { margin: var(--space-inline-sm) 0 0; color: var(--color-text-secondary); font-size: var(--text-body-size); }

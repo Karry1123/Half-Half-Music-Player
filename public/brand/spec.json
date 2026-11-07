@@ -1,0 +1,98 @@
+{
+  "name": "HalfHalf",
+  "target_platforms": [
+    "Web",
+    "Android"
+  ],
+  "source_reference": "Original direct semantic design for Half&Half",
+  "brief": "Two people listening in P2P sync: an amber-to-rose diagonal field (the two listeners), one dark capsule, one cream sound wave they share. Flat, rounded, legible at 64px.",
+  "canvas": {
+    "size": 1024,
+    "icon_radius": 224,
+    "adaptive_safe_circle_108dp": {
+      "cx": 54,
+      "cy": 54,
+      "radius": 33
+    },
+    "adaptive_mark_scale": 0.78
+  },
+  "palette": {
+    "host": "#F2A65A",
+    "guest": "#EC7A96",
+    "ink": "#1A1512",
+    "wave": "#FFF7EE",
+    "adaptive_background": "#EF9078"
+  },
+  "geometry": {
+    "capsule": [
+      232,
+      392,
+      792,
+      632
+    ],
+    "wave": [
+      [
+        330,
+        512
+      ],
+      [
+        370,
+        512
+      ],
+      [
+        410,
+        440
+      ],
+      [
+        450,
+        584
+      ],
+      [
+        490,
+        460
+      ],
+      [
+        530,
+        564
+      ],
+      [
+        570,
+        480
+      ],
+      [
+        610,
+        544
+      ],
+      [
+        650,
+        500
+      ],
+      [
+        694,
+        512
+      ]
+    ],
+    "wave_width": 40
+  },
+  "style": {
+    "direction": "gradient-field-capsule-mark",
+    "svg_convertibility": "high"
+  },
+  "layers": [
+    {
+      "name": "background",
+      "svg": "<defs><linearGradient id=\"field\" x1=\"0\" y1=\"0\" x2=\"1\" y2=\"1\"><stop stop-color=\"#F2A65A\"/><stop offset=\"1\" stop-color=\"#EC7A96\"/></linearGradient></defs><rect width=\"1024\" height=\"1024\" fill=\"url(#field)\"/>",
+      "composer": {
+        "include": false
+      }
+    },
+    {
+      "name": "capsule",
+      "svg": "<rect x=\"232\" y=\"392\" width=\"560\" height=\"240\" rx=\"120\" fill=\"#1A1512\"/>"
+    },
+    {
+      "name": "wave",
+      "svg": "<path d=\"M330.0,512.0L370.0,512.0L410.0,440.0L450.0,584.0L490.0,460.0L530.0,564.0L570.0,480.0L610.0,544.0L650.0,500.0L694.0,512.0\" fill=\"none\" stroke=\"#FFF7EE\" stroke-width=\"40\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>"
+    }
+  ]
+}

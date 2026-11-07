@@ -1,0 +1,70 @@
+{
+  "mode": "icon-spec-authoring",
+  "layout": "delivery",
+  "spec": "C:\\Users\\KARRYX~1\\AppData\\Local\\Temp\\claude\\a182095638e4e301\\1252936d-df6c-457f-90f6-3cce520be51a\\scratchpad\\build\\half-half-v3\\tmp\\work\\spec.json",
+  "work_spec": "tmp/work/spec.json",
+  "name": "HalfHalf",
+  "canvas": 1024,
+  "target_platforms": [
+    "Web",
+    "Android"
+  ],
+  "deliverable_type": null,
+  "source_reference": "Original direct semantic design for Half&Half (public/brand/generate.py)",
+  "brief": "Two people listening in P2P sync: an amber-to-rose field for the two listeners, one dark capsule, one cream sound wave they share. Flat, rounded, legible at 64px.",
+  "renderer": "@resvg/resvg-js",
+  "generated_files": [
+    "half-half-v3.preview.svg",
+    "half-half-v3.preview.png",
+    "half-half-v3.svg",
+    "half-half-v3.png",
+    "layers/01-background.svg",
+    "layers/02-capsule.svg",
+    "layers/03-wave.svg",
+    "tmp/README.md",
+    "tmp/reports/style-report.json",
+    "tmp/reports/package-verification.json",
+    "tmp/reports/reference-diff.png",
+    "tmp/reports/reference-overlay.png",
+    "tmp/reports/reference-side-by-side.png",
+    "tmp/reports/visual-review.json"
+  ],
+  "generated_directories": [
+    "tmp/reports",
+    "layers",
+    "tmp"
+  ],
+  "preview_svg": "half-half-v3.preview.svg",
+  "preview_png": "half-half-v3.preview.png",
+  "app_svg": "half-half-v3.svg",
+  "app_png": "half-half-v3.png",
+  "layers": [
+    "layers/01-background.svg",
+    "layers/02-capsule.svg",
+    "layers/03-wave.svg"
+  ],
+  "apple_adapter": null,
+  "preview_background_layers": [
+    {
+      "layer": "background",
+      "source_layer": "layers/01-background.svg",
+      "role": "preview-only-simple-fill"
+    }
+  ],
+  "icon_composer_layer_decisions": [],
+  "background_mode": "spec",
+  "semantic_review": {
+    "status": "exact-enough",
+    "identity_risk": "low",
+    "basis": "original in-task design with no external brand identity; geometry is authored primitives",
+    "route": "semantic-svg",
+    "notes": "Gradient background, one filled capsule and one stroked polyline; no material effects."
+  },
+  "warnings": [],
+  "claims": [
+    "spec-driven reusable cross-platform icon source package",
+    "semantic source layers retained",
+    "rounded preview PNG rendered by @resvg/resvg-js",
+    "unrounded app/source canvas outputs retained separately from preview masking"
+  ]
+}
