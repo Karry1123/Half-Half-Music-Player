@@ -72,6 +72,7 @@ function audioHarness(android = true) {
   }
   const AudioOut = vm.runInNewContext(`${section('class AudioOut {', '// ════════════════════════════════════════════════════════════ 会话引擎')}; AudioOut`, {
     stored: () => null, gainFor, audioDuck: 1,
+    trackVolumeStore: { subscribe() {}, getTrim: () => 0 },
     Audio, isAndroid: android, get: () => ({ volume: 1 }), now: () => 100,
     URL: { createObjectURL: () => 'blob:next', revokeObjectURL() {} },
     clearTimeout() {}, setTimeout() { assert.fail('solo playback must not depend on a timer'); },

@@ -170,7 +170,7 @@ import htm from 'htm';
 import {
   FileText, Heart, Activity, AlertTriangle, ArrowDownUp, ArrowRight, Check, FolderDown, HardDrive, HardDriveDownload, CirclePlay, Clock as ClockIcon, Copy, Crown, Disc3, Download, FileAudio, Flame, Globe,
   ExternalLink, Gauge, Headphones, History, Home, ListOrdered, Server, Settings, Zap, Repeat, Repeat1, Shuffle, User, LayoutDashboard, Link, Link2, ListMusic, Loader2, LogOut, Music2, Pause, Play, QrCode,
-  Radio, RefreshCw, Search, ShieldCheck, Signal, SkipBack, SkipForward, Sparkles, Square, Trash2, Upload, Users, Volume2, VolumeX,
+  Radio, RefreshCw, Search, ShieldCheck, Signal, SkipBack, SkipForward, Sparkles, Square, Trash2, Upload, Users, Volume1, Volume2, VolumeX,
   Wifi, WifiOff, X, Plus, MoreHorizontal, ListPlus, ListMinus, Pencil, Library, Eye, EyeOff, ChevronDown, ChevronRight, Cloud, CloudDownload,
 } from 'lucide-react';
 import { Peer } from 'peerjs';
@@ -201,6 +201,7 @@ import { ALL_ID, ALL_NAME, FAVORITES_ID, PlaylistStore, missingFromLibrary, play
 import { AccountClient, SOURCE_EXPIRED, cacheCloudTrack, downloadCloudTrack, downloadCloudFile } from './accountClient.js';
 import { createCloudUploader } from './cloudFiles.js';
 import { parseLrc, currentLineIndex, lyricsQuery, createLyricsCache } from './lyrics.js';
+import { trackVolumeStore } from './trackVolume.js';
 import { loadCoverPalette } from './coverPalette.js';
 import { coverSrc, setCoverProxy, coverCandidates, coverError, fetchCover } from './coverUrl.js';
 import { readAudioTags } from './audioTags.js';
@@ -790,10 +791,14 @@ class AudioOut {
   onBlocked = null;
   trackGain = 1;
   trackLoudness = null;
+  trackVolumeId = null;
   endBoundary = Infinity;
   endFired = false;
 
   constructor() {
+    trackVolumeStore.subscribe(id => {
+      if (id === this.trackVolumeId) this.refreshTrackGain();
+    });
     this.audio.preload = 'auto';
     this.audio.preservesPitch = true;
     this.audio.addEventListener('ended', () => this.finish());
@@ -828,14 +833,16 @@ class AudioOut {
     this.setVolume(get().volume);
   }
 
-  applyTrackAnalysis(analysis) {
+  applyTrackAnalysis(analysis, trackVolumeId = this.trackVolumeId) {
+    this.trackVolumeId = trackVolumeId;
     this.trackLoudness = analysis?.version === 1 ? analysis.loudness : null;
     this.refreshTrackGain();
   }
 
   refreshTrackGain() {
-    this.setTrackGain(stored('hh.loudnessNormalize') !== 'false'
-      ? gainFor(this.trackLoudness, { maxBoost: this.gain ? 6 : 0 }) : 1);
+    const loudnessGain = stored('hh.loudnessNormalize') !== 'false'
+      ? gainFor(this.trackLoudness, { maxBoost: this.gain ? 6 : 0 }) : 1;
+    this.setTrackGain(loudnessGain * 10 ** (trackVolumeStore.getTrim(this.trackVolumeId) / 20));
   }
 
   /** 必须在用户手势中调用：创建 AudioContext 并接入分析器（频谱动画） */
@@ -870,11 +877,11 @@ class AudioOut {
     return this.ctx ? (this.ctx.outputLatency || 0) + (this.ctx.baseLatency || 0) : 0;
   }
 
-  load(blob, { autoplay = false, position = 0, end = Infinity, analysis = null } = {}) {
+  load(blob, { autoplay = false, position = 0, end = Infinity, analysis = null, trackVolumeId = null } = {}) {
     clearTimeout(this.endTimer);
     this.endFired = false;
     this.endBoundary = end;
-    this.applyTrackAnalysis(analysis);
+    this.applyTrackAnalysis(analysis, trackVolumeId);
     clearTimeout(this.timer);
     this.intent = false;
     this.pausedAt = position;
@@ -1870,7 +1877,7 @@ class Session {
       const immediate = autoplay && !this.conn?.open && resumeAt === null;
       const startedAt = now();
       try {
-        duration = await this.out.load(blob, { autoplay: immediate, position: initialPosition, end: bounds.end < (item.duration || item.analysis?.duration) ? bounds.end : Infinity, analysis: item.analysis });
+        duration = await this.out.load(blob, { autoplay: immediate, position: initialPosition, end: bounds.end < (item.duration || item.analysis?.duration) ? bounds.end : Infinity, analysis: item.analysis, trackVolumeId: item.localId || item.id });
       } catch (e) {
         if (token !== this.token) return;
         this.out.stopAt(now(), 0);
@@ -1955,7 +1962,7 @@ class Session {
     let duration;
     try {
       const item = get().library.find(x => x.id === id);
-      duration = await this.out.load(blob, { analysis: item?.analysis });
+      duration = await this.out.load(blob, { analysis: item?.analysis, trackVolumeId: item?.localId || id });
     } catch (e) {
       return toast(`解码失败：${e.message}`, 'warn');
     }
@@ -5332,6 +5339,7 @@ function NativePlayer({ open, close, expand }) {
       <div hidden=${!!lyricsOpen} class="fsp-main mx-auto flex w-full max-w-md flex-col items-center">
         <div class=${cx('hh-player-art', !s.playing && 'fsp-paused')}><${Cover} item=${item} size=${340} round="rounded-[28px]" /></div>
         <div class="fsp-metadata w-full text-center"><h2 class="text-2xl font-bold">${item?.title || '未在播放'}</h2><p class="text-base fsp-muted">${item?.artist || '选择喜欢的音乐'}</p><p class="text-xs fsp-muted">已完整聆听 ${trackCompletedCount(item)} 次</p></div>
+        <${TrackVolumeTrim} item=${item} loaded=${s.loaded} />
         <${SeekBar} stacked=${true} open=${open && !lyricsOpen} />
         <div class="hh-player-transport w-full"><button disabled=${!can} onClick=${() => session.act('prev')} aria-label="上一首"><${SkipBack} size=${28} /></button><button data-role=${s.role} class="player-primary disabled:opacity-30" disabled=${!can} onClick=${() => session.act('toggle')} aria-label=${s.playing ? '暂停' : '播放'}><${s.playing ? Pause : Play} size=${30} /></button><button disabled=${!can || !s.canNext} onClick=${() => session.act('next')} aria-label="下一首"><${SkipForward} size=${28} /></button></div>
         <div class="fsp-toggles" role="group" aria-label="播放模式与喜欢">
@@ -5345,6 +5353,21 @@ function NativePlayer({ open, close, expand }) {
       ${lyricsOpen && html`<${LyricsSheet} item=${item} close=${() => setLyricsOpen(false)} open=${open} />`}
     </section>`}
     ${open && queueOpen && html`<${PlayerQueueDrawer} close=${() => setQueueOpen(false)} />`}
+  </div>`;
+}
+
+function TrackVolumeTrim({ item, loaded }) {
+  const id = item?.localId || item?.id;
+  const [, revise] = useState(0);
+  useEffect(() => trackVolumeStore.subscribe(changedId => {
+    if (changedId === id) revise(value => value + 1);
+  }), [id]);
+  const db = trackVolumeStore.getTrim(id), disabled = !item || !loaded;
+  const update = value => trackVolumeStore.setTrim(id, value);
+  return html`<div class="fsp-trim" role="group" aria-label="单曲音量">
+    <button class="fsp-trim-step" aria-label="降低音量 1 dB" disabled=${disabled || db <= -12} onClick=${() => update(db - 1)}><${Volume1} size=${18} /></button>
+    <button class=${cx('fsp-trim-label', db === 0 && 'fsp-muted')} aria-label="重置音量" aria-live="polite" disabled=${disabled} onClick=${() => update(0)} onContextMenu=${e => { e.preventDefault(); if (!disabled) update(0); }}>音量 ${db > 0 ? '+' : ''}${db} dB</button>
+    <button class="fsp-trim-step" aria-label="提高音量 1 dB" disabled=${disabled || db >= 12} onClick=${() => update(db + 1)}><${Volume2} size=${18} /></button>
   </div>`;
 }
 

@@ -52,6 +52,7 @@ function outputHarness(android = false) {
   const code = source.slice(source.indexOf('class AudioOut {'), source.indexOf('class Session {'));
   const Out = vm.runInNewContext(`${code}; AudioOut`, {
     Audio, audioDuck: 0.5, isAndroid: android, get: () => ({ volume: 0.8 }), stored: () => null,
+    trackVolumeStore: { subscribe() {}, getTrim: () => 0 },
     gainFor, setTimeout: (fn, ms) => { timer = fn; delay = ms; return 1; }, clearTimeout: () => { timer = null; },
   });
   return { out: new Out(), fireTimer: () => timer?.(), delay: () => delay };

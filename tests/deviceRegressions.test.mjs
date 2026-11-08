@@ -56,6 +56,7 @@ test('guest mini and fullscreen players show metadata and transfer status before
   const item = { id: 'song', title: '歌曲标题', artist: '歌曲作者', cover: 'https://example.com/cover.jpg' };
   const state = { library: [item], currentId: item.id, role: 'guest', conn: 'open', loaded: false, volume: 1 };
   const context = {
+    trackVolumeStore: { getTrim: () => 0 }, Volume1: () => null, Plus: () => null,
     window: { matchMedia: () => ({ matches: false }) },
     html: htm.bind(React.createElement), useStore: fn => fn(state), useState: () => [0, () => {}], useRef: () => ({ current: null }), useBackLayer() {}, useEffect() {},
     cx: (...args) => args.filter(Boolean).join(' '), gradient: () => 'red', coverSrc: url => url, coverCandidates, coverError, trackCompletedCount: () => 0, session: {},
