@@ -63,7 +63,7 @@ test('full-screen trim row has local +/- buttons, live label, limits and tap/lon
   const start = source.indexOf('function TrackVolumeTrim(');
   const Component = vm.runInNewContext(`${source.slice(start, source.indexOf('function App()', start))}; TrackVolumeTrim`, {
     trackVolumeStore: store, useState: () => [0, fn => revisions.push(fn)], useEffect: fn => effects.push(fn),
-    html: htm.bind(React.createElement), Volume1: () => null, Plus: () => null, cx: (...args) => args.filter(Boolean).join(' '),
+    html: htm.bind(React.createElement), Volume1: () => null, Volume2: () => null, cx: (...args) => args.filter(Boolean).join(' '),
   });
   const render = (item = { id: 'remote', localId: 'local' }, loaded = true) => flatten(Component({ item, loaded }));
   let nodes = render();
