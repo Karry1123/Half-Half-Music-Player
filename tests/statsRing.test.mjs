@@ -143,6 +143,30 @@ test('period switches and rapid interruptions preserve the currently rendered va
   assert.deepEqual(calls, [[0, 1, 600], [0, 1, 600]]);
 });
 
+test('a sweep to zero fades the last arc and tip instead of popping at the final frame', () => {
+  let stored, reference, effect, advance;
+  const StatRing = vm.runInNewContext(`${uiSource}; StatRing`, {
+    ...ring, React, htm,
+    useState: initial => [stored ?? initial, next => { stored = next; }],
+    useRef: initial => reference ||= { current: initial }, useEffect: fn => { effect = fn; },
+    sweep(from, to, duration, onFrame) { onFrame(from); advance = onFrame; return () => {}; },
+  });
+  const frame = (value, fraction) => {
+    if (fraction !== undefined) advance(fraction);
+    return renderToStaticMarkup(StatRing({ value, period: 'week', kind: 'completed', label: 'Count' }));
+  };
+  const opacities = markup => [...markup.matchAll(/opacity="([\d.e-]+)"/g)].map(match => Number(match[1]));
+  StatRing({ value: 25, period: 'week', kind: 'completed', label: 'Count' });
+  StatRing({ value: 0, period: 'week', kind: 'completed', label: 'Count' }); effect();
+  assert.deepEqual(opacities(frame(0, 0)), [1, 0, 0, 1], 'half a lap is fully opaque');
+  const late = opacities(frame(0, 0.98));   // 1% of a lap left: clamped arc at half opacity
+  assert.ok(Math.abs(late[0] - 0.5) < 1e-9 && Math.abs(late[3] - 0.5) < 1e-9);
+  assert.match(frame(0), /stroke-dasharray="2 100"/);
+  const later = opacities(frame(0, 0.998));
+  assert.ok(later[0] < 0.11 && later[3] < 0.11, 'nearly invisible before it is removed');
+  assert.deepEqual(opacities(frame(0, 1)), [0, 0, 0, 0]);
+});
+
 test('offline showcase embeds the module verbatim and exposes the required controls', () => {
   const demo = readFileSync(new URL('../docs/stats-ring-final.html', import.meta.url), 'utf8');
   assert.ok(demo.includes(`// copied from public/statsRing.js — keep in sync\n${modelSource}// end copied block`));
