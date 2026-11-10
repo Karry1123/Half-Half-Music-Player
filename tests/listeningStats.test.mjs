@@ -459,10 +459,34 @@ test('backfillCompletions dates legacy completions from listening time, capped b
   ];
   assert.equal(stats.backfillCompletions(id => ({ song: 200 })[id] || 0), true);
   // Newest first: c (2 loops) exhausts the cap of 2, so a and b get nothing; d is below 95%.
-  assert.deepEqual(stats.records.map(r => r.completed), [0, 0, 2, 0, undefined, 0]);
-  assert.equal(stats.completedInPeriod('month', day(6)), 2);
-  // Unknown durations are retried once they become known.
-  assert.equal(stats.backfillCompletions(id => ({ song: 200, other: 300 })[id] || 0), true);
-  assert.equal(stats.records[4].completed, 1);
+  // "other" has no known length, so its lifetime completion is dated on its only record.
+  assert.deepEqual(stats.records.map(r => r.completed), [0, 0, 2, 0, 1, 0]);
+  assert.equal(stats.completedInPeriod('month', day(6)), 3);
+  assert.equal(stats.completedInPeriod('month', day(6)), stats.completedInPeriod('all', day(6)));
   assert.equal(stats.backfillCompletions(() => 300), false);
+});
+
+test('backfillCompletions dates lifetime completions that inference missed so periods add up to all', async () => {
+  const stats = new ListeningStats({ userId: 'u', indexedDB: null });
+  await stats.ready();
+  const day = (d, h = 10) => +new Date(2026, 10, d, h);
+  // split: one play heard in two halves; loops: 5 completions but records only explain 3;
+  // gone: counter without any record cannot be dated; live: already consistent.
+  stats.stats.completedPlayCount = { split: 1, loops: 5, gone: 4, live: 1 };
+  stats.records = [
+    { id: 'a', userId: 'u', trackId: 'split', durationPlayed: 120, timestamp: day(1), localDay: '2026-11-01', completed: 0 },
+    { id: 'b', userId: 'u', trackId: 'split', durationPlayed: 80, timestamp: day(2), localDay: '2026-11-02', completed: 0 },
+    { id: 'c', userId: 'u', trackId: 'loops', durationPlayed: 400, timestamp: day(3), localDay: '2026-11-03', completed: 2 },
+    { id: 'd', userId: 'u', trackId: 'loops', durationPlayed: 210, timestamp: day(4), localDay: '2026-11-04', completed: 0 },
+    { id: 'e', userId: 'u', trackId: 'loops', durationPlayed: 30, timestamp: day(5), localDay: '2026-11-05', completed: 0 },
+    { id: 'f', userId: 'u', trackId: 'live', durationPlayed: 200, timestamp: day(5), localDay: '2026-11-05', completed: 1 },
+  ];
+  assert.equal(stats.backfillCompletions(() => 200), true);
+  // split: the longer half (120s of 200s) rounds to room for one play.
+  // loops: d has room for 1; the remaining 2 are spread over the most-listened records c, d.
+  assert.deepEqual(stats.records.map(r => r.completed), [1, 0, 3, 2, 0, 1]);
+  assert.equal(stats.completedInPeriod('month', day(6)), 7);
+  assert.equal(stats.completedInPeriod('all', day(6)), 11, 'the record-less counter stays in "all" only');
+  assert.equal(stats.backfillCompletions(() => 200), false, 'reconciliation is idempotent');
+  assert.deepEqual(stats.stats.completedPlayCount, { split: 1, loops: 5, gone: 4, live: 1 }, 'lifetime counters are never changed');
 });

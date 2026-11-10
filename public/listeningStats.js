@@ -295,7 +295,8 @@ export class ListeningStats {
   }
 
   // Records written before completions were dated carry no `completed` field. Infer them from
-  // listening time (the same 95% rule as live playback), capped by each track's lifetime total.
+  // listening time (the same 95% rule as live playback), capped by each track's lifetime total,
+  // then reconcile any remainder so dated completions sum to the lifetime counter.
   backfillCompletions(durationOf) {
     const pending = new Map();
     for (const record of this.records) {
@@ -318,7 +319,37 @@ export class ListeningStats {
         changed = true;
       }
     }
-    if (changed) { this.changed = true; this.scheduleSave(); this.notify(); }
+    // Inference misses plays split across records (pause, midnight, reopen) and tracks whose
+    // length is unknown. The lifetime counter is authoritative, so date whatever it still holds
+    // beyond the records: first where listening time has room for another play, then spread
+    // over the track's records with the most listening. Period totals then add up to "all".
+    const byTrack = new Map();
+    for (const record of this.records) {
+      const list = byTrack.get(record.trackId) || [];
+      list.push(record);
+      byTrack.set(record.trackId, list);
+    }
+    for (const [trackId, list] of byTrack) {
+      const total = Math.max(0, Math.floor(finite(this.stats.completedPlayCount[trackId])));
+      let missing = total - list.reduce((sum, record) => sum + (record.completed || 0), 0);
+      if (missing <= 0) continue;
+      const duration = Math.max(0, finite(durationOf(trackId)));
+      const ranked = list.sort((a, b) => finite(b.durationPlayed) - finite(a.durationPlayed) || a.timestamp - b.timestamp);
+      const give = (record, count) => {
+        if (count <= 0) return;
+        record.completed = (record.completed || 0) + count;
+        missing -= count;
+        this.dirty.add(record.id);
+        changed = true;
+      };
+      if (duration) for (const record of ranked) {
+        if (missing <= 0) break;
+        const room = Math.round(Math.max(0, finite(record.durationPlayed)) / duration) - (record.completed || 0);
+        give(record, Math.min(missing, room));
+      }
+      for (let i = 0; missing > 0; i = (i + 1) % ranked.length) give(ranked[i], 1);
+    }
+    if (changed) { this.completionIndex = null; this.changed = true; this.scheduleSave(); this.notify(); }
     return changed;
   }
 
