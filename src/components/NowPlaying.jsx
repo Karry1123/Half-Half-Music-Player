@@ -159,7 +159,7 @@ export function NowPlaying() {
         <CoverDisc cover={track?.cover} spinning={playing && loaded} />
         <div className="track-meta">
           <span className="muted track-label">
-            {playing ? 'NOW PLAYING' : track ? 'PAUSED' : 'READY'}
+            {playing ? '正在播放' : track ? '已暂停' : '就绪'}
           </span>
           <h1 className="track-title">{track?.title || '还没有选择歌曲'}</h1>
           <div className="track-artist">{track ? track.artist || '未知歌手' : '从播放列表选一首，或添加本地音频文件'}</div>

@@ -116,6 +116,7 @@
   .scroll-thin { scrollbar-width: thin; scrollbar-color: var(--color-border-control) transparent; }
   .scroll-thin::-webkit-scrollbar { width: 6px; } .scroll-thin::-webkit-scrollbar-thumb { background: var(--color-border-control); border-radius: var(--p-radius-xs); }
   .glass { background: var(--color-bg-surface); border: 1px solid var(--color-border-subtle); box-shadow: var(--shadow-2); }
+  .hh-content-panel { background: var(--color-bg-surface); }
   .blob { position: absolute; border-radius: var(--p-radius-pill); filter: blur(80px); opacity: .07; background: var(--color-brand-host); }
   .blob:nth-child(2) { background: var(--color-brand-guest); }
   .blob:nth-child(3) { display: none; }
@@ -2957,7 +2958,7 @@ function SearchPanel() {
 /** 歌单封面：前 4 首歌的封面拼成 2×2；没有歌时显示图标 */
 function PlaylistCover({ playlist, size = 44, round = 'rounded-xl' }) {
   const library = useStore((s) => s.library);
-  if (playlist.id === FAVORITES_ID) return html`<span class=${cx('grid shrink-0 place-items-center text-white', round)} style=${{ width: size, height: size, flex: '0 0 auto', background: 'linear-gradient(135deg, #d94d79, #783ea8)' }}><${Heart} size=${size * 0.45} fill="currentColor" /></span>`;
+  if (playlist.id === FAVORITES_ID) return html`<span class=${cx('grid shrink-0 place-items-center text-white', round)} style=${{ width: size, height: size, flex: '0 0 auto', background: 'var(--color-selected-indicator)', color: 'var(--color-bg-canvas)' }}><${Heart} size=${size * 0.45} fill="currentColor" /></span>`;
   const items = playlist.id === ALL_ID
     ? library.slice(-4).reverse()
     : playlist.trackIds.map((t) => library.find((x) => x.localId === t)).filter(Boolean).slice(0, 4);
@@ -4812,7 +4813,7 @@ function SearchDiscovery({ onSearch, onSelectTrack }) {
   return html`<section class="hh-discovery relative z-10" aria-label="发现与检索">
     <${PageHeading} eyebrow="DISCOVER / TOGETHER" title="今天，听点什么？" subtitle="寻找一首喜欢的歌，让两个人的日常同频。" />
 
-    <form class="glass mx-auto mt-3 flex max-w-3xl items-center gap-2 rounded-2xl p-2 focus-within:ring-2 focus-within:ring-host/40" onSubmit=${(e) => { e.preventDefault(); run(); }}>
+    <form class="hh-content-panel mx-auto mt-3 flex max-w-3xl items-center gap-2 rounded-2xl p-2 focus-within:ring-2 focus-within:ring-host/40" onSubmit=${(e) => { e.preventDefault(); run(); }}>
       <span class="pl-3 text-sand-500">${isLink ? html`<${Link2} size=${18} class="text-host" />` : html`<${Search} size=${18} />`}</span>
       <input value=${keyword} onInput=${(e) => setKeyword(e.target.value)} enterkeyhint="search" aria-label="搜索歌曲、歌手或粘贴链接"
         onPaste=${(e) => {
@@ -5540,7 +5541,7 @@ function App() {
     </main>
     ${!keyboardOpen && html`<${NativePlayer} open=${playerOpen} close=${() => setPlayerOpen(false)} expand=${() => setPlayerOpen(true)} />
       <nav hidden=${playerOpen} aria-label="主导航" class="hh-navigation fixed inset-x-0 bottom-0 z-40 border-t border-ink-700 bg-ink-950/95 backdrop-blur-xl" style=${{ paddingBottom: 'var(--safe-bottom, 0px)', paddingLeft: 'var(--safe-left)', paddingRight: 'var(--safe-right)' }}>
-        <button class="hh-sidebar-brand" onClick=${() => setTab('discover')}><span class="brand-halves" />Half<span class="text-host">&</span>Half</button><p class="hh-sidebar-caption">两个人，同一段旋律</p><div class="hh-nav-items mx-auto grid h-16 max-w-5xl grid-cols-4">${[['discover', '发现/检索', Search], ['library', '曲库/歌单', Library], ['friends', '好友/动态', Users], ['settings', '设置/账号', Settings]].map(([id, label, Icon]) => html`<button key=${id} aria-current=${tab === id ? 'page' : undefined} class=${cx('flex flex-col items-center justify-center gap-1 text-xs', tab === id ? 'text-host' : 'text-sand-400')} onClick=${() => { tabScroll.current[tab] = window.scrollY; setTab(id); }}><${Icon} size=${21} />${label}</button>`)}</div><div class="hh-sidebar-tools"><${DownloadQueueButton} /><button onClick=${() => set({ localLibOpen: true })}><${HardDrive} size=${18} /> 离线模式</button><p>暖光同频 · 一起听见生活</p></div>
+        <button class="hh-sidebar-brand" onClick=${() => setTab('discover')}><span class="brand-halves" />Half<span class="text-host">&</span>Half</button><p class="hh-sidebar-caption">两个人，同一段旋律</p><div class="hh-nav-items mx-auto grid h-16 max-w-5xl grid-cols-4">${[['discover', '发现/检索', Search], ['library', '曲库/歌单', Library], ['friends', '好友/动态', Users], ['settings', '设置/账号', Settings]].map(([id, label, Icon]) => html`<button key=${id} aria-label=${label} title=${label} aria-current=${tab === id ? 'page' : undefined} class=${cx('flex flex-col items-center justify-center gap-1 text-xs', tab === id ? 'text-host' : 'text-sand-400')} onClick=${() => { tabScroll.current[tab] = window.scrollY; setTab(id); }}><${Icon} size=${22} /><span class="hh-nav-label">${label}</span></button>`)}</div><div class="hh-sidebar-tools"><${DownloadQueueButton} /><button onClick=${() => set({ localLibOpen: true })}><${HardDrive} size=${18} /> 离线模式</button><p>暖光同频 · 一起听见生活</p></div>
       </nav>`}
     ${invitation && html`<div class="fixed inset-0 z-[90] grid place-items-center bg-black/70 p-5"><section role="dialog" aria-modal="true" aria-label="一起听邀请" class="w-full max-w-sm space-y-5 rounded-3xl bg-ink-900 p-6"><p>${invitation.nickname} 邀请你一起听歌，是否加入？</p><div class="flex justify-end gap-4">${[false, true].map(accept => html`<button class="rounded-xl border border-ink-600 px-5 py-3" onClick=${() => { session.out.unlock(); sendSocial({ type: 'INVITE_LISTEN_RESPONSE', inviteId: invitation.inviteId, accept }); setInvitation(null); }}>${accept ? '加入' : '暂不'}</button>`)}</div></section></div>`}
     <${DailyGreeting} />

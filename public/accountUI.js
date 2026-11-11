@@ -49,7 +49,7 @@ export function AccountGate({ client, children }) {
         <div className="mt-4 text-2xl font-extrabold tracking-tight">Half<span className="text-gradient">&</span>Half</div>
         <p className="mt-1 text-sm text-sand-400">一人一半，耳机分你一只</p>
       </div>
-      <section className="rounded-3xl border border-ink-700 bg-ink-900/80 p-5 shadow-2xl backdrop-blur" aria-labelledby="acct-title">
+      <section className="rounded-3xl bg-ink-900/80 p-5" aria-labelledby="acct-title">
         ${ready && client.required && html`<ol className="mb-4 flex items-center gap-2 text-[11px] text-sand-500" aria-label="步骤">
           ${['登录账号', '邀请码激活'].map((s, i) => html`<li key=${s} className=${cx('flex items-center gap-1.5', i + 1 <= step && 'text-sand-200')}>
             <span className=${cx('grid h-5 w-5 place-items-center rounded-full text-[10px] font-semibold', i + 1 < step ? 'bg-sync text-ink-950' : i + 1 === step ? 'bg-host text-ink-950' : 'bg-ink-700 text-sand-400')}>${i + 1 < step ? html`<${Check} size=${11} />` : i + 1}</span>${s}

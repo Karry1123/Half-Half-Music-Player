@@ -30,6 +30,7 @@ body::before {
 /* Full-screen player: let the artwork colour show through the status-bar strip (blur only). */
 body:has([role="dialog"].fullscreen-player)::before { background: rgba(var(--color-safe-area-rgb), 0.35); }
 /* Landscape on a notched / punch-hole phone: fixed bars do not inherit the body padding. */
+.hh-nav-items > button .hh-nav-label { display:none; } /* bottom bar is icon-only; the desktop sidebar shows the label */
 .mini-player, .hh-navigation {
   padding-left: max(16px, var(--safe-left)) !important;
   padding-right: max(16px, var(--safe-right)) !important;
@@ -317,6 +318,7 @@ body:has([role="dialog"].fullscreen-player)::before { background: rgba(var(--col
   .hh-sidebar-brand .brand-halves { width:28px; height:28px; margin-right:6px; }
   .hh-sidebar-caption { display:block; font-size:12px; margin:12px 0 36px; color:var(--color-text-secondary); text-align:center; }
   .hh-navigation .hh-nav-items { display:flex; flex-direction:column; height:auto; gap:8px; }
+  .hh-nav-items > button .hh-nav-label { display:inline; }
   .hh-nav-items > button { flex-direction:row; justify-content:flex-start; gap:14px; padding:14px; font-size:14px; border-radius:var(--radius-control); min-height:52px; }
   .hh-nav-items > button[aria-current="page"] { background:var(--color-role-host-bg); color:var(--color-role-host); font-weight:700; }
   .hh-sidebar-tools { display:grid; gap:12px; margin-top:44px; padding-top:24px; border-top:1px solid var(--color-border-subtle); }

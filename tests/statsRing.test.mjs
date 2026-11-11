@@ -45,18 +45,37 @@ test('lap units, track, shadow and white-only tints use the card hue tokens', ()
   assert.ok(ring.ringRadius + 20 / 2 < 80);
 });
 
-test('centre labels count whole minutes/completions and shrink to the inner width', () => {
+test('centre labels count whole minutes/completions and shorten as the number grows', () => {
   assert.equal(ring.formatCentre('duration', 0), '0');
   assert.equal(ring.formatCentre('completed', 0), '0');
   assert.equal(ring.formatCentre('duration', 59), '0分');
   assert.equal(ring.formatCentre('duration', 3660), '1小时1分');
-  assert.equal(ring.formatCentre('duration', 2340 * 3600 + 15 * 60), '2340小时15分');
-  assert.equal(ring.formatCentre('completed', 12345.9), '12,345 次');
-  assert.equal(ring.centreFontSize('0'), 23);
-  for (const label of ['2340小时15分', '12,345 次', '999999999999小时59分']) {
-    const width = [...label].reduce((sum, char) => sum + (/[^\x00-\xff]/.test(char) ? 1 : 0.65), 0);
-    assert.ok(ring.centreFontSize(label) * width <= 96.000001);
+  assert.equal(ring.formatCentre('duration', 9 * 3600 + 59 * 60), '9小时59分');
+  assert.equal(ring.formatCentre('duration', 12 * 3600 + 30 * 60), '12.5小时');
+  assert.equal(ring.formatCentre('duration', 12 * 3600 + 5 * 60), '12小时');
+  assert.equal(ring.formatCentre('duration', 2340 * 3600 + 15 * 60), '2340小时');
+  assert.equal(ring.formatCentre('duration', 12345 * 3600), '1.2万小时');
+  assert.equal(ring.formatCentre('duration', 123456 * 3600), '12万小时');
+  assert.equal(ring.formatCentre('completed', 82), '82 次');
+  assert.equal(ring.formatCentre('completed', 9999.9), '9999 次');
+  assert.equal(ring.formatCentre('completed', 12345.9), '1.2万 次');
+  assert.equal(ring.formatCentre('completed', 9_999_999), '999万 次');
+  assert.equal(ring.formatCentre('completed', 12_345_678), '0.1亿 次');
+  assert.equal(ring.formatCentre('completed', 123_456_789), '1.2亿 次');
+});
+
+test('every centre label fits the fixed font size inside the ring', () => {
+  assert.equal(ring.centreFontSize, 18);
+  const hours = h => h * 3600;
+  const samples = {
+    duration: [0, 1, 59, 60, 599, 3540, 3600, hours(9) + 59 * 60, hours(10), hours(99) + 59 * 60, hours(100), hours(999), hours(9999) + 3599, hours(1e4), hours(99999), hours(1e6), hours(9_999_999), hours(1e7), hours(99_999_999), hours(1e8), hours(999_999_999)],
+    completed: [0, 1, 9, 99, 999, 9999, 1e4, 99999, 999999, 9_999_999, 1e7, 99_999_999, 1e8, 999_999_999],
+  };
+  for (const kind of ['duration', 'completed']) for (const value of samples[kind]) {
+    const label = ring.formatCentre(kind, value);
+    assert.ok(ring.labelWidth(label) <= ring.centreMaxWidth + 1e-9, `${label} is ${ring.labelWidth(label)} wide`);
   }
+  assert.ok(ring.centreMaxWidth <= 2 * Math.sqrt((ring.ringRadius - 10) ** 2 - (ring.centreFontSize * 0.65) ** 2), 'fits the chord at the label height');
 });
 
 const modelSource = readFileSync(new URL('../public/statsRing.js', import.meta.url), 'utf8');
@@ -114,6 +133,33 @@ test('React ring has no zero tip/badge, full laps close cleanly, and many laps s
   const many = render(2025);
   assert.equal((many.match(/pathLength="100"/g) || []).length, 3);
   assert.match(many, />×40<\/span>/);
+});
+
+test('centre font size never changes while the label counts up or down', () => {
+  for (const [kind, from, target] of [
+    ['completed', 0, 12345], ['completed', 12345, 0],
+    ['duration', 0, 2340 * 3600 + 15 * 60], ['duration', 7200, 3540],
+  ]) {
+    let renderedValue = from;
+    const StatRing = vm.runInNewContext(`${uiSource}; StatRing`, {
+      ...ring, React, htm,
+      useState: initial => [{ ...initial, value: renderedValue }, () => {}],
+      useRef: initial => ({ current: initial }), useEffect() {},
+    });
+    const expectedSize = ring.centreFontSize;
+    const labels = new Set();
+    for (const fraction of [0, 0.1, 0.5, 0.9, 1]) {
+      renderedValue = from + (target - from) * fraction;
+      const markup = renderToStaticMarkup(React.createElement(StatRing, {
+        value: target, kind, period: 'week', label: 'Count',
+      }));
+      const [, fontSize, label] = markup.match(/class="stats-ring-number"[^>]*font-size="([^"]+)"[^>]*>([^<]*)<\/text>/);
+      assert.equal(Number(fontSize), expectedSize);
+      assert.equal(label, ring.formatCentre(kind, renderedValue));
+      labels.add(label);
+    }
+    assert.ok(labels.size > 1, 'the displayed label continues counting');
+  }
 });
 
 test('period switches and rapid interruptions preserve the currently rendered value and geometry', () => {

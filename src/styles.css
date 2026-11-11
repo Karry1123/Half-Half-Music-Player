@@ -58,7 +58,6 @@ a { color: inherit; }
 .brand { display: flex; align-items: center; gap: var(--space-inline-md); font-weight: var(--font-weight-bold); }
 .brand-mark { width: 28px; height: 28px; border-radius: 22%; background: url("/icon.svg") center / contain no-repeat; flex: none; }
 .lobby h1 { font-size: var(--text-hero-size); line-height: var(--text-hero-line); margin: 0; font-weight: var(--font-weight-bold); }
-.lobby h1 .amp { color: var(--color-role-host); }
 .lobby-sub { margin: var(--space-inline-sm) 0 0; color: var(--color-text-secondary); font-size: var(--text-body-size); }
 .profile-row { display: flex; align-items: center; gap: var(--space-inline-md); padding: var(--space-stack-md); flex-wrap: wrap; }
 .swatches { display: flex; flex-wrap: wrap; gap: var(--space-inline-xs); }
@@ -263,7 +262,7 @@ a { color: inherit; }
 .drop-hint > :not(.empty-pattern), .empty > :not(.empty-pattern) { position: relative; }
 .swatch-dot { width: 22px; height: 22px; border-radius: var(--p-radius-circle); background: var(--swatch-color); }
 .nickname-field { flex: 1 1 160px; display: grid; gap: var(--space-inline-xs); font-size: var(--text-small-size); }
-.track-label { font-size: var(--text-caption-size); letter-spacing: var(--tracking-latin-label); }
+.track-label { font-size: var(--text-caption-size); }
 .item-select { min-width: 0; min-height: var(--size-touch-target); text-align: left; }
 .item-artist { overflow: hidden; text-overflow: ellipsis; }
 .empty-copy { margin-top: var(--space-stack-sm); }

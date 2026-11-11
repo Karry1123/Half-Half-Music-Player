@@ -19,7 +19,7 @@ export function Lobby() {
         </div>
         <div>
           <h1>
-            两个人，<span className="amp">一首歌</span>，同一拍。
+            两个人，一首歌，同一拍。
           </h1>
           <p className="lobby-sub">音乐从一台设备直接传到另一台，播放、暂停、拖动进度都实时同步。</p>
         </div>
