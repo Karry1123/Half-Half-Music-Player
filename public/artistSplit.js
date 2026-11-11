@@ -7,7 +7,7 @@ import { toSimplified } from './zhVariants.js';
 export const artistKey = value => toSimplified(String(value || '')).normalize('NFKC').trim().toLowerCase().replace(/\s+/gu, ' ');
 
 const FEAT = /\s*[\(\[（【]\s*(?:feat\.?|ft\.?|featuring)\s+([^\)\]）】]+)[\)\]）】]/giu;
-const CERTAIN = /\s+(?:feat\.?|ft\.?|featuring)\s+|\s*[、;；，]\s*/giu;
+const CERTAIN = /(?:\s*[+&＋＆]\s*|\s+)(?:featuring|feat|ft)(?:[.:：]\s*|\s+)|\s*[、;；，]\s*/giu;
 const AMBIGUOUS = /\s*[&＆\/／,+＋×]\s*|\s+(?:x|and|with|vs\.?)\s+/giu;
 // Acts whose own name contains an ambiguous marker.
 const WHOLE = new Set([
@@ -22,27 +22,46 @@ const WHOLE = new Set([
 // "Bob Marley & The Wailers", "Florence + the Machine": a leader and their band are one act.
 const BAND = /(?:[&＆+＋]|\band\b)\s*(?:the|his|her|their)\s+\S/iu;
 
+export function normalizeArtistNames(names) {
+  if (!Array.isArray(names) || names.length < 2 || names.length > 6 || names.some(name => typeof name !== 'string')) return;
+  const trimmed = names.map(name => name.trim());
+  if (trimmed.some(name => !name || name.length > 100) || new Set(trimmed.map(artistKey)).size !== trimmed.length) return;
+  return trimmed;
+}
 const split = (text, pattern) => text.split(pattern).map(part => part.trim()).filter(Boolean);
 export const hasSeparator = value => { const text = String(value || ''); return [FEAT, CERTAIN, AMBIGUOUS].some(p => { p.lastIndex = 0; return p.test(text); }); };
 
 /**
  * @param {string} name      raw artist field
- * @param {{ known?: Set<string>, decisions?: Record<string, 'split' | 'keep'> }} context
+ * @param {{ known?: Set<string>, decisions?: Record<string, 'split' | 'keep' | { answer: string, names?: string[] }> }} context
  * @returns {{ artists: string[], questions: { key: string, label: string, pieces: string[] }[],
- *   decided: { key: string, label: string, pieces: string[], answer: 'split' | 'keep' }[] }}
+ *   decided: { key: string, label: string, pieces: string[], defaultPieces: string[], answer: 'split' | 'keep' }[] }}
  */
 export function resolveArtists(name, { known = new Set(), decisions = {} } = {}) {
   const raw = String(name || '').trim();
   if (!raw) return { artists: [], questions: [], decided: [] };
   const artists = [], questions = [], decided = [], seen = new Set();
   const add = artist => { const key = artistKey(artist); if (key && !seen.has(key)) { seen.add(key); artists.push(artist); } };
-  for (const part of split(raw.replace(FEAT, ' feat. $1'), CERTAIN)) {
+  const parts = split(raw.replace(FEAT, ' feat. $1'), CERTAIN);
+  // Preserve decisions made before a marker became unambiguous.
+  const rawDecision = decisions[artistKey(raw)];
+  const rawAnswer = typeof rawDecision === 'string' ? rawDecision : rawDecision?.answer;
+  if (parts.length > 1 && valid(rawAnswer)) {
+    const defaultPieces = parts.flatMap(part => split(part, AMBIGUOUS));
+    const pieces = rawAnswer === 'split' && normalizeArtistNames(rawDecision?.names) || defaultPieces;
+    (rawAnswer === 'split' ? pieces : [raw]).forEach(add);
+    decided.push({ key: artistKey(raw), label: raw, pieces, defaultPieces, answer: rawAnswer });
+    return { artists, questions, decided };
+  }
+  for (const part of parts) {
     const pieces = split(part, AMBIGUOUS), key = artistKey(part);
     if (pieces.length < 2) { add(part); continue; }
-    const answer = decisions[key];
+    const decision = decisions[key];
+    const answer = typeof decision === 'string' ? decision : decision?.answer;
+    const effective = answer === 'split' && normalizeArtistNames(decision?.names) || pieces;
     // Parts the user has answered are reported so the answer can be shown and changed later.
-    if (answer === 'split' || answer === 'keep') decided.push({ key, label: part, pieces, answer });
-    if (answer === 'split') { pieces.forEach(add); continue; }
+    if (answer === 'split' || answer === 'keep') decided.push({ key, label: part, pieces: effective, defaultPieces: pieces, answer });
+    if (answer === 'split') { effective.forEach(add); continue; }
     if (answer === 'keep' || WHOLE.has(key) || BAND.test(part)) { add(part); continue; }
     if (pieces.every(piece => known.has(artistKey(piece)))) { pieces.forEach(add); continue; }
     add(part);
@@ -66,7 +85,10 @@ function read() {
     for (const [key, entry] of Object.entries(value)) {
       // Answers saved before syncing existed are plain strings without a time.
       const answer = typeof entry === 'string' ? entry : entry?.answer;
-      if (valid(answer)) entries[key] = { answer, at: Number.isSafeInteger(entry?.at) && entry.at >= 0 ? entry.at : 0 };
+      if (valid(answer)) {
+        const names = answer === 'split' && normalizeArtistNames(entry?.names);
+        entries[key] = { answer, at: Number.isSafeInteger(entry?.at) && entry.at >= 0 ? entry.at : 0, ...(names ? { names } : {}) };
+      }
     }
     return entries;
   } catch { return fallback; }
@@ -76,13 +98,15 @@ function write(entries) {
   try { globalThis.localStorage?.setItem(storageKey, JSON.stringify(entries)); } catch {}
 }
 export const artistSplitStore = {
-  /** key -> 'split' | 'keep' */
-  all() { return Object.fromEntries(Object.entries(read()).map(([key, entry]) => [key, entry.answer])); },
-  /** [{ key, answer, at }] for upload */
+  /** Decisions accepted by resolveArtists, including custom names. */
+  all() { return Object.fromEntries(Object.entries(read()).map(([key, entry]) => [key, entry.names ? { answer: entry.answer, names: entry.names } : entry.answer])); },
+  /** [{ key, answer, at, names? }] for upload */
   entries() { return Object.entries(read()).map(([key, entry]) => ({ key, ...entry })); },
-  decide(key, answer, at = Date.now()) {
+  decide(key, answer, at = Date.now(), names) {
     if (typeof key !== 'string' || !key || !valid(answer)) return;
-    write({ ...read(), [key]: { answer, at } });
+    const normalized = answer === 'split' && normalizeArtistNames(names);
+    if (!Number.isSafeInteger(at) || at < 0 || (names !== undefined && !normalized)) return;
+    write({ ...read(), [key]: { answer, at, ...(normalized ? { names: normalized } : {}) } });
     listeners.forEach(fn => fn(key, 'local'));
   },
   /** Apply answers from other devices; an answer given here later is kept. */
@@ -90,10 +114,12 @@ export const artistSplitStore = {
     const entries = { ...read() };
     let changed = false;
     for (const row of Array.isArray(rows) ? rows : []) {
-      if (typeof row?.key !== 'string' || !row.key || !valid(row.answer) || !Number.isSafeInteger(row.at)) continue;
+      if (typeof row?.key !== 'string' || !row.key || !valid(row.answer) || !Number.isSafeInteger(row.at) || row.at < 0) continue;
       const mine = entries[row.key];
-      if (mine && (mine.at > row.at || (mine.at === row.at && mine.answer === row.answer))) continue;
-      entries[row.key] = { answer: row.answer, at: row.at };
+      if (mine && mine.at >= row.at) continue;
+      const names = row.answer === 'split' && normalizeArtistNames(row.names);
+      if (row.names !== undefined && !names) continue;
+      entries[row.key] = { answer: row.answer, at: row.at, ...(names ? { names } : {}) };
       changed = true;
     }
     if (changed) { write(entries); listeners.forEach(fn => fn(null, 'remote')); }

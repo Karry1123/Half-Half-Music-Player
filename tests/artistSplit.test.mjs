@@ -6,6 +6,45 @@ import { ListeningStats } from '../public/listeningStats.js';
 const names = (field, context) => resolveArtists(field, context).artists;
 const asks = (field, context) => resolveArtists(field, context).questions.map(q => q.label);
 
+test('glued and punctuated featuring markers are certain separators', () => {
+  for (const field of ['A+Featuring：B', 'A & feat. B', 'A featuring: B', 'A&ft:B', 'A + featuring B', 'A ft：B']) {
+    assert.deepEqual(names(field), ['A', 'B'], field);
+    assert.deepEqual(asks(field), []);
+  }
+  assert.deepEqual(names('張震嶽+Featuring：蔡健雅'), ['張震嶽', '蔡健雅']);
+  for (const field of ['Featuring Nobody', 'Max', 'Alexandra']) assert.deepEqual(names(field), [field]);
+});
+
+test('custom names override pieces and round trip through the store with strictly newer merges', () => {
+  const storage = new Map([['hh.artistSplit', JSON.stringify({ legacy: 'split' })]]);
+  globalThis.localStorage = { getItem: key => storage.get(key), setItem: (key, value) => storage.set(key, value) };
+  try {
+    const field = '張震嶽+Featuring：蔡健雅', key = artistKey(field);
+    artistSplitStore.decide(key, 'split', 100, [' 张震岳 ', '蔡健雅']);
+    const result = resolveArtists(field, { decisions: artistSplitStore.all() });
+    assert.deepEqual(result.artists, ['张震岳', '蔡健雅']);
+    assert.deepEqual(result.decided[0].pieces, result.artists);
+    assert.deepEqual(result.decided[0].defaultPieces, ['張震嶽', '蔡健雅']);
+    assert.deepEqual(artistSplitStore.entries(), [{ key: 'legacy', answer: 'split', at: 0 }, { key, answer: 'split', at: 100, names: result.artists }]);
+    assert.equal(artistSplitStore.merge([{ key, answer: 'keep', at: 100 }]), false);
+    assert.equal(artistSplitStore.merge([{ key, answer: 'split', at: 100, names: ['X', 'Y'] }]), false);
+    assert.equal(artistSplitStore.merge([{ key, answer: 'split', at: 99, names: ['X', 'Y'] }]), false);
+    assert.equal(artistSplitStore.merge([{ key, answer: 'split', at: 101, names: ['X', 'Y'] }]), true);
+    assert.deepEqual(names(field, { decisions: artistSplitStore.all() }), ['X', 'Y']);
+    artistSplitStore.merge([{ key, answer: 'split', at: 102 }]);
+    assert.deepEqual(names(field, { decisions: artistSplitStore.all() }), ['張震嶽', '蔡健雅']);
+    artistSplitStore.decide(key, 'keep', 103);
+    assert.equal(artistSplitStore.entries().find(row => row.key === key).names, undefined);
+    for (const invalid of [[], ['A'], ['A', 'a'], ['張震嶽', '张震岳'], ['', 'B'], ['A'.repeat(101), 'B']]) {
+      artistSplitStore.decide(key, 'split', 104, invalid);
+      assert.equal(artistSplitStore.all()[key], 'keep');
+    }
+    const ambiguous = resolveArtists('A & B', { decisions: { 'a & b': { answer: 'split', names: ['C', 'D'] } } });
+    assert.deepEqual(ambiguous.artists, ['C', 'D']);
+    assert.deepEqual(ambiguous.decided[0].defaultPieces, ['A', 'B']);
+  } finally { delete globalThis.localStorage; }
+});
+
 test('unambiguous markers always split, in every spelling', () => {
   for (const field of ['张震岳 featuring 蔡健雅', '张震岳 feat. 蔡健雅', '张震岳 ft 蔡健雅', '张震岳 (feat. 蔡健雅)', '张震岳（Feat 蔡健雅）', '张震岳、蔡健雅', '张震岳；蔡健雅', '张震岳，蔡健雅'])
     assert.deepEqual(names(field), ['张震岳', '蔡健雅'], field);
@@ -76,6 +115,8 @@ test('a collaboration credits its full time to each performer and merges with th
   const key = first.questions[0].key;
   const split = stats.artistBreakdown('week', now, { [key]: 'split' });
   assert.deepEqual(split.artists.slice(2, 4), [{ artist: 'Calvin Harris', seconds: 200 }, { artist: 'Dua Lipa', seconds: 200 }]);
+  const custom = stats.artistBreakdown('week', now, { [key]: { answer: 'split', names: ['Calvin', 'Dua'] } });
+  assert.deepEqual(custom.artists.slice(2, 4), [{ artist: 'Calvin', seconds: 200 }, { artist: 'Dua', seconds: 200 }]);
   assert.deepEqual(split.questions, []);
   assert.deepEqual(stats.artistBreakdown('week', now, { [key]: 'keep' }).questions, []);
   // A solo track by each performer anywhere in the library settles it without asking.
@@ -121,8 +162,8 @@ test('answered fields are listed with their current answer so they can be change
   };
   const decisions = { [artistKey('Calvin Harris & Dua Lipa')]: 'split', [artistKey('X / Y')]: 'keep', 'gone & away': 'split' };
   assert.deepEqual(stats.artistDecisionList(decisions), [
-    { key: 'calvin harris & dua lipa', label: 'Calvin Harris & Dua Lipa', pieces: ['Calvin Harris', 'Dua Lipa'], answer: 'split' },
-    { key: 'x / y', label: 'X / Y', pieces: ['X', 'Y'], answer: 'keep' },
+    { key: 'calvin harris & dua lipa', label: 'Calvin Harris & Dua Lipa', pieces: ['Calvin Harris', 'Dua Lipa'], defaultPieces: ['Calvin Harris', 'Dua Lipa'], answer: 'split' },
+    { key: 'x / y', label: 'X / Y', pieces: ['X', 'Y'], defaultPieces: ['X', 'Y'], answer: 'keep' },
   ], 'one row per field; unanswered, unambiguous and no-longer-present fields are not listed');
   assert.deepEqual(stats.artistDecisionList({}), []);
   assert.deepEqual(resolveArtists('X / Y feat. Z', { decisions }).artists, ['X / Y', 'Z']);

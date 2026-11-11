@@ -9,6 +9,7 @@ import { PlayQueue, PLAY_MODES } from '../public/playQueue.js';
 import { resolveScope } from '../public/playlists.js';
 import { ListeningStats } from '../public/listeningStats.js';
 import * as statsRing from '../public/statsRing.js';
+import { artistKey } from '../public/artistSplit.js';
 
 test('statistics cards render period buckets, two rings, plain comparisons and clean headings', async () => {
   const stats = new ListeningStats({ userId: 'alice', indexedDB: null });
@@ -206,7 +207,7 @@ test('playlist detail renders every local and pending track with completed count
   assert.match(markup, /aria-current="true"/);
 });
 
-test('artist split records live in settings: plain rows open a dialog that switches the answer', () => {
+test('artist split records live in settings: rows open a draft dialog with explicit save', () => {
   const page = readFileSync(new URL('../public/dashboard.html', import.meta.url), 'utf8');
   const ui = readFileSync(new URL('../public/statsUI.js', import.meta.url), 'utf8');
   assert.doesNotMatch(ui, /歌手拆分记录|改为算一位|改为分开/, 'the artist card keeps only the question');
@@ -218,11 +219,64 @@ test('artist split records live in settings: plain rows open a dialog that switc
   const settingsTab = page.slice(settingsAt, settingsAt + 1500);
   assert.ok(settingsTab.includes('<${ArtistSplitSettings} card='), 'rendered on the settings tab itself');
   const list = body.slice(body.indexOf('<ul'), body.indexOf('</ul>'));
-  assert.match(list, /aria-haspopup="dialog" onClick=\$\{\(\) => setEditing\(row\.key\)\}/, 'a row only opens the dialog');
+  assert.match(list, /aria-haspopup="dialog" onClick=\$\{\(\) => openEditor\(row\)\}/, 'a row only opens the dialog');
   assert.doesNotMatch(list, /decide\(/, 'rows never change the answer directly');
   assert.match(body, /role="dialog" aria-modal="true"/);
+  assert.match(body, /paddingTop: '24px'/, 'mobile.css zeroes padding-top on bottom sheets, so the top gap is inline');
   assert.match(body, /option\('split'[^)]*分开统计/);
   assert.match(body, /option\('keep', '算一位歌手'/);
-  assert.match(body, /if \(current\.answer !== answer\) artistSplitStore\.decide\(current\.key, answer\); setEditing\(null\)/);
+  assert.match(body, /artistSplitStore\.decide\(current\.key, draft\.answer/);
+  assert.match(body, /<details/);
+  assert.match(body, /<summary[^>]*min-h-\[44px\]/);
+  assert.match(body, /group-open:rotate-90/);
+  assert.match(body, /onClick=\$\{save\}/);
+  assert.match(body, /disabled=\$\{draft.answer === 'split' && !validNames\}/);
+  assert.match(body, /maxLength=\$\{100\}/);
+  const options = body.slice(body.indexOf('const option'), body.indexOf('return html`<div>'));
+  assert.doesNotMatch(options, /decide\(/);
+  assert.match(options, /setDraft/);
   assert.match(body, /e\.key === 'Escape'/);
+});
+
+test('artist split dialog edits drafts, validates names, resets defaults and saves only on request', () => {
+  const page = readFileSync(new URL('../public/dashboard.html', import.meta.url), 'utf8');
+  const start = page.indexOf('function ArtistSplitSettings');
+  const code = page.slice(start, page.indexOf('\nfunction ', start + 10));
+  const row = { key: 'a & b', label: 'A & B', answer: 'split', pieces: ['Alias A', 'B'], defaultPieces: ['A', 'B'] };
+  const state = [], saves = [], effects = [];
+  let cursor = 0;
+  const Settings = vm.runInNewContext(`${code}; ArtistSplitSettings`, {
+    html: htm.bind(React.createElement), splitArtistKey: artistKey, cx: (...parts) => parts.join(' '),
+    Check: () => null, ChevronRight: () => null, useStore() {},
+    useState: initial => { const i = cursor++; if (!(i in state)) state[i] = initial; return [state[i], value => { state[i] = typeof value === 'function' ? value(state[i]) : value; }]; },
+    useEffect: fn => effects.push(fn), listeningStats: { artistDecisionList: () => [row] },
+    artistSplitStore: { decide: (...args) => saves.push(args), subscribe: () => () => {} },
+  });
+  const render = () => { cursor = 0; return Settings({ card: 'card' }); };
+  const nodes = node => !node || typeof node !== 'object' ? [] : [node, ...React.Children.toArray(node.props?.children).flatMap(nodes)];
+  const find = predicate => nodes(render()).find(predicate);
+  const button = label => find(node => node.type === 'button' && node.props.children === label);
+  assert.equal(find(node => node.type === 'details').props.open, undefined);
+  find(node => node.props?.['aria-haspopup'] === 'dialog').props.onClick();
+  assert.equal(find(node => node.type === 'input').props.value, 'Alias A');
+  find(node => node.type === 'input').props.onInput({ target: { value: ' B ' } });
+  assert.equal(button('保存').props.disabled, true);
+  assert.equal(saves.length, 0);
+  button('恢复默认名字').props.onClick();
+  assert.equal(button('保存').props.disabled, false);
+  assert.equal(button('恢复默认名字'), undefined);
+  button('保存').props.onClick();
+  assert.equal(saves.length, 1);
+  assert.equal(saves[0][3], undefined, 'default names are omitted');
+  find(node => node.props?.['aria-haspopup'] === 'dialog').props.onClick();
+  find(node => node.type === 'input').props.onInput({ target: { value: ' New A ' } });
+  button('保存').props.onClick();
+  assert.deepEqual(Array.from(saves[1][3]), ['New A', 'B']);
+  find(node => node.props?.['aria-haspopup'] === 'dialog').props.onClick();
+  find(node => node.props?.role === 'radio' && node.props['aria-checked'] === false).props.onClick();
+  assert.equal(find(node => node.type === 'input'), undefined);
+  assert.equal(saves.length, 2);
+  button('取消').props.onClick();
+  assert.equal(find(node => node.props?.role === 'dialog'), undefined);
+  assert.equal(saves.length, 2);
 });

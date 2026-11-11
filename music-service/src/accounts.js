@@ -12,6 +12,10 @@ const normalizeNickname = name => name.normalize('NFKC').replace(/\s+/g, ' ').tr
 const SHORT_ID_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 const newShortId = () => [...randomBytes(7)].map(byte => SHORT_ID_ALPHABET[byte % SHORT_ID_ALPHABET.length]).join('');
 const uniqueViolation = e => e.code === '23505' || /UNIQUE/i.test(e.message);
+const normalizeArtistNames = names => {
+  if (!Array.isArray(names) || names.length < 2 || names.length > 6 || names.some(name => typeof name !== 'string' || !name.trim() || name.trim().length > 100)) return;
+  return names.map(name => name.trim());
+};
 
 // One schema for both engines. Millisecond timestamps need BIGINT on PostgreSQL.
 const SCHEMA = [
@@ -151,6 +155,8 @@ export class Accounts {
       // Per-record seconds by hour offset from the record's local day (JSON [[hour, seconds], ...]); '' on rows from older clients.
       if (db.dialect === 'postgres') await db.exec("ALTER TABLE listening_sessions ADD COLUMN IF NOT EXISTS hours TEXT NOT NULL DEFAULT ''");
       else if (!(await columns('listening_sessions')).includes('hours')) await db.exec("ALTER TABLE listening_sessions ADD COLUMN hours TEXT NOT NULL DEFAULT ''");
+      if (db.dialect === 'postgres') await db.exec("ALTER TABLE artist_decisions ADD COLUMN IF NOT EXISTS names TEXT NOT NULL DEFAULT ''");
+      else if (!(await columns('artist_decisions')).includes('names')) await db.exec("ALTER TABLE artist_decisions ADD COLUMN names TEXT NOT NULL DEFAULT ''");
       if (!(await columns('users')).includes('short_id')) await db.exec('ALTER TABLE users ADD COLUMN short_id TEXT');
       if (!(await columns('profiles')).includes('nickname_normalized')) await db.exec('ALTER TABLE profiles ADD COLUMN nickname_normalized TEXT');
       const users = await db.all('SELECT id, short_id FROM users ORDER BY created_at, id');
@@ -276,6 +282,7 @@ export class Accounts {
     if (body.artistDecisions !== undefined && (!Array.isArray(body.artistDecisions) || body.artistDecisions.length > 200)) invalid();
     for (const r of body.artistDecisions || []) {
       if (!r || !text(r.key, 400) || decided.has(r.key) || !['split', 'keep'].includes(r.answer) || !Number.isSafeInteger(r.at) || r.at < 0) invalid();
+      if (r.names !== undefined && (r.answer !== 'split' || !normalizeArtistNames(r.names))) invalid();
       decided.add(r.key);
     }
     for (const r of body.records) {
@@ -302,7 +309,7 @@ export class Accounts {
         await db.run('INSERT INTO listening_tracks VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(user_id,song_key) DO UPDATE SET completion_key=excluded.completion_key,title=excluded.title,artist=excluded.artist,cover=excluded.cover', [userId, r.key, songKey(r.title, r.artist), r.title, r.artist, /^https:\/\//i.test(r.cover) ? r.cover : '']);
       }
       // Client clocks decide which answer is newer; a clock set in the future cannot pin an answer forever.
-      for (const r of body.artistDecisions || []) await db.run('INSERT INTO artist_decisions VALUES($1,$2,$3,$4) ON CONFLICT(user_id,artist_key) DO UPDATE SET answer=excluded.answer,updated_at=excluded.updated_at WHERE excluded.updated_at>artist_decisions.updated_at', [userId, r.key, r.answer, Math.min(r.at, Date.now())]);
+      for (const r of body.artistDecisions || []) await db.run('INSERT INTO artist_decisions(user_id,artist_key,answer,updated_at,names) VALUES($1,$2,$3,$4,$5) ON CONFLICT(user_id,artist_key) DO UPDATE SET answer=excluded.answer,updated_at=excluded.updated_at,names=excluded.names WHERE excluded.updated_at>artist_decisions.updated_at', [userId, r.key, r.answer, Math.min(r.at, Date.now()), r.names ? JSON.stringify(normalizeArtistNames(r.names)) : '']);
       for (const r of body.coListening) await db.run('INSERT INTO co_listening VALUES($1,$2,$3,$4,$5) ON CONFLICT(user_id,device_id,friend_id) DO UPDATE SET seconds=excluded.seconds,updated_at=excluded.updated_at WHERE excluded.seconds>co_listening.seconds', [userId, body.deviceId, r.friendId, r.seconds, Date.now()]);
     });
     return { ok: true };
@@ -335,7 +342,7 @@ export class Accounts {
         byDay.set(row.day, totals);
       }
       const hourly = [...byDay].map(([day, totals]) => ({ day, hours: [...totals].sort((a, b) => a[0] - b[0]) })).sort((a, b) => a.day.localeCompare(b.day));
-      const artistDecisions = (await db.all('SELECT artist_key AS key,answer,updated_at AS at FROM artist_decisions WHERE user_id=$1', [userId])).map(row => ({ ...row, at: Number(row.at) }));
+      const artistDecisions = (await db.all('SELECT artist_key AS key,answer,updated_at AS at,names FROM artist_decisions WHERE user_id=$1', [userId])).map(({ names, ...row }) => ({ ...row, at: Number(row.at), ...(names ? { names: JSON.parse(names) } : {}) }));
       return { daily, dailyCompleted, hourly, artistDecisions, tracks, completed: [...mapped, ...completed.filter(row => !known.has(row.key))], coListening, metadata };
     });
   }
