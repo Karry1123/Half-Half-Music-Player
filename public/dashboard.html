@@ -179,6 +179,7 @@ import { recentListening } from './libraryPresentation.js';
 import { ListeningStats, createCompletedPlayUploader, createListeningSync } from './listeningStats.js';
 import { DiscoverSections, sortPlaylistTracks } from './discoveryUI.js';
 import { ListeningStatsCards } from './statsUI.js';
+import { artistSplitStore } from './artistSplit.js';
 import { DailyGreeting } from './dailyGreeting.js';
 import * as LocalLib from './libraryStorage.js';
 import { gainFor, trimBounds, createAnalysisQueue } from './audioAnalysis.js';
@@ -5028,6 +5029,49 @@ function sampleListening(extra = {}) {
     connected: s.conn === 'open' && !!session.conn?.open, friendId: session.invitation?.userId,
     seeking: audio.seeking, playbackRate: audio.playbackRate, ...extra }); } finally { samplingListening = false; }
 }
+/** 设置页：已回答过的歌手拆分记录。只列记录；点一条弹出弹窗，在弹窗里改成分开统计或算一位。 */
+function ArtistSplitSettings({ card }) {
+  useStore(s => s.statsRevision);
+  const [, revise] = useState(0);
+  const [editing, setEditing] = useState(null);
+  useEffect(() => artistSplitStore.subscribe(() => revise(value => value + 1)), []);
+  const rows = listeningStats?.artistDecisionList?.() || [];
+  const current = editing && rows.find(row => row.key === editing);
+  useEffect(() => {
+    if (!current) return;
+    const onKey = e => { if (e.key === 'Escape') { e.stopPropagation(); setEditing(null); } };
+    document.addEventListener('keydown', onKey, true);
+    return () => document.removeEventListener('keydown', onKey, true);
+  }, [!!current]);
+  const summary = row => row.answer === 'split' ? `分开统计：${row.pieces.join(' · ')}` : '算一位歌手';
+  const choose = answer => { if (current.answer !== answer) artistSplitStore.decide(current.key, answer); setEditing(null); };
+  const option = (answer, title, detail) => html`<button type="button" role="radio" aria-checked=${current.answer === answer} onClick=${() => choose(answer)}
+    class=${cx('flex min-h-[56px] w-full items-center gap-3 rounded-xl border p-3 text-left', current.answer === answer ? 'border-host bg-host/10' : 'border-ink-600')}>
+    <span class="min-w-0 flex-1"><span class="block text-sm">${title}</span><span class="block truncate text-xs text-sand-400">${detail}</span></span>
+    ${current.answer === answer && html`<${Check} size=${18} class="shrink-0 text-host" />`}
+  </button>`;
+  return html`<section class=${card} aria-label="歌手拆分记录">
+    <h3 class="font-medium">歌手拆分记录</h3>
+    ${rows.length === 0 ? html`<p class="text-xs text-sand-500">还没有记录。歌手榜询问「是不是多位歌手」后，你的回答会出现在这里。</p>` : html`<ul class="-mx-2">
+      ${rows.map(row => html`<li key=${row.key}><button type="button" class="flex min-h-[52px] w-full items-center gap-2 rounded-xl px-2 py-2 text-left hover:bg-white/5" aria-haspopup="dialog" onClick=${() => setEditing(row.key)}>
+        <span class="min-w-0 flex-1"><span class="block truncate text-sm" title=${row.label}>${row.label}</span><span class="block truncate text-xs text-sand-400">${summary(row)}</span></span>
+        <${ChevronRight} size=${16} class="shrink-0 text-sand-500" />
+      </button></li>`)}
+    </ul>`}
+    ${current && html`<div class="fixed inset-0 z-[80] flex items-end justify-center bg-ink-950/70 backdrop-blur-sm sm:items-center sm:p-6" onClick=${e => e.target === e.currentTarget && setEditing(null)}>
+      <section role="dialog" aria-modal="true" aria-label=${`${current.label} 的歌手拆分`} class="w-full max-w-sm rounded-t-3xl border border-ink-700 bg-ink-900 p-4 shadow-2xl sm:rounded-3xl" style=${{ paddingBottom: 'calc(16px + var(--safe-bottom, 0px))' }}>
+        <h2 class="mb-1 truncate font-semibold" title=${current.label}>${current.label}</h2>
+        <p class="mb-3 text-xs text-sand-400">这首歌的收听时长计入谁？</p>
+        <div class="space-y-2" role="radiogroup" aria-label="统计方式">
+          ${option('split', `分开统计（${current.pieces.length} 位）`, current.pieces.join(' · '))}
+          ${option('keep', '算一位歌手', current.label)}
+        </div>
+        <button type="button" class="mt-4 w-full rounded-xl border border-ink-600 p-3 text-sm" onClick=${() => setEditing(null)}>取消</button>
+      </section>
+    </div>`}
+  </section>`;
+}
+
 function trackCompletedCount(track) { return listeningStats?.completedCount(track?.localId || track?.id) || 0; }
 /** 老版本的"听完"只有累计数：按本机曲库里的时长把它们推算回每天的记录，周/月/年统计才有数 */
 function backfillCompletions() {
@@ -5475,7 +5519,7 @@ function App() {
       ${tab === 'discover' && html`<${SearchDiscovery} onSearch=${homeSearch} onSelectTrack=${track => { stopPreview(); downloadWithPicker(track); }} />`}
       ${tab === 'library' && html`<${PageHeading} eyebrow="YOUR COLLECTION" title="我的音乐" subtitle="把喜欢的旋律留在这里，下一次一起听。" /><div class="hh-library-header-actions mb-4 flex gap-2"><${DownloadQueueButton} /><label class="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-ink-600 px-4 py-3 text-sm" title="从这台设备选择 mp3 / flac / m4a 导入"><${Upload} size=${18} /> 导入<input type="file" accept="audio/*,.mp3,.flac,.m4a,.wav,.ogg" multiple hidden onChange=${(e) => { importWithPicker([...e.target.files]); e.target.value = ''; }} /></label><button class="inline-flex items-center gap-2 rounded-xl border border-ink-600 px-4 py-3 text-sm" title=${cloudStatus?.error ? `${cloudLabel}：${cloudStatus.error}` : cloudLabel} aria-label=${cloudLabel} onClick=${() => set({ cloudOpen: true })}><${Cloud} size=${18} /><span class="truncate">${cloudLabel}</span></button></div><${RoomPlaylistBanner} /><${LibraryPanel} />`}
       ${tab === 'friends' && html`<${FriendsPanel} onPreview=${previewPublicTrack} onCollect=${async p => { await playlistStore.copyPublic(p); toast('已收藏到我的歌单'); }} stats=${listeningStats} client=${account} presence=${presence} invite=${userId => sendSocial({ type: 'INVITE_LISTEN_REQUEST', userId })} history=${history} />`}
-      ${tab === 'settings' && html`<${StatsPanel} /><${AccountCard} client=${account} className="space-y-4 rounded-2xl border border-ink-700 p-5" /><button class="mt-5 flex w-full items-center gap-3 rounded-xl border border-ink-600 p-4 text-left" onClick=${() => set({ connSettingsOpen: true })}><${Settings} size=${18} class="shrink-0" /> 网络诊断 / 连接与播放设置</button>`}
+      ${tab === 'settings' && html`<${StatsPanel} /><${AccountCard} client=${account} className="space-y-4 rounded-2xl border border-ink-700 p-5" /><button class="mt-5 flex w-full items-center gap-3 rounded-xl border border-ink-600 p-4 text-left" onClick=${() => set({ connSettingsOpen: true })}><${Settings} size=${18} class="shrink-0" /> 网络诊断 / 连接与播放设置</button><div class="mt-5"><${ArtistSplitSettings} card="space-y-3 rounded-2xl border border-ink-700 p-5 text-sm" /></div>`}
     </main>
     ${!keyboardOpen && html`<${NativePlayer} open=${playerOpen} close=${() => setPlayerOpen(false)} expand=${() => setPlayerOpen(true)} />
       <nav hidden=${playerOpen} aria-label="主导航" class="hh-navigation fixed inset-x-0 bottom-0 z-40 border-t border-ink-700 bg-ink-950/95 backdrop-blur-xl" style=${{ paddingBottom: 'var(--safe-bottom, 0px)', paddingLeft: 'var(--safe-left)', paddingRight: 'var(--safe-right)' }}>

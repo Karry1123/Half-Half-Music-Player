@@ -170,12 +170,15 @@ test('SQLite upgrades legacy session rows with zero completions and can rerun mi
   try {
     const { user } = await accounts.register('legacy-listening', 'local-test-password');
     await accounts.db.exec('ALTER TABLE listening_sessions DROP COLUMN completed');
+    await accounts.db.exec('ALTER TABLE listening_sessions DROP COLUMN hours');
     const day = new Date().toISOString().slice(0, 10);
     await accounts.db.run('INSERT INTO listening_sessions VALUES($1,$2,$3,$4,$5,$6,$7)', [user.id, 'device-old', 'r', 'song', day, 60, Date.now()]);
     await accounts.migrate();
     await accounts.migrate();
     const columns = await accounts.db.all('PRAGMA table_info(listening_sessions)');
     assert.equal(columns.filter(row => row.name === 'completed').length, 1);
+    assert.equal(columns.filter(row => row.name === 'hours').length, 1);
+    assert.deepEqual((await accounts.listening(user.id)).hourly, [], 'legacy rows carry no hour detail');
     const result = await accounts.listening(user.id);
     assert.equal(result.daily[0].seconds, 60);
     assert.equal(result.dailyCompleted[0].completed, 0);
@@ -183,5 +186,31 @@ test('SQLite upgrades legacy session rows with zero completions and can rerun mi
     const merged = await accounts.listening(user.id);
     assert.equal(merged.daily[0].seconds, 60);
     assert.equal(merged.dailyCompleted[0].completed, 2);
+  } finally { await accounts.close(); }
+});
+
+test('hour detail is stored per record, merged per day across other devices and backfilled by re-upload', async () => {
+  const accounts = await Accounts.memory();
+  try {
+    const { user } = await accounts.register('hourly-listening', 'local-test-password');
+    const row = (id, day, seconds, hours) => ({ id, key: 'song', day, seconds, title: 'Song', artist: '', cover: '', ...(hours ? { hours } : {}) });
+    const put = (deviceId, records) => accounts.recordListening(user.id, { deviceId, records, coListening: [] });
+    // The old phone first uploaded without hours (old client), then re-uploads the same records after updating.
+    await put('device-old', [row('a', '2026-11-02', 1800), row('b', '2026-11-02', 600)]);
+    assert.deepEqual((await accounts.listening(user.id, 'device-new')).hourly, []);
+    await put('device-old', [row('a', '2026-11-02', 1800, [[21, 1200], [22, 600]]), row('b', '2026-11-02', 600, [[21, 600]])]);
+    await put('device-tablet', [row('c', '2026-11-02', 300, [[21, 300]]), row('d', '2026-11-03', 120, [[23, 60], [24, 60]])]);
+    await put('device-new', [row('e', '2026-11-02', 900, [[8, 900]])]);
+    const forNew = await accounts.listening(user.id, 'device-new');
+    assert.deepEqual(forNew.hourly, [
+      { day: '2026-11-02', hours: [[21, 2100], [22, 600]] },
+      { day: '2026-11-03', hours: [[23, 60], [24, 60]] },
+    ], 'other devices are summed per day; the caller is excluded');
+    assert.deepEqual((await accounts.listening(user.id, 'device-old')).hourly.find(r => r.day === '2026-11-02').hours, [[8, 900], [21, 300]]);
+    // A stale snapshot with fewer seconds, or one without hours, never erases stored detail.
+    await put('device-old', [row('a', '2026-11-02', 100, [[3, 100]]), row('b', '2026-11-02', 600)]);
+    assert.deepEqual((await accounts.listening(user.id, 'device-new')).hourly[0].hours, [[21, 2100], [22, 600]]);
+    for (const hours of [[[48, 1]], [[-1, 1]], [[1.5, 1]], [[1, -1]], [[1, 90000]], [[1]], 'x', Array.from({ length: 49 }, (_, i) => [i % 48, 1])])
+      await assert.rejects(put('device-old', [row('z', '2026-11-02', 1, hours)]));
   } finally { await accounts.close(); }
 });

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { ListeningStats, createCompletedPlayUploader } from '../public/listeningStats.js';
+import { recordHours, ListeningStats, createCompletedPlayUploader } from '../public/listeningStats.js';
 
 const base = new Date(2026, 9, 15, 12).getTime();
 
@@ -489,4 +489,60 @@ test('backfillCompletions dates lifetime completions that inference missed so pe
   assert.equal(stats.completedInPeriod('all', day(6)), 11, 'the record-less counter stays in "all" only');
   assert.equal(stats.backfillCompletions(() => 200), false, 'reconciliation is idempotent');
   assert.deepEqual(stats.stats.completedPlayCount, { split: 1, loops: 5, gone: 4, live: 1 }, 'lifetime counters are never changed');
+});
+
+test('weekday occurrences count each weekday in the period from the first recorded day', async () => {
+  const stats = new ListeningStats({ userId: 'u', indexedDB: null });
+  await stats.ready();
+  const at = (y, m, d, h = 12) => +new Date(y, m - 1, d, h);
+  const now = at(2026, 11, 10);                       // Tuesday
+  assert.deepEqual(stats.weekdayOccurrences('year', now), [1, 1, 1, 1, 1, 1, 1], 'no records: no averaging');
+  stats.records = [{ id: 'a', userId: 'u', trackId: 't', durationPlayed: 60, timestamp: at(2026, 10, 5), localDay: '2026-10-05' }];
+  // Week: Monday 9 and Tuesday 10 have happened; later days are clamped to one.
+  assert.deepEqual(stats.weekdayOccurrences('week', now), [1, 1, 1, 1, 1, 1, 1]);
+  // Month to date, 1-10 November 2026: Sun 1, Mon 2 & 9, Tue 3 & 10, Wed 4, Thu 5, Fri 6, Sat 7, Sun 8.
+  assert.deepEqual(stats.weekdayOccurrences('month', now), [2, 2, 1, 1, 1, 1, 2]);
+  // Year and all both start at the first recorded day, Monday 5 October: 37 days.
+  assert.deepEqual(stats.weekdayOccurrences('year', now), [6, 6, 5, 5, 5, 5, 5]);
+  assert.deepEqual(stats.weekdayOccurrences('all', now), [6, 6, 5, 5, 5, 5, 5]);
+  // A first record before the year starts: the year counts from 1 January (a Thursday), 314 days.
+  stats.records.push({ id: 'b', userId: 'u', trackId: 't', durationPlayed: 60, timestamp: at(2025, 12, 1), localDay: '2025-12-01' });
+  assert.deepEqual(stats.weekdayOccurrences('year', now), [45, 45, 44, 45, 45, 45, 45]);
+});
+
+test('heatmap merges hour detail from other devices and counts occurrences from the account\'s first day', async () => {
+  const stats = new ListeningStats({ userId: 'u', indexedDB: null });
+  await stats.ready();
+  const at = (y, m, d, h, min = 0) => +new Date(y, m - 1, d, h, min);
+  const now = at(2026, 11, 10, 12);                   // Tuesday
+  // 23:40 Monday for 40 minutes: 20 minutes in hour 23, 20 minutes in hour 24 (Tuesday 00:00).
+  const late = { id: 'a', userId: 'u', trackId: 't', durationPlayed: 2400, timestamp: at(2026, 11, 9, 23, 40), localDay: '2026-11-09' };
+  assert.deepEqual(recordHours(late), [[23, 1200], [24, 1200]]);
+  assert.deepEqual(recordHours({ ...late, durationPlayed: 0 }), []);
+  stats.records = [late];
+  stats.cloud = { hourly: [
+    { day: '2026-11-09', hours: [[21, 600], [23, 300]] },         // Monday this week, another device
+    { day: '2026-10-05', hours: [[21, 1800]] },                   // Monday five weeks ago
+    { day: '2026-11-11', hours: [[9, 999]] },                     // after "now": ignored
+  ] };
+  const week = stats.hourWeekdayMatrix('week', now);
+  assert.equal(week[0][21], 600);
+  assert.equal(week[0][23], 1500, 'local 1200 + cloud 300');
+  assert.equal(week[1][0], 1200, 'spill-over lands on Tuesday');
+  assert.equal(week.flat().reduce((a, b) => a + b, 0), 3300);
+  assert.equal(stats.hourWeekdayMatrix('year', now)[0][21], 2400);
+  // The first day comes from the other device (5 October), not this device's first record (9 November).
+  assert.deepEqual(stats.weekdayOccurrences('year', now), [6, 6, 5, 5, 5, 5, 5]);
+});
+
+test('listening sync uploads hour detail with every record', async () => {
+  const stats = new ListeningStats({ userId: 'u', indexedDB: null });
+  await stats.ready();
+  stats.records = [{ id: 'a', userId: 'u', trackId: 't', durationPlayed: 90, timestamp: +new Date(2026, 10, 9, 21, 59), localDay: '2026-11-09' }];
+  stats.stats.trackMetadata.t = { title: 'Song', artist: 'Artist', cover: '' };
+  const bodies = [];
+  const client = { user: { id: 'u', isActivated: true }, request: async (path, body) => { if (body) bodies.push(body); return body ? { ok: true } : {}; } };
+  const { createListeningSync } = await import('../public/listeningStats.js');
+  await createListeningSync({ stats, client, listTracks: async () => [], shouldSync: () => true }).sync();
+  assert.deepEqual(bodies[0].records[0].hours, [[21, 60], [22, 30]]);
 });

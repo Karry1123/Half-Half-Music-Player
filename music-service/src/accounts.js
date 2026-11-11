@@ -17,6 +17,8 @@ const uniqueViolation = e => e.code === '23505' || /UNIQUE/i.test(e.message);
 const SCHEMA = [
   'CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY, username TEXT UNIQUE NOT NULL, password TEXT NOT NULL, salt TEXT NOT NULL, activated INTEGER NOT NULL DEFAULT 0, created_at BIGINT NOT NULL)',
   'CREATE TABLE IF NOT EXISTS listening_sessions(user_id TEXT NOT NULL REFERENCES users(id), device_id TEXT NOT NULL, record_id TEXT NOT NULL, song_key TEXT NOT NULL, day TEXT NOT NULL, seconds DOUBLE PRECISION NOT NULL, updated_at BIGINT NOT NULL, PRIMARY KEY(user_id,device_id,record_id))',
+  // Whether an ambiguous artist field ("A & B") names several performers; one answer per account, newest wins.
+  'CREATE TABLE IF NOT EXISTS artist_decisions(user_id TEXT NOT NULL REFERENCES users(id), artist_key TEXT NOT NULL, answer TEXT NOT NULL, updated_at BIGINT NOT NULL, PRIMARY KEY(user_id,artist_key))',
   'CREATE TABLE IF NOT EXISTS co_listening(user_id TEXT NOT NULL REFERENCES users(id), device_id TEXT NOT NULL, friend_id TEXT NOT NULL, seconds DOUBLE PRECISION NOT NULL, updated_at BIGINT NOT NULL, PRIMARY KEY(user_id,device_id,friend_id))',
   'CREATE TABLE IF NOT EXISTS listening_tracks(user_id TEXT NOT NULL REFERENCES users(id), song_key TEXT NOT NULL, completion_key TEXT NOT NULL, title TEXT NOT NULL, artist TEXT NOT NULL, cover TEXT NOT NULL, PRIMARY KEY(user_id,song_key))',
   'CREATE TABLE IF NOT EXISTS listening_track_aliases(user_id TEXT NOT NULL REFERENCES users(id), song_key TEXT NOT NULL, completion_key TEXT NOT NULL, PRIMARY KEY(user_id,song_key,completion_key))',
@@ -146,6 +148,9 @@ export class Accounts {
         : (await db.all(`PRAGMA table_info(${table})`)).map(row => row.name);
       if (db.dialect === 'postgres') await db.exec('ALTER TABLE listening_sessions ADD COLUMN IF NOT EXISTS completed INTEGER NOT NULL DEFAULT 0');
       else if (!(await columns('listening_sessions')).includes('completed')) await db.exec('ALTER TABLE listening_sessions ADD COLUMN completed INTEGER NOT NULL DEFAULT 0');
+      // Per-record seconds by hour offset from the record's local day (JSON [[hour, seconds], ...]); '' on rows from older clients.
+      if (db.dialect === 'postgres') await db.exec("ALTER TABLE listening_sessions ADD COLUMN IF NOT EXISTS hours TEXT NOT NULL DEFAULT ''");
+      else if (!(await columns('listening_sessions')).includes('hours')) await db.exec("ALTER TABLE listening_sessions ADD COLUMN hours TEXT NOT NULL DEFAULT ''");
       if (!(await columns('users')).includes('short_id')) await db.exec('ALTER TABLE users ADD COLUMN short_id TEXT');
       if (!(await columns('profiles')).includes('nickname_normalized')) await db.exec('ALTER TABLE profiles ADD COLUMN nickname_normalized TEXT');
       const users = await db.all('SELECT id, short_id FROM users ORDER BY created_at, id');
@@ -267,12 +272,19 @@ export class Accounts {
     const seconds = v => typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 1e12;
     if (!body || !/^[\w-]{8,100}$/.test(body.deviceId || '') || typeof body.deviceId !== 'string' ||
       !Array.isArray(body.records) || body.records.length > 200 || !Array.isArray(body.coListening) || body.coListening.length > 200) invalid();
-    const ids = new Set(), friends = new Set();
+    const ids = new Set(), friends = new Set(), decided = new Set();
+    if (body.artistDecisions !== undefined && (!Array.isArray(body.artistDecisions) || body.artistDecisions.length > 200)) invalid();
+    for (const r of body.artistDecisions || []) {
+      if (!r || !text(r.key, 400) || decided.has(r.key) || !['split', 'keep'].includes(r.answer) || !Number.isSafeInteger(r.at) || r.at < 0) invalid();
+      decided.add(r.key);
+    }
     for (const r of body.records) {
       if (!r || !text(r.id, 200) || ids.has(r.id) || !text(r.key, 2000) || !text(r.title, 200) ||
         typeof r.artist !== 'string' || r.artist.length > 200 || typeof r.cover !== 'string' || r.cover.length > 2000 ||
         !/^\d{4}-\d{2}-\d{2}$/.test(r.day) || !Number.isFinite(Date.parse(r.day)) || new Date(r.day).toISOString().slice(0, 10) !== r.day || !seconds(r.seconds) ||
-        (r.completed !== undefined && (!Number.isInteger(r.completed) || r.completed < 0 || r.completed > 1000))) invalid();
+        (r.completed !== undefined && (!Number.isInteger(r.completed) || r.completed < 0 || r.completed > 1000)) ||
+        (r.hours !== undefined && (!Array.isArray(r.hours) || r.hours.length > 48 || r.hours.some(h => !Array.isArray(h) || h.length !== 2 ||
+          !Number.isInteger(h[0]) || h[0] < 0 || h[0] > 47 || !Number.isFinite(h[1]) || h[1] < 0 || h[1] > 86400)))) invalid();
       ids.add(r.id);
     }
     for (const r of body.coListening) {
@@ -286,9 +298,11 @@ export class Accounts {
         await db.run('INSERT INTO listening_track_aliases SELECT user_id,song_key,completion_key FROM listening_tracks WHERE user_id=$1 AND song_key=$2 ON CONFLICT DO NOTHING', [userId, r.key]);
         await db.run('INSERT INTO listening_track_aliases VALUES($1,$2,$3) ON CONFLICT DO NOTHING', [userId, r.key, songKey(r.title, r.artist)]);
         // Absolute, monotonically increasing device counters tolerate retries and stale requests.
-        await db.run('INSERT INTO listening_sessions(user_id,device_id,record_id,song_key,day,seconds,updated_at,completed) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(user_id,device_id,record_id) DO UPDATE SET seconds=CASE WHEN excluded.seconds>listening_sessions.seconds THEN excluded.seconds ELSE listening_sessions.seconds END,completed=CASE WHEN excluded.completed>listening_sessions.completed THEN excluded.completed ELSE listening_sessions.completed END,updated_at=excluded.updated_at', [userId, body.deviceId, r.id, r.key, r.day, r.seconds, Date.now(), r.completed ?? 0]);
+        await db.run('INSERT INTO listening_sessions(user_id,device_id,record_id,song_key,day,seconds,updated_at,completed,hours) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT(user_id,device_id,record_id) DO UPDATE SET seconds=CASE WHEN excluded.seconds>listening_sessions.seconds THEN excluded.seconds ELSE listening_sessions.seconds END,completed=CASE WHEN excluded.completed>listening_sessions.completed THEN excluded.completed ELSE listening_sessions.completed END,hours=CASE WHEN LENGTH(excluded.hours)>0 AND excluded.seconds>=listening_sessions.seconds THEN excluded.hours ELSE listening_sessions.hours END,updated_at=excluded.updated_at', [userId, body.deviceId, r.id, r.key, r.day, r.seconds, Date.now(), r.completed ?? 0, r.hours?.length ? JSON.stringify(r.hours) : '']);
         await db.run('INSERT INTO listening_tracks VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(user_id,song_key) DO UPDATE SET completion_key=excluded.completion_key,title=excluded.title,artist=excluded.artist,cover=excluded.cover', [userId, r.key, songKey(r.title, r.artist), r.title, r.artist, /^https:\/\//i.test(r.cover) ? r.cover : '']);
       }
+      // Client clocks decide which answer is newer; a clock set in the future cannot pin an answer forever.
+      for (const r of body.artistDecisions || []) await db.run('INSERT INTO artist_decisions VALUES($1,$2,$3,$4) ON CONFLICT(user_id,artist_key) DO UPDATE SET answer=excluded.answer,updated_at=excluded.updated_at WHERE excluded.updated_at>artist_decisions.updated_at', [userId, r.key, r.answer, Math.min(r.at, Date.now())]);
       for (const r of body.coListening) await db.run('INSERT INTO co_listening VALUES($1,$2,$3,$4,$5) ON CONFLICT(user_id,device_id,friend_id) DO UPDATE SET seconds=excluded.seconds,updated_at=excluded.updated_at WHERE excluded.seconds>co_listening.seconds', [userId, body.deviceId, r.friendId, r.seconds, Date.now()]);
     });
     return { ok: true };
@@ -312,7 +326,17 @@ export class Accounts {
       const mapped = metadata.map(row => ({ key: row.key, completionKey: row.completionKey,
         completed: [...keys.get(row.key)].reduce((sum, key) => sum + (counts.get(key) || 0), 0) }));
       const known = new Set([...keys.values()].flatMap(set => [...set]));
-      return { daily, dailyCompleted, tracks, completed: [...mapped, ...completed.filter(row => !known.has(row.key))], coListening, metadata };
+      // Hour-of-day detail from other devices, merged per local day for the heatmap. Unbounded: "all" needs every day.
+      const byDay = new Map();
+      for (const row of await db.all("SELECT day,hours FROM listening_sessions WHERE user_id=$1 AND device_id<>$2 AND hours<>''", [userId, deviceId])) {
+        let slots; try { slots = JSON.parse(row.hours); } catch { continue; }
+        const totals = byDay.get(row.day) || new Map();
+        for (const [hour, value] of slots) totals.set(hour, (totals.get(hour) || 0) + value);
+        byDay.set(row.day, totals);
+      }
+      const hourly = [...byDay].map(([day, totals]) => ({ day, hours: [...totals].sort((a, b) => a[0] - b[0]) })).sort((a, b) => a.day.localeCompare(b.day));
+      const artistDecisions = (await db.all('SELECT artist_key AS key,answer,updated_at AS at FROM artist_decisions WHERE user_id=$1', [userId])).map(row => ({ ...row, at: Number(row.at) }));
+      return { daily, dailyCompleted, hourly, artistDecisions, tracks, completed: [...mapped, ...completed.filter(row => !known.has(row.key))], coListening, metadata };
     });
   }
   async trending(now = Date.now()) {

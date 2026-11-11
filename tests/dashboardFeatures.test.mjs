@@ -88,6 +88,12 @@ test('heatmap cells use the five fills at one, five, fifteen and thirty minutes'
   const markup = renderToStaticMarkup(React.createElement(Cards, { stats }));
   const fills = [...markup.matchAll(/aspect-ratio:1;background:([^";]+)[;]?" title=/g)].map(match => match[1]);
   assert.deepEqual(fills, ['rgb(var(--color-brand-host-rgb) / 0.08)', 'rgb(var(--color-brand-host-rgb) / 0.08)', '#F2C9A0', '#F2C9A0', '#E39A5B', '#E39A5B', '#C96E2A', '#C96E2A', '#8A4512']);
+  // Four occurrences of that weekday: the same totals are averaged before the thresholds apply.
+  stats.weekdayOccurrences = () => [4];
+  const averaged = renderToStaticMarkup(React.createElement(Cards, { stats }));
+  const levels = [...averaged.matchAll(/aspect-ratio:1;background:([^";]+)[;]?" title=/g)].map(match => match[1]);
+  assert.deepEqual(levels.slice(4), ['#F2C9A0', '#F2C9A0', '#F2C9A0', '#E39A5B', '#E39A5B'], '5, 15, 15, 30 and 30 minutes become 1.25 to 7.5 minutes each');
+  assert.match(averaged, /30 分钟/, 'the tooltip still reports the total');
 });
 
 const source = readFileSync(new URL('../public/dashboard.html', import.meta.url), 'utf8');
@@ -198,4 +204,25 @@ test('playlist detail renders every local and pending track with completed count
   for (const text of ['返回歌单列表', '随机播放', '顺序播放', '第一首', '第二首', '云端歌曲', '已听 3 次', '点击重试下载']) assert.ok(markup.includes(text), text);
   assert.doesNotMatch(markup, /已听 0 次/);
   assert.match(markup, /aria-current="true"/);
+});
+
+test('artist split records live in settings: plain rows open a dialog that switches the answer', () => {
+  const page = readFileSync(new URL('../public/dashboard.html', import.meta.url), 'utf8');
+  const ui = readFileSync(new URL('../public/statsUI.js', import.meta.url), 'utf8');
+  assert.doesNotMatch(ui, /歌手拆分记录|改为算一位|改为分开/, 'the artist card keeps only the question');
+  assert.match(ui, /是，分开统计/);
+  const start = page.indexOf('function ArtistSplitSettings');
+  const body = page.slice(start, page.indexOf('\nfunction ', start + 10));
+  assert.ok(start > 0);
+  const settingsAt = page.indexOf("tab === 'settings' && html`");
+  const settingsTab = page.slice(settingsAt, settingsAt + 1500);
+  assert.ok(settingsTab.includes('<${ArtistSplitSettings} card='), 'rendered on the settings tab itself');
+  const list = body.slice(body.indexOf('<ul'), body.indexOf('</ul>'));
+  assert.match(list, /aria-haspopup="dialog" onClick=\$\{\(\) => setEditing\(row\.key\)\}/, 'a row only opens the dialog');
+  assert.doesNotMatch(list, /decide\(/, 'rows never change the answer directly');
+  assert.match(body, /role="dialog" aria-modal="true"/);
+  assert.match(body, /option\('split'[^)]*分开统计/);
+  assert.match(body, /option\('keep', '算一位歌手'/);
+  assert.match(body, /if \(current\.answer !== answer\) artistSplitStore\.decide\(current\.key, answer\); setEditing\(null\)/);
+  assert.match(body, /e\.key === 'Escape'/);
 });

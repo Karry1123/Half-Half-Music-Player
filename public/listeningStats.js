@@ -1,4 +1,5 @@
 import { toSimplified } from './zhVariants.js';
+import { artistKey, artistSplitStore, hasSeparator, resolveArtists } from './artistSplit.js';
 
 // Persist actual listening time separately from the playback position: seeking is not listening.
 const DATABASE = 'half-half-listening-stats';
@@ -27,6 +28,24 @@ const periodBounds = (period, now) => {
   else if (period !== 'all') throw new RangeError('Unknown listening statistics period');
   return { startDay: period === 'all' ? '0000-01-01' : calendarDay(+start), endDay: calendarDay(now), start };
 };
+// Seconds of one record by hour offset from its start day: [[0..47, seconds], ...]. Offsets of 24
+// and above are the next calendar day (a record that began shortly before midnight).
+export function recordHours(record) {
+  const totals = new Map();
+  let cursor = record.timestamp, remaining = Math.max(0, finite(record.durationPlayed));
+  const firstDay = dayNumber(calendarDay(cursor));
+  while (remaining > 0) {
+    const date = new Date(cursor), next = new Date(cursor);
+    next.setHours(next.getHours() + 1, 0, 0, 0);
+    const seconds = Math.min(remaining, (+next - cursor) / 1000);
+    const hour = (dayNumber(calendarDay(cursor)) - firstDay) * 24 + date.getHours();
+    if (hour > 47) break;
+    totals.set(hour, (totals.get(hour) || 0) + seconds);
+    remaining -= seconds;
+    cursor += seconds * 1000;
+  }
+  return [...totals].map(([hour, seconds]) => [hour, Math.round(seconds * 1000) / 1000]);
+}
 const inPeriod = (record, bounds, now) => recordDay(record) >= bounds.startDay
   && recordDay(record) <= bounds.endDay && record.timestamp <= now;
 
@@ -455,42 +474,88 @@ export class ListeningStats {
     return { days: days.length, longestStreak };
   }
 
-  artistTotals(period = 'week', now = Date.now()) {
-    const bounds = periodBounds(period, now), totals = new Map();
+  // A collaboration credits its full listening time to every performer. Whether a field names
+  // several performers is decided by resolveArtists; undecided fields stay whole and are
+  // returned as questions (most listened first) for the UI to ask.
+  artistBreakdown(period = 'week', now = Date.now(), decisions = artistSplitStore.all()) {
+    const bounds = periodBounds(period, now), totals = new Map(), asked = new Map();
+    // Names that appear as a whole artist field somewhere in this account's tracks.
+    const known = new Set();
+    for (const meta of Object.values(this.stats.trackMetadata)) {
+      const name = meta?.artist?.trim();
+      if (name && !hasSeparator(name)) known.add(artistKey(name));
+    }
+    const resolved = new Map();
     for (const record of this.records) {
       if (!inPeriod(record, bounds, now)) continue;
-      const artist = this.stats.trackMetadata[record.trackId]?.artist?.trim() || '未知歌手';
-      const key = normalizedName(artist), seconds = Math.max(0, finite(record.durationPlayed));
-      const group = totals.get(key) || { seconds: 0, variants: new Map() };
-      group.seconds += seconds;
-      group.variants.set(artist, (group.variants.get(artist) || 0) + seconds);
-      totals.set(key, group);
+      const field = this.stats.trackMetadata[record.trackId]?.artist?.trim() || '';
+      const seconds = Math.max(0, finite(record.durationPlayed));
+      let result = resolved.get(field);
+      if (!result) resolved.set(field, result = resolveArtists(field, { known, decisions }));
+      for (const artist of result.artists.length ? result.artists : ['未知歌手']) {
+        const key = normalizedName(artist);
+        const group = totals.get(key) || { seconds: 0, variants: new Map() };
+        group.seconds += seconds;
+        group.variants.set(artist, (group.variants.get(artist) || 0) + seconds);
+        totals.set(key, group);
+      }
+      for (const question of result.questions) {
+        const entry = asked.get(question.key) || { ...question, seconds: 0 };
+        entry.seconds += seconds;
+        asked.set(question.key, entry);
+      }
     }
-    return [...totals.values()].filter(group => group.seconds > 0).map(({ seconds, variants }) => ({
+    const artists = [...totals.values()].filter(group => group.seconds > 0).map(({ seconds, variants }) => ({
       artist: [...variants].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0][0], seconds,
-    }))
-      .sort((a, b) => b.seconds - a.seconds || a.artist.localeCompare(b.artist));
+    })).sort((a, b) => b.seconds - a.seconds || a.artist.localeCompare(b.artist));
+    const questions = [...asked.values()].filter(entry => entry.seconds > 0)
+      .sort((a, b) => b.seconds - a.seconds || a.label.localeCompare(b.label));
+    return { artists, questions };
+  }
+  artistTotals(period = 'week', now = Date.now(), decisions) { return this.artistBreakdown(period, now, decisions).artists; }
+  // Every answered artist field that still occurs in this account's tracks, for the editable record list.
+  artistDecisionList(decisions = artistSplitStore.all()) {
+    const list = new Map();
+    for (const meta of Object.values(this.stats.trackMetadata)) {
+      for (const entry of resolveArtists(meta?.artist, { decisions }).decided) if (!list.has(entry.key)) list.set(entry.key, entry);
+    }
+    return [...list.values()].sort((a, b) => a.label.localeCompare(b.label));
   }
 
   // Daily cloud totals have no hour/artist detail and cannot populate these views.
   hourWeekdayMatrix(period = 'week', now = Date.now()) {
     const bounds = periodBounds(period, now), matrix = Array.from({ length: 7 }, () => Array(24).fill(0));
-    for (const record of this.records) {
-      if (!inPeriod(record, bounds, now)) continue;
-      let cursor = record.timestamp, remaining = Math.max(0, finite(record.durationPlayed));
-      const firstDay = dayNumber(calendarDay(cursor));
-      const weekday = (dayDate(recordDay(record)).getDay() + 6) % 7;
-      while (remaining > 0) {
-        const date = new Date(cursor), next = new Date(cursor);
-        next.setHours(next.getHours() + 1, 0, 0, 0);
-        const seconds = Math.min(remaining, (+next - cursor) / 1000);
-        const row = (weekday + dayNumber(calendarDay(cursor)) - firstDay) % 7;
-        matrix[row][date.getHours()] += seconds;
-        remaining -= seconds;
-        cursor += seconds * 1000;
-      }
-    }
+    const add = (day, hours) => {
+      const weekday = (dayDate(day).getDay() + 6) % 7;
+      for (const [hour, seconds] of hours) matrix[(weekday + Math.floor(hour / 24)) % 7][hour % 24] += Math.max(0, finite(seconds));
+    };
+    for (const record of this.records) if (inPeriod(record, bounds, now)) add(recordDay(record), recordHours(record));
+    // Other devices: the server returns their hour detail per local day, excluding this device.
+    for (const row of this.cloud?.hourly || []) if (row.day >= bounds.startDay && row.day <= bounds.endDay) add(row.day, row.hours || []);
     return matrix;
+  }
+
+  // How many times each weekday (Monday first) has occurred in the period so far, counted from
+  // the first day any of the account's devices recorded hour detail. Heatmap cells divide by this so a month or
+  // year shows the average time per occurrence instead of a sum that saturates.
+  weekdayOccurrences(period = 'week', now = Date.now()) {
+    const bounds = periodBounds(period, now), counts = Array(7).fill(0);
+    let first = null;
+    for (const record of this.records) {
+      const day = recordDay(record);
+      if (first === null || day < first) first = day;
+    }
+    for (const row of this.cloud?.hourly || []) if (first === null || row.day < first) first = row.day;
+    if (first === null) return counts.fill(1);
+    const start = Math.max(dayNumber(first), period === 'all' ? -Infinity : dayNumber(bounds.startDay));
+    const end = dayNumber(bounds.endDay), days = end - start + 1;
+    if (days <= 0) return counts.fill(1);
+    const startWeekday = (dayDate(first > bounds.startDay || period === 'all' ? first : bounds.startDay).getDay() + 6) % 7;
+    for (let weekday = 0; weekday < 7; weekday++) {
+      const offset = (weekday - startWeekday + 7) % 7;
+      counts[weekday] = Math.max(1, offset < days ? Math.floor((days - offset - 1) / 7) + 1 : 0);
+    }
+    return counts;
   }
 
 }
@@ -572,22 +637,24 @@ export function createListeningSync({ stats, client, listTracks, uploadPlays = a
             const meta = stats.stats.trackMetadata[record.trackId];
             if (!meta?.title || meta.title.length > 200 || (meta.artist || '').length > 200) return [];
             return [{ id: String(record.id), key: stats.trackKey(record.trackId), day: recordDay(record),
-              seconds: record.durationPlayed, completed: record.completed || 0, title: meta.title, artist: meta.artist || '', cover: meta.cover || '' }];
+              seconds: record.durationPlayed, completed: record.completed || 0, hours: recordHours(record), title: meta.title, artist: meta.artist || '', cover: meta.cover || '' }];
           }).filter(row => sent.get(`r:${row.id}`) !== JSON.stringify(row));
           const co = Object.entries(stats.stats.coListeningTime).map(([friendId, seconds]) => ({ friendId, seconds }))
             .filter(row => sent.get(`f:${row.friendId}`) !== JSON.stringify(row));
-          for (let i = 0; i < Math.max(records.length, co.length); i += 200) {
+          const decisions = artistSplitStore.entries().filter(row => row.key.length <= 400 && sent.get(`a:${row.key}`) !== JSON.stringify(row));
+          for (let i = 0; i < Math.max(records.length, co.length, decisions.length); i += 200) {
             if (!active()) return;
-            const batch = records.slice(i, i + 200), friends = co.slice(i, i + 200);
-            await statsRequest(client, now, '/account/listening', { deviceId: stats.stats.deviceId, records: batch, coListening: friends }, 'PUT');
+            const batch = records.slice(i, i + 200), friends = co.slice(i, i + 200), answers = decisions.slice(i, i + 200);
+            await statsRequest(client, now, '/account/listening', { deviceId: stats.stats.deviceId, records: batch, coListening: friends, ...(answers.length ? { artistDecisions: answers } : {}) }, 'PUT');
             batch.forEach(row => sent.set(`r:${row.id}`, JSON.stringify(row)));
             friends.forEach(row => sent.set(`f:${row.friendId}`, JSON.stringify(row)));
+            answers.forEach(row => sent.set(`a:${row.key}`, JSON.stringify(row)));
           }
           if (!active()) return;
           await uploadPlays();
           if (!active()) return;
           const data = await statsRequest(client, now, `/account/listening?deviceId=${encodeURIComponent(stats.stats.deviceId)}`);
-          if (active()) stats.mergeCloud(data);
+          if (active()) { artistSplitStore.merge(data?.artistDecisions); stats.mergeCloud(data); }
         }
       } catch (error) {
         throw error;
@@ -604,5 +671,7 @@ export function createListeningSync({ stats, client, listTracks, uploadPlays = a
     timer.unref?.();
   };
   const unsubscribe = stats.subscribe(schedule);
-  return { sync, stop() { stopped = true; clearTimeout(timer); unsubscribe(); } };
+  // An answer given on this device is uploaded right away so other devices stop asking.
+  const unsubscribeAnswers = artistSplitStore.subscribe((key, origin) => { if (origin === 'local' && active() && shouldSync()) sync({ changed: true }).catch(() => {}); });
+  return { sync, stop() { stopped = true; clearTimeout(timer); unsubscribe(); unsubscribeAnswers(); } };
 }
