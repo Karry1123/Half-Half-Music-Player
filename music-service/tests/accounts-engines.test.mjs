@@ -88,9 +88,27 @@ for (const [name, open] of Object.entries(engines)) {
       await assert.rejects(a.activate(bob.token, code), { code: 'INVITE_INVALID' });
       assert.equal((await a.user(bob.token)).isActivated, false, 'failed activation leaves the account inactive');
       await assert.rejects(a.login('alice', 'wrong'), { code: 'AUTH' });
+      // Sessions issued long ago (old 30-day `expires_at` already in the past) stay valid until logout.
+      await a.db.run('UPDATE sessions SET expires_at=$1 WHERE user_id=$2', [Date.now() - 400 * 86400000, first.user.id]);
+      assert.equal((await a.user(first.token)).id, first.user.id, 'a stale session still signs in');
+      const third = await a.login('alice', 'a-long-password-123');
+      assert.equal((await a.user(first.token)).id, first.user.id, 'a new login does not evict older sessions');
+      await a.logout(third.token);
       await a.logout(first.token);
       await assert.rejects(a.user(first.token), { code: 'AUTH' });
-      assert.equal((await a.user(second.token, true)).id, first.user.id);
+      assert.equal((await a.user(second.token, true)).id, first.user.id, 'logging out one device keeps the others');
+      // Administrative reset: new password works, old one and every open session stop working.
+      const reset = await a.login('alice', 'a-long-password-123');
+      await assert.rejects(a.resetPassword('nobody', 'another-long-password'), { code: 'NOT_FOUND' });
+      await assert.rejects(a.resetPassword('alice', 'short'), { code: 'INPUT' });
+      assert.equal((await a.resetPassword('Alice', 'a-brand-new-password-456')).id, first.user.id);
+      await assert.rejects(a.user(reset.token), { code: 'AUTH' });
+      await assert.rejects(a.login('alice', 'a-long-password-123'), { code: 'AUTH' });
+      assert.equal((await a.login('alice', 'a-brand-new-password-456')).user.id, first.user.id);
+      const listed = await a.listUsers();
+      assert.deepEqual(listed.map(u => u.username).sort(), ['alice', 'bob']);
+      assert.equal(Number(listed.find(u => u.username === 'alice').sessions), 1);
+      await assert.rejects(a.user(second.token, true), { code: 'AUTH' }, 'a reset signs every device out');
     } finally { await a.close(); await stop(); }
   });
 

@@ -93,6 +93,7 @@ The music service runs in **account mode** by default: sign up, then activate th
 - **ZIP export**: a playlist (or the whole local library) can be packed into one ZIP named `Artist - Title.ext` with a `metadata.json`; on Android the ZIP goes to the system share sheet.
 - **Database**: set `DATABASE_URL` to a PostgreSQL connection string in production (e.g. a Northflank free PostgreSQL add-on); without it a local SQLite file (`ACCOUNT_DB`, Node >= 22.13) is used for development.
 - **Invite codes**: `node music-service/scripts/invite.mjs 7` (valid 7 days, single use), run where the service runs.
+- **Forgotten password**: passwords are stored only as salted scrypt hashes and cannot be read back. Run `node music-service/scripts/list-users.mjs` to see account names and `node music-service/scripts/reset-password.mjs <username> <new password>` to set a new one (signs every device out). Sessions never expire; only logging out ends them.
 - `AUTH_MODE=legacy` turns the account system off and keeps the old shared `API_TOKEN` behaviour.
 
 Details, table layout and test steps: [ACCOUNT_SYNC_EXPORT.md](ACCOUNT_SYNC_EXPORT.md) (Chinese).

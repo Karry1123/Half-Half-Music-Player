@@ -93,6 +93,7 @@ npm start              # http://127.0.0.1:8090
 - **ZIP 导出**：歌单或整个本机曲库可打包为一个 ZIP，文件名为 `歌手 - 歌名.扩展名`，附带 `metadata.json`；Android 上交给系统分享面板。
 - **数据库**：生产环境设置 `DATABASE_URL` 为 PostgreSQL 连接串（如 Northflank 免费 PostgreSQL）；不设置时用本地 SQLite 文件（`ACCOUNT_DB`，需要 Node >= 22.13），仅供开发。
 - **邀请码**：在服务所在环境运行 `node music-service/scripts/invite.mjs 7`（7 天有效、单次使用）。
+- **忘记密码**：密码只以加盐 scrypt 哈希保存，无法查回。运行 `node music-service/scripts/list-users.mjs` 查看账号名，`node music-service/scripts/reset-password.mjs <账号名> <新密码>` 重置密码（会让所有设备下线）。登录会话永不过期，只有主动登出才失效。
 - `AUTH_MODE=legacy` 关闭账号系统，保留旧的共享 `API_TOKEN` 方式。
 
 详细说明、表结构和验收步骤见 [ACCOUNT_SYNC_EXPORT.md](ACCOUNT_SYNC_EXPORT.md)。

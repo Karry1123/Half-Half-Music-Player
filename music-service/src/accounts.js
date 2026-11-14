@@ -209,6 +209,22 @@ export class Accounts {
     }
     return this.issue(id);
   }
+  /** Administrative password reset (CLI only): rehashes the password and signs every device out. */
+  async resetPassword(username, password) {
+    username = String(username || '').trim().toLowerCase();
+    if (typeof password !== 'string' || password.length < 12 || password.length > 128) fail(400, 'INPUT', '密码需 12–128 位');
+    const u = await this.one('SELECT id FROM users WHERE username=$1', [username]);
+    if (!u) fail(404, 'NOT_FOUND', `账号不存在: ${username}`);
+    const salt = randomBytes(16).toString('hex');
+    const digest = (await scrypt(password, salt, 64)).toString('hex');
+    await this.db.run('UPDATE users SET password=$1, salt=$2 WHERE id=$3', [digest, salt, u.id]);
+    await this.db.run('DELETE FROM sessions WHERE user_id=$1', [u.id]);
+    return publicUser(await this.one('SELECT * FROM users WHERE id=$1', [u.id]));
+  }
+  /** Administrative listing (CLI only): every account with its activation state and device count. */
+  async listUsers() {
+    return this.db.all('SELECT u.username, u.short_id AS "shortId", p.nickname, u.activated, u.created_at AS "createdAt", (SELECT COUNT(*) FROM sessions s WHERE s.user_id=u.id) AS sessions FROM users u LEFT JOIN profiles p ON p.user_id=u.id ORDER BY u.created_at');
+  }
   async login(username, password) {
     if (typeof password !== 'string' || password.length > 128) fail(401, 'AUTH', '账号或密码不正确');
     const u = await this.one('SELECT * FROM users WHERE username=$1', [String(username || '').trim().toLowerCase()]);
@@ -216,14 +232,15 @@ export class Accounts {
     if (!u || !timingSafeEqual(digest, Buffer.from(u.password, 'hex'))) fail(401, 'AUTH', '账号或密码不正确');
     return this.issue(u.id);
   }
+  // Sessions never expire: a device stays signed in until it logs out explicitly.
+  // The legacy `expires_at` column now only records when the session was issued.
   async issue(id) {
-    const token = randomBytes(32).toString('base64url'), expiresAt = Date.now() + 30 * 86400000;
-    await this.db.run('DELETE FROM sessions WHERE expires_at < $1', [Date.now()]);
-    await this.db.run('INSERT INTO sessions VALUES($1,$2,$3)', [hash(token), id, expiresAt]);
-    return { token, expiresAt, user: publicUser(await this.one('SELECT * FROM users WHERE id=$1', [id])) };
+    const token = randomBytes(32).toString('base64url');
+    await this.db.run('INSERT INTO sessions VALUES($1,$2,$3)', [hash(token), id, Date.now()]);
+    return { token, expiresAt: null, user: publicUser(await this.one('SELECT * FROM users WHERE id=$1', [id])) };
   }
   async user(token, activated = false) {
-    const u = await this.one('SELECT u.* FROM users u JOIN sessions s ON s.user_id=u.id WHERE s.token_hash=$1 AND s.expires_at>$2', [hash(String(token || '')), Date.now()]);
+    const u = await this.one('SELECT u.* FROM users u JOIN sessions s ON s.user_id=u.id WHERE s.token_hash=$1', [hash(String(token || ''))]);
     if (!u) fail(401, 'AUTH', '请登录账号');
     if (activated && !Number(u.activated)) fail(403, 'NOT_ACTIVATED', '请先使用邀请码激活账号');
     return publicUser(u);
