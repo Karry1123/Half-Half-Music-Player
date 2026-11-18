@@ -16,8 +16,11 @@ export function readLastPlayback(state, playlists, storage = globalThis.localSto
     const scopeKey = activePlaylistId || 'all';
     const viewOrder = (!saved.activePlaylistId || activePlaylistId) && saved.viewOrder?.playlistId === scopeKey && Array.isArray(saved.viewOrder.ids)
       ? { playlistId: scopeKey, ids: [...new Set(saved.viewOrder.ids.filter(id => state.library.some(x => x.id === id)))] } : null;
-    return { trackId: item.id, duration, position: 0, activePlaylistId, viewOrder,
-      playMode: ['order', 'loopAll', 'loopOne', 'shuffle'].includes(saved.playMode) ? saved.playMode : 'order' };
+    const playMode = ['order', 'loopAll', 'loopOne', 'shuffle'].includes(saved.playMode) ? saved.playMode : 'order';
+    const queue = saved.queue && typeof saved.queue === 'object' && saved.queue.mode === playMode &&
+      ['history', 'forward', 'bag', 'round'].every(key => Array.isArray(saved.queue[key]))
+      ? { ...saved.queue, current: item.id } : null;
+    return { trackId: item.id, duration, position: 0, activePlaylistId, viewOrder, playMode, queue };
   } catch { return null; }
 }
 
@@ -28,7 +31,7 @@ export function createPlaybackWriter({ storage = globalThis.localStorage } = {})
     if (state.role === 'guest') return false;
     const item = state.library.find(x => x.id === state.currentId);
     if (!item || session.anchor.trackId !== item.id) return false;
-    const saved = { version: 2, trackId: item.id, activePlaylistId: state.activePlaylistId || null, viewOrder: session.viewOrder || null, playMode: state.playMode };
+    const saved = { version: 2, trackId: item.id, activePlaylistId: state.activePlaylistId || null, viewOrder: session.viewOrder || null, playMode: state.playMode, queue: session.queue?.toJSON?.() ?? null };
     const context = JSON.stringify(saved);
     if (context === lastContext) return false;
     try { storage.setItem(LAST_PLAYBACK_KEY, context); lastContext = context; return true; } catch { return false; }

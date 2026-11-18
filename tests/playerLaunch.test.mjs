@@ -6,6 +6,7 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import { restoreDownloads } from '../public/dashboardFeedback.js';
 import { readLastPlayback } from '../public/playbackResume.js';
+import { PlayQueue } from '../public/playQueue.js';
 import React from 'react';
 import htm from 'htm';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -25,7 +26,7 @@ function harness(saved = null) {
   });
   const track = { id: 'song', hash: 'hash', title: 'Song', artist: 'Artist', duration: 100 };
   const context = {
-    trimBounds, coverCandidates,
+    trimBounds, coverCandidates, PlayQueue,
     get: () => state, set: patch => Object.assign(state, typeof patch === 'function' ? patch(state) : patch),
     LocalLib: { listTracks: async () => [track], coverUrl: async () => null },
     playlistStore: { load: async () => {} }, fromLocal: t => t,

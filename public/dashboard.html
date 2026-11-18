@@ -1384,6 +1384,7 @@ class Session {
     this.out.stopAt(now(), saved.position);
     set({ currentId: saved.trackId, duration: saved.duration, loaded: false, playing: false,
       playbackPending: false, activePlaylistId: saved.activePlaylistId, playMode: saved.playMode });
+    if (saved.queue) this.queue = PlayQueue.from(saved.queue);
     this.syncQueue().setMode(saved.playMode);
     this.broadcastLibrary();
   }
